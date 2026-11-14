@@ -216,12 +216,17 @@ class GardenView extends ItemView {
       const waterBar = card.createDiv({ cls: 'iter-pot-water-bar' });
       const visibleHabits = tree.habits.slice(0, 3);
       for (const habit of visibleHabits) {
+        const resting = !habit.isDueToday && !habit.wateredToday;
         const chip = waterBar.createEl('button', {
-          cls: `iter-water-chip${habit.wateredInPeriod ? ' is-watered' : ''}`,
+          cls: `iter-water-chip${habit.wateredInPeriod ? ' is-watered' : ''}${resting ? ' is-rest' : ''}`,
           type: 'button',
           attr: {
             'aria-pressed': String(habit.wateredToday),
-            title: habit.wateredToday ? `Undo today's water: ${habit.title}` : `Water ${habit.title}`,
+            title: habit.wateredToday
+              ? `Undo today's water: ${habit.title}`
+              : resting
+                ? `Rest day (${habit.cadenceLabel}) — click to water ${habit.title}`
+                : `Water ${habit.title} (${habit.cadenceLabel})`,
           },
         });
         const drop = chip.createSpan({ cls: 'iter-chip-icon' });
@@ -356,24 +361,27 @@ class GardenView extends ItemView {
     } else {
       const list = habCol.createDiv({ cls: 'iter-detail-list' });
       for (const habit of tree.habits) {
+        const resting = !habit.isDueToday && !habit.wateredToday;
         const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? ' is-watered' : ''}` });
 
         const textBtn = row.createEl('button', { cls: 'iter-detail-link', type: 'button' });
         textBtn.createSpan({ text: habit.title, cls: 'iter-detail-title' });
-        const subMeta = [habit.frequency];
+        const subMeta = [habit.cadenceLabel];
         if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
         if (habit.target) subMeta.push(habit.target);
         textBtn.createSpan({ text: subMeta.join(' · '), cls: 'iter-detail-sub' });
         textBtn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
 
         const waterBtn = row.createEl('button', {
-          cls: `iter-water-action${habit.wateredInPeriod ? ' is-watered' : ''}`,
+          cls: `iter-water-action${habit.wateredInPeriod ? ' is-watered' : ''}${resting ? ' is-rest' : ''}`,
           type: 'button',
           attr: { 'aria-pressed': String(habit.wateredToday) },
         });
         const drop = waterBtn.createSpan({ cls: 'iter-btn-icon' });
         setIcon(drop, 'droplet');
-        waterBtn.createSpan({ text: habit.wateredToday ? 'Watered' : habit.wateredInPeriod ? 'Done' : 'Water' });
+        waterBtn.createSpan({
+          text: habit.wateredToday ? 'Watered' : habit.wateredInPeriod ? 'Done' : resting ? 'Rest day' : 'Water',
+        });
         waterBtn.addEventListener('click', async () => {
           try {
             const watered = await waterHabit(this.app, habit.file);

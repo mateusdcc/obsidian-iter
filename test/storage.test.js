@@ -9,10 +9,14 @@ const {
   createTree,
   createSubgoal,
   createHabit,
+  updateHabitSchedule,
   toggleSubgoal,
   waterHabit,
+  isScheduledOnDate,
   isWateredInPeriod,
   computeHabitStreak,
+  formatCadenceLabel,
+  formatCadenceShort,
 } = require('../src/storage');
 
 test('ensureStructure creates Iter, _index, and We.md idempotently', async () => {
@@ -132,4 +136,55 @@ test('createHabit and waterHabit handle daily, weekly, and monthly watering and 
     computeHabitStreak(['2026-09-10', '2026-10-15', '2026-11-13'], 'monthly', nov13),
     3,
   );
+});
+
+test('weekday-specific habits validate days, update repetitivity, compute streaks, and respect rest days', async () => {
+  const app = createMockApp();
+  await createTree(app.vault, { name: 'Gym', module: 'gym' });
+
+  await assert.rejects(
+    () => createHabit(app.vault, { treePath: 'Iter/Gym', name: 'Leg Day', frequency: 'weekdays', days: [] }),
+    /Select at least one day/,
+  );
+
+  const habit = await createHabit(app.vault, {
+    treePath: 'Iter/Gym',
+    name: 'Leg Day',
+    frequency: 'weekdays',
+    days: ['thu', 'Wednesday'],
+  });
+  let fm = app.metadataCache.getFileCache(habit).frontmatter;
+  assert.equal(fm.frequency, 'weekdays');
+  assert.deepEqual(fm.days, ['wed', 'thu']);
+  assert.equal(formatCadenceLabel(fm.frequency, fm.days), 'Wed, Thu');
+  assert.equal(formatCadenceShort(fm.frequency, fm.days), 'We·Th');
+
+  // Nov 11 (Wed), Nov 12 (Thu), Nov 13 (Fri - rest day)
+  assert.equal(isScheduledOnDate('weekdays', ['wed', 'thu'], '2026-11-11'), true);
+  assert.equal(isScheduledOnDate('weekdays', ['wed', 'thu'], '2026-11-12'), true);
+  assert.equal(isScheduledOnDate('weekdays', ['wed', 'thu'], '2026-11-13'), false);
+
+  const log = ['2026-11-04', '2026-11-05', '2026-11-11', '2026-11-12'];
+  const fri = new Date(2026, 10, 13, 12, 0, 0);
+  const wedBefore = new Date(2026, 10, 18, 9, 0, 0);
+  const thuMissedWed = new Date(2026, 10, 19, 9, 0, 0);
+
+  assert.equal(computeHabitStreak(log, 'weekdays', fri, ['wed', 'thu']), 4);
+  assert.equal(computeHabitStreak(log, 'weekdays', wedBefore, ['wed', 'thu']), 4);
+  assert.equal(computeHabitStreak(log, 'weekdays', thuMissedWed, ['wed', 'thu']), 0);
+
+  // Rest day inherits completion of latest scheduled day (Thu Nov 12)
+  assert.equal(isWateredInPeriod('2026-11-12', log, 'weekdays', fri, ['wed', 'thu']), true);
+  assert.equal(isWateredInPeriod('2026-11-12', log, 'weekdays', wedBefore, ['wed', 'thu']), false);
+
+  // Edit repetitivity to Mon, Wed, Fri then back to weekly
+  await updateHabitSchedule(app, habit, { frequency: 'weekdays', days: ['fri', 'mon', 'wed'] });
+  fm = app.metadataCache.getFileCache(habit).frontmatter;
+  assert.equal(fm.frequency, 'weekdays');
+  assert.deepEqual(fm.days, ['mon', 'wed', 'fri']);
+
+  await updateHabitSchedule(app, habit, { frequency: 'weekly', days: [] });
+  fm = app.metadataCache.getFileCache(habit).frontmatter;
+  assert.equal(fm.frequency, 'weekly');
+  assert.deepEqual(fm.days, []);
 });

@@ -1,5 +1,6 @@
 const { Modal, Notice } = require('obsidian');
-const { MODULES, FREQUENCIES, STYLES } = require('./storage');
+const { MODULES, STYLES } = require('./storage');
+const { renderSchedulePicker } = require('./schedule-picker');
 
 const STYLE_LABELS = {
   auto: 'Auto (from module)',
@@ -7,12 +8,6 @@ const STYLE_LABELS = {
   bonsai: 'Bonsai',
   pine: 'Pine',
   willow: 'Willow',
-};
-
-const FREQUENCY_LABELS = {
-  daily: 'Daily',
-  weekly: 'Weekly',
-  monthly: 'Monthly',
 };
 
 class BaseIterModal extends Modal {
@@ -170,21 +165,12 @@ class CreateHabitModal extends BaseIterModal {
 
   onOpen() {
     const form = this.buildForm(this.contentEl);
-    const row = form.createDiv({ cls: 'iter-modal-row' });
 
-    const treeSelect = this.addField(row, 'Tree', parent => {
+    const treeSelect = this.addField(form, 'Tree', parent => {
       const select = parent.createEl('select', { cls: 'iter-modal-select' });
       for (const tree of this.trees) {
         const option = select.createEl('option', { value: tree.path, text: tree.title });
         if (tree.path === this.initialTreePath) option.selected = true;
-      }
-      return select;
-    });
-
-    const freqSelect = this.addField(row, 'Watering cadence', parent => {
-      const select = parent.createEl('select', { cls: 'iter-modal-select' });
-      for (const freq of FREQUENCIES) {
-        select.createEl('option', { value: freq, text: FREQUENCY_LABELS[freq] || freq });
       }
       return select;
     });
@@ -195,18 +181,26 @@ class CreateHabitModal extends BaseIterModal {
       return input;
     });
 
+    const scheduleField = form.createDiv({ cls: 'iter-modal-field' });
+    scheduleField.createEl('span', { text: 'Repetitivity', cls: 'iter-modal-label' });
+    const picker = renderSchedulePicker(scheduleField, { frequency: 'daily', days: [] });
+
     const targetInput = this.addField(form, 'Daily/period target (optional)', parent =>
       parent.createEl('input', { type: 'text', placeholder: 'e.g. 3000 kcal / 10 new words', cls: 'iter-modal-input' }),
     );
 
     this.addActions(
       form,
-      () => ({
-        treePath: treeSelect.value,
-        frequency: freqSelect.value,
-        name: nameInput.value,
-        target: targetInput.value,
-      }),
+      () => {
+        const schedule = picker.getValue();
+        return {
+          treePath: treeSelect.value,
+          frequency: schedule.frequency,
+          days: schedule.days,
+          name: nameInput.value,
+          target: targetInput.value,
+        };
+      },
       nameInput,
     );
 
@@ -214,8 +208,29 @@ class CreateHabitModal extends BaseIterModal {
   }
 }
 
+class EditHabitScheduleModal extends BaseIterModal {
+  constructor(app, { title, frequency, days, onSubmit }) {
+    super(app, `Repetitivity · ${title}`, 'Save schedule', onSubmit);
+    this.frequency = frequency;
+    this.days = days;
+  }
+
+  onOpen() {
+    const form = this.buildForm(this.contentEl);
+    const scheduleField = form.createDiv({ cls: 'iter-modal-field' });
+    scheduleField.createEl('span', { text: 'Watering schedule', cls: 'iter-modal-label' });
+    const picker = renderSchedulePicker(scheduleField, {
+      frequency: this.frequency,
+      days: this.days,
+    });
+
+    this.addActions(form, () => picker.getValue());
+  }
+}
+
 module.exports = {
   CreateTreeModal,
   CreateSubgoalModal,
   CreateHabitModal,
+  EditHabitScheduleModal,
 };

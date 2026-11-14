@@ -1,4 +1,4 @@
-const { ROOT, parseDateKey, toDateKey } = require('./storage');
+const { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays } = require('./storage');
 
 const DATASET_TYPES = [
   { id: 'number_time', label: 'Number & Time' },
@@ -181,7 +181,8 @@ function readGoalDocument(app, file) {
     due,
     target,
     done: Boolean(fm.done),
-    frequency: typeof fm.frequency === 'string' ? fm.frequency : 'daily',
+    frequency: normalizeFrequency(fm.frequency),
+    days: normalizeDays(fm.days),
     module: typeof fm.module === 'string' ? fm.module : 'general',
     datasets,
     widgets,

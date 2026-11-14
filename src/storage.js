@@ -10,7 +10,18 @@ const MODULES = [
   { id: 'health', label: 'Health' },
 ];
 
-const FREQUENCIES = ['daily', 'weekly', 'monthly'];
+const FREQUENCIES = ['daily', 'weekdays', 'weekly', 'monthly'];
+const WEEKDAYS = [
+  { id: 'mon', tiny: 'M', short: 'Mo', label: 'Mon', full: 'Monday', jsDay: 1 },
+  { id: 'tue', tiny: 'T', short: 'Tu', label: 'Tue', full: 'Tuesday', jsDay: 2 },
+  { id: 'wed', tiny: 'W', short: 'We', label: 'Wed', full: 'Wednesday', jsDay: 3 },
+  { id: 'thu', tiny: 'T', short: 'Th', label: 'Thu', full: 'Thursday', jsDay: 4 },
+  { id: 'fri', tiny: 'F', short: 'Fr', label: 'Fri', full: 'Friday', jsDay: 5 },
+  { id: 'sat', tiny: 'S', short: 'Sa', label: 'Sat', full: 'Saturday', jsDay: 6 },
+  { id: 'sun', tiny: 'S', short: 'Su', label: 'Sun', full: 'Sunday', jsDay: 0 },
+];
+const DAY_BY_JS_DAY = new Map(WEEKDAYS.map(d => [d.jsDay, d.id]));
+const DAY_ORDER = new Map(WEEKDAYS.map((d, i) => [d.id, i]));
 const STYLES = ['auto', 'canopy', 'bonsai', 'pine', 'willow'];
 
 function isFolder(entry) {
@@ -94,6 +105,52 @@ function normalizeFrequency(value) {
   return FREQUENCIES.includes(normalized) ? normalized : 'daily';
 }
 
+function normalizeDays(raw) {
+  if (!Array.isArray(raw)) return [];
+  const chosen = new Set();
+  for (const item of raw) {
+    if (typeof item === 'number' && DAY_BY_JS_DAY.has(item)) {
+      chosen.add(DAY_BY_JS_DAY.get(item));
+      continue;
+    }
+    const clean = typeof item === 'string' ? item.trim().toLowerCase() : '';
+    if (!clean) continue;
+    const match = WEEKDAYS.find(
+      d => d.id === clean || d.short.toLowerCase() === clean || d.label.toLowerCase() === clean || d.full.toLowerCase() === clean,
+    );
+    if (match) chosen.add(match.id);
+  }
+  return Array.from(chosen).sort((a, b) => DAY_ORDER.get(a) - DAY_ORDER.get(b));
+}
+
+function formatCadenceLabel(frequency, days = []) {
+  const freq = normalizeFrequency(frequency);
+  if (freq === 'weekdays') {
+    const clean = normalizeDays(days);
+    if (!clean.length) return 'Specific days';
+    if (clean.length === 7) return 'Every day';
+    if (clean.length === 5 && !clean.includes('sat') && !clean.includes('sun')) return 'Weekdays';
+    if (clean.length === 2 && clean.includes('sat') && clean.includes('sun')) return 'Weekends';
+    return clean.map(id => WEEKDAYS[DAY_ORDER.get(id)].label).join(', ');
+  }
+  if (freq === 'weekly') return 'Weekly';
+  if (freq === 'monthly') return 'Monthly';
+  return 'Daily';
+}
+
+function formatCadenceShort(frequency, days = []) {
+  const freq = normalizeFrequency(frequency);
+  if (freq === 'weekdays') {
+    const clean = normalizeDays(days);
+    if (!clean.length) return 'Days';
+    if (clean.length <= 3) return clean.map(id => WEEKDAYS[DAY_ORDER.get(id)].short).join('·');
+    return `${clean.length}d/w`;
+  }
+  if (freq === 'weekly') return 'W';
+  if (freq === 'monthly') return 'M';
+  return 'D';
+}
+
 function normalizeStyle(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return STYLES.includes(normalized) ? normalized : 'auto';
@@ -165,10 +222,14 @@ async function createSubgoal(vault, { treePath, name, target = '' }) {
   return vault.create(filePath, lines.join('\n'));
 }
 
-async function createHabit(vault, { treePath, name, frequency = 'daily', target = '' }) {
+async function createHabit(vault, { treePath, name, frequency = 'daily', days = [], target = '' }) {
   const dir = validTreePath(treePath);
   const title = validateName(name, 'Habit name');
   const freq = normalizeFrequency(frequency);
+  const cleanDays = freq === 'weekdays' ? normalizeDays(days) : [];
+  if (freq === 'weekdays' && !cleanDays.length) {
+    throw new Error('Select at least one day of the week.');
+  }
   const cleanTarget = typeof target === 'string' ? target.trim() : '';
 
   await ensureStructure(vault);
@@ -187,6 +248,7 @@ async function createHabit(vault, { treePath, name, frequency = 'daily', target 
     'type: habit',
     `title: ${JSON.stringify(title)}`,
     `frequency: ${JSON.stringify(freq)}`,
+    `days: ${JSON.stringify(cleanDays)}`,
     `target: ${JSON.stringify(cleanTarget)}`,
     'last_watered: null',
     'water_log: []',
@@ -195,11 +257,24 @@ async function createHabit(vault, { treePath, name, frequency = 'daily', target 
     '',
     `# ${title}`,
     '',
-    `Cadence: ${freq}`,
+    `Cadence: ${formatCadenceLabel(freq, cleanDays)}`,
     '',
   ];
   if (cleanTarget) lines.push(`Target: ${cleanTarget}`, '');
   return vault.create(filePath, lines.join('\n'));
+}
+
+async function updateHabitSchedule(app, file, { frequency, days = [] }) {
+  const freq = normalizeFrequency(frequency);
+  const cleanDays = freq === 'weekdays' ? normalizeDays(days) : [];
+  if (freq === 'weekdays' && !cleanDays.length) {
+    throw new Error('Select at least one day of the week.');
+  }
+  await app.fileManager.processFrontMatter(file, frontmatter => {
+    frontmatter.frequency = freq;
+    frontmatter.days = cleanDays;
+  });
+  return { frequency: freq, days: cleanDays };
 }
 
 function toDateKey(date = new Date()) {
@@ -280,27 +355,92 @@ function normalizeWaterLog(raw) {
   return Array.from(valid).sort();
 }
 
-function isWateredInPeriod(lastWatered, waterLog, frequency, now = new Date()) {
-  const currentPeriod = periodKeyFor(toDateKey(now), frequency);
-  if (!currentPeriod) return false;
-  const dates = normalizeWaterLog(waterLog);
-  if (typeof lastWatered === 'string' && parseDateKey(lastWatered)) {
-    dates.push(lastWatered.trim());
-  }
-  return dates.some(key => periodKeyFor(key, frequency) === currentPeriod);
+function weekdayIdForDateKey(key) {
+  const parsed = parseDateKey(key);
+  if (!parsed) return null;
+  return DAY_BY_JS_DAY.get(parsed.getUTCDay()) ?? null;
 }
 
-function computeHabitStreak(waterLog, frequency, now = new Date()) {
+function isScheduledOnDate(frequency, days, dateKey) {
+  const freq = normalizeFrequency(frequency);
+  if (freq !== 'weekdays') return true;
+  const cleanDays = normalizeDays(days);
+  if (!cleanDays.length) return false;
+  const dayId = weekdayIdForDateKey(dateKey);
+  return dayId ? cleanDays.includes(dayId) : false;
+}
+
+function isWateredInPeriod(lastWatered, waterLog, frequency, now = new Date(), days = []) {
+  const freq = normalizeFrequency(frequency);
+  const todayKey = toDateKey(now);
+  const dates = normalizeWaterLog(waterLog);
+  if (typeof lastWatered === 'string' && parseDateKey(lastWatered) && !dates.includes(lastWatered.trim())) {
+    dates.push(lastWatered.trim());
+  }
+  if (freq === 'weekdays') {
+    if (dates.includes(todayKey)) return true;
+    const cleanDays = normalizeDays(days);
+    if (!cleanDays.length) return false;
+    if (isScheduledOnDate('weekdays', cleanDays, todayKey)) {
+      return false;
+    }
+    // Rest day: check whether the most recent scheduled day was completed
+    let cursor = shiftDateKey(todayKey, -1);
+    for (let i = 0; i < 7 && cursor; i += 1) {
+      if (isScheduledOnDate('weekdays', cleanDays, cursor)) {
+        return dates.includes(cursor);
+      }
+      cursor = shiftDateKey(cursor, -1);
+    }
+    return false;
+  }
+  const currentPeriod = periodKeyFor(todayKey, freq);
+  if (!currentPeriod) return false;
+  return dates.some(key => periodKeyFor(key, freq) === currentPeriod);
+}
+
+function computeWeekdaysStreak(dates, days, todayKey) {
+  const cleanDays = normalizeDays(days);
+  if (!dates.length || !cleanDays.length) return 0;
+  const logSet = new Set(dates);
+  const daySet = new Set(cleanDays);
+  const earliest = dates[0];
+  let cursor = todayKey;
+  let streak = 0;
+  let skippedOpenToday = false;
+
+  for (let steps = 0; steps < 1095 && cursor && cursor >= earliest; steps += 1) {
+    const dayId = weekdayIdForDateKey(cursor);
+    if (dayId && daySet.has(dayId)) {
+      if (logSet.has(cursor)) {
+        streak += 1;
+        skippedOpenToday = true;
+      } else if (cursor === todayKey && !skippedOpenToday) {
+        skippedOpenToday = true;
+      } else {
+        break;
+      }
+    }
+    cursor = shiftDateKey(cursor, -1);
+  }
+  return streak;
+}
+
+function computeHabitStreak(waterLog, frequency, now = new Date(), days = []) {
+  const freq = normalizeFrequency(frequency);
   const dates = normalizeWaterLog(waterLog);
   if (!dates.length) return 0;
-  const periods = new Set(dates.map(key => periodKeyFor(key, frequency)).filter(Boolean));
-  const current = periodKeyFor(toDateKey(now), frequency);
-  const previous = previousPeriodKey(current, frequency);
+  if (freq === 'weekdays') {
+    return computeWeekdaysStreak(dates, days, toDateKey(now));
+  }
+  const periods = new Set(dates.map(key => periodKeyFor(key, freq)).filter(Boolean));
+  const current = periodKeyFor(toDateKey(now), freq);
+  const previous = previousPeriodKey(current, freq);
   let cursor = periods.has(current) ? current : periods.has(previous) ? previous : null;
   let streak = 0;
   while (cursor && periods.has(cursor)) {
     streak += 1;
-    cursor = previousPeriodKey(cursor, frequency);
+    cursor = previousPeriodKey(cursor, freq);
   }
   return streak;
 }
@@ -345,6 +485,7 @@ module.exports = {
   WE_PATH,
   MODULES,
   FREQUENCIES,
+  WEEKDAYS,
   STYLES,
   isFolder,
   validateName,
@@ -353,13 +494,19 @@ module.exports = {
   validTreePath,
   normalizeModule,
   normalizeFrequency,
+  normalizeDays,
   normalizeStyle,
+  formatCadenceLabel,
+  formatCadenceShort,
   createTree,
   createSubgoal,
   createHabit,
+  updateHabitSchedule,
   toDateKey,
   parseDateKey,
   periodKeyFor,
+  weekdayIdForDateKey,
+  isScheduledOnDate,
   normalizeWaterLog,
   isWateredInPeriod,
   computeHabitStreak,

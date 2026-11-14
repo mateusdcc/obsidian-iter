@@ -1,7 +1,7 @@
 const { Plugin, Notice } = require('obsidian');
-const { ensureStructure, createTree, createSubgoal, createHabit } = require('./storage');
+const { ensureStructure, createTree, createSubgoal, createHabit, updateHabitSchedule } = require('./storage');
 const { listGarden, findTreeContext } = require('./catalog');
-const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require('./modals');
+const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('./modals');
 const { IterPanelView, PANEL_VIEW } = require('./panel-view');
 const { GardenView, GARDEN_VIEW } = require('./garden-view');
 const { GoalView, GOAL_VIEW } = require('./goal-view');
@@ -253,6 +253,19 @@ class IterPlugin extends Plugin {
       onSubmit: async values => {
         await createHabit(this.app.vault, values);
         new Notice(`Added habit "${values.name.trim()}"`);
+        this.scheduleRefresh();
+      },
+    }).open();
+  }
+
+  promptEditHabitSchedule(habit) {
+    new EditHabitScheduleModal(this.app, {
+      title: habit.title,
+      frequency: habit.frequency,
+      days: habit.days,
+      onSubmit: async schedule => {
+        await updateHabitSchedule(this.app, habit.file, schedule);
+        new Notice(`Updated repetitivity for "${habit.title}"`);
         this.scheduleRefresh();
       },
     }).open();

@@ -1663,3 +1663,137 @@ input.iter-due-input {
   font-size: 11px;
   text-transform: capitalize;
 }
+
+
+/* ---------- Schedule / Week Picker & Repetitivity ---------- */
+
+.iter-schedule-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.iter-cadence-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.iter-modal button.iter-cadence-pill,
+.iter-goal-view button.iter-cadence-pill {
+  height: auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  box-shadow: none;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.iter-modal button.iter-cadence-pill:hover,
+.iter-goal-view button.iter-cadence-pill:hover {
+  border-color: var(--background-modifier-border-hover);
+  color: var(--text-normal);
+}
+
+.iter-modal button.iter-cadence-pill.is-active,
+.iter-goal-view button.iter-cadence-pill.is-active {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+  color: var(--text-normal);
+  font-weight: var(--font-medium);
+}
+
+.iter-weekday-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.iter-weekday-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.iter-modal button.iter-weekday-pill,
+.iter-goal-view button.iter-weekday-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  box-shadow: none;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease, transform 120ms ease;
+}
+
+.iter-modal button.iter-weekday-pill:hover,
+.iter-goal-view button.iter-weekday-pill:hover {
+  border-color: var(--background-modifier-border-hover);
+  color: var(--text-normal);
+}
+
+.iter-modal button.iter-weekday-pill.is-selected,
+.iter-goal-view button.iter-weekday-pill.is-selected {
+  border-color: var(--iter-water);
+  background: color-mix(in srgb, var(--iter-water) 18%, var(--background-primary));
+  color: var(--text-normal);
+  font-weight: var(--font-medium);
+}
+
+.iter-schedule-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-schedule-summary.is-empty {
+  color: var(--interactive-accent);
+}
+
+.iter-goal-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px;
+  margin-top: -18px;
+  margin-bottom: 30px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-secondary) 45%, var(--background-primary));
+}
+
+.iter-schedule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-schedule-current {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Rest-day watering cues */
+
+.iter-panel button.iter-water-btn.is-rest,
+button.iter-water-chip.is-rest,
+button.iter-water-action.is-rest {
+  opacity: 0.6;
+}
+
+.iter-panel button.iter-water-btn.is-rest:hover,
+button.iter-water-chip.is-rest:hover,
+button.iter-water-action.is-rest:hover {
+  opacity: 1;
+}

@@ -12,12 +12,6 @@ const MODULE_ICONS = {
   general: 'trees',
 };
 
-const CADENCE_SHORT = {
-  daily: 'D',
-  weekly: 'W',
-  monthly: 'M',
-};
-
 function iconButton(parent, icon, label, callback, extraClass = '') {
   const button = parent.createEl('button', {
     cls: `iter-icon-button ${extraClass}`.trim(),
@@ -194,7 +188,7 @@ class IterPanelView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
-  showGoalItemMenu(event, file, extraLabel, extraIcon, extraAction) {
+  showGoalItemMenu(event, file, extraActions = []) {
     const menu = new Menu();
     menu.addItem(item =>
       item.setTitle('Open goal view').setIcon('layout-dashboard').onClick(() => void this.plugin.openGoal(file)),
@@ -202,9 +196,11 @@ class IterPanelView extends ItemView {
     menu.addItem(item =>
       item.setTitle('Open markdown').setIcon('file-text').onClick(() => void this.plugin.openFile(file)),
     );
-    if (extraAction) {
+    if (extraActions.length) {
       menu.addSeparator();
-      menu.addItem(item => item.setTitle(extraLabel).setIcon(extraIcon).onClick(extraAction));
+      for (const action of extraActions) {
+        menu.addItem(item => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
+      }
     }
     menu.showAtMouseEvent(event);
   }
@@ -295,28 +291,33 @@ class IterPanelView extends ItemView {
     titleBtn.addEventListener('click', () => void this.plugin.openGoal(subgoal.file));
     row.addEventListener('contextmenu', event => {
       event.preventDefault();
-      this.showGoalItemMenu(
-        event,
-        subgoal.file,
-        subgoal.done ? 'Mark incomplete' : 'Mark done',
-        subgoal.done ? 'circle' : 'check-circle-2',
-        async () => {
-          await toggleSubgoal(this.app, subgoal.file);
-          this.plugin.scheduleRefresh();
+      this.showGoalItemMenu(event, subgoal.file, [
+        {
+          label: subgoal.done ? 'Mark incomplete' : 'Mark done',
+          icon: subgoal.done ? 'circle' : 'check-circle-2',
+          run: async () => {
+            await toggleSubgoal(this.app, subgoal.file);
+            this.plugin.scheduleRefresh();
+          },
         },
-      );
+      ]);
     });
   }
 
   renderHabit(parent, habit) {
+    const resting = !habit.isDueToday && !habit.wateredToday;
     const row = parent.createDiv({
-      cls: `iter-row iter-habit-row${habit.wateredInPeriod ? ' is-watered' : ''}`,
+      cls: `iter-row iter-habit-row${habit.wateredInPeriod ? ' is-watered' : ''}${resting ? ' is-rest' : ''}`,
     });
 
     const waterBtn = iconButton(
       row,
       'droplet',
-      habit.wateredToday ? `Undo today's watering for "${habit.title}"` : `Water "${habit.title}"`,
+      habit.wateredToday
+        ? `Undo today's watering for "${habit.title}"`
+        : resting
+          ? `Rest day (${habit.cadenceLabel}) — click to water "${habit.title}" anyway`
+          : `Water "${habit.title}"`,
       async () => {
         try {
           const watered = await waterHabit(this.app, habit.file);
@@ -326,33 +327,41 @@ class IterPanelView extends ItemView {
           new Notice(error?.message || 'Could not water habit.');
         }
       },
-      `iter-water-btn${habit.wateredInPeriod ? ' is-watered' : ''}`,
+      `iter-water-btn${habit.wateredInPeriod ? ' is-watered' : ''}${resting ? ' is-rest' : ''}`,
     );
     waterBtn.setAttribute('aria-pressed', String(habit.wateredToday));
 
     const titleBtn = row.createEl('button', { cls: 'iter-row-title', type: 'button' });
-    titleBtn.setAttribute('title', habit.target ? `${habit.title} (${habit.frequency}) · ${habit.target}` : `${habit.title} (${habit.frequency})`);
+    titleBtn.setAttribute(
+      'title',
+      habit.target ? `${habit.title} (${habit.cadenceLabel}) · ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`,
+    );
     if (this.isActiveFile(habit.file)) titleBtn.setAttribute('aria-current', 'page');
     titleBtn.createSpan({ text: habit.title, cls: 'iter-row-name' });
     titleBtn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
     row.addEventListener('contextmenu', event => {
       event.preventDefault();
-      this.showGoalItemMenu(
-        event,
-        habit.file,
-        habit.wateredToday ? "Undo today's watering" : 'Water now',
-        'droplet',
-        async () => {
-          await waterHabit(this.app, habit.file);
-          this.plugin.scheduleRefresh();
+      this.showGoalItemMenu(event, habit.file, [
+        {
+          label: habit.wateredToday ? "Undo today's watering" : 'Water now',
+          icon: 'droplet',
+          run: async () => {
+            await waterHabit(this.app, habit.file);
+            this.plugin.scheduleRefresh();
+          },
         },
-      );
+        {
+          label: 'Edit repetitivity',
+          icon: 'calendar-days',
+          run: () => this.plugin.promptEditHabitSchedule(habit),
+        },
+      ]);
     });
 
     row.createSpan({
-      text: CADENCE_SHORT[habit.frequency] || 'D',
+      text: habit.cadenceShort,
       cls: 'iter-cadence-badge',
-      attr: { title: `${habit.frequency} habit` },
+      attr: { title: `${habit.cadenceLabel} habit` },
     });
   }
 

@@ -1,6 +1,7 @@
 const { ItemView, Notice, setIcon } = require('obsidian');
-const { ROOT, toDateKey, toggleSubgoal, waterHabit } = require('./storage');
+const { ROOT, toDateKey, toggleSubgoal, waterHabit, updateHabitSchedule, formatCadenceLabel, isScheduledOnDate } = require('./storage');
 const { listGarden } = require('./catalog');
+const { renderSchedulePicker } = require('./schedule-picker');
 const {
   DATASET_TYPES,
   readGoalDocument,
@@ -171,6 +172,9 @@ class GoalView extends ItemView {
 
     this.renderHeader(shell, doc);
     this.renderOverview(shell, doc);
+    if (doc.kind === 'habit') {
+      this.renderHabitSchedule(shell, doc);
+    }
     this.renderWidgetsSection(shell, doc);
     this.renderDatasetsSection(shell, doc);
 
@@ -216,15 +220,23 @@ class GoalView extends ItemView {
       const habit = tree?.habits?.find(h => h.file.path === this.file.path);
       const watered = habit?.wateredInPeriod ?? false;
       const wateredToday = habit?.wateredToday ?? false;
+      const dueToday = isScheduledOnDate(doc.frequency, doc.days, toDateKey());
+      const cadenceLabel = formatCadenceLabel(doc.frequency, doc.days);
 
       const waterBtn = actions.createEl('button', {
-        cls: `iter-water-action${watered ? ' is-watered' : ''}`,
+        cls: `iter-water-action${watered ? ' is-watered' : ''}${!dueToday && !wateredToday ? ' is-rest' : ''}`,
         type: 'button',
       });
       const drop = waterBtn.createSpan({ cls: 'iter-btn-icon' });
       setIcon(drop, 'droplet');
       waterBtn.createSpan({
-        text: wateredToday ? 'Watered today' : watered ? `Watered (${doc.frequency})` : `Water (${doc.frequency})`,
+        text: wateredToday
+          ? 'Watered today'
+          : watered
+            ? `Done (${cadenceLabel})`
+            : !dueToday
+              ? `Rest day (${cadenceLabel})`
+              : `Water (${cadenceLabel})`,
       });
       waterBtn.addEventListener('click', async () => {
         const res = await waterHabit(this.app, this.file);
@@ -287,6 +299,30 @@ class GoalView extends ItemView {
       await updateGoalMeta(this.app, this.file, { due: dueInput.value });
       this.render();
       this.plugin.scheduleRefresh();
+    });
+  }
+
+  renderHabitSchedule(shell, doc) {
+    const box = shell.createDiv({ cls: 'iter-goal-schedule' });
+    const top = box.createDiv({ cls: 'iter-schedule-head' });
+    top.createEl('span', { text: 'Repetitivity', cls: 'iter-micro-label' });
+    const currentLabel = top.createSpan({
+      text: formatCadenceLabel(doc.frequency, doc.days),
+      cls: 'iter-schedule-current',
+    });
+
+    renderSchedulePicker(box, {
+      frequency: doc.frequency,
+      days: doc.days,
+      onChange: async next => {
+        if (next.frequency === 'weekdays' && !next.days.length) {
+          currentLabel.textContent = 'Pick days below';
+          return;
+        }
+        await updateHabitSchedule(this.app, this.file, next);
+        currentLabel.textContent = formatCadenceLabel(next.frequency, next.days);
+        this.plugin.scheduleRefresh();
+      },
     });
   }
 
@@ -699,7 +735,7 @@ class GoalView extends ItemView {
       const icon = btn.createSpan({ cls: 'iter-btn-icon' });
       setIcon(icon, 'droplet');
       btn.createSpan({ text: habit.title, cls: 'iter-tree-link-name' });
-      btn.createSpan({ text: habit.frequency, cls: 'iter-tree-link-kind' });
+      btn.createSpan({ text: habit.cadenceLabel, cls: 'iter-tree-link-kind' });
       btn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
     }
   }

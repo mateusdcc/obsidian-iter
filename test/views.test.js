@@ -5,8 +5,9 @@ const { createTree, createSubgoal, createHabit, ensureStructure } = require('../
 const { IterPanelView } = require('../src/panel-view');
 const { GardenView } = require('../src/garden-view');
 const { GoalView } = require('../src/goal-view');
-const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require('../src/modals');
+const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('../src/modals');
 const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal } = require('../src/goal-modals');
+const { renderSchedulePicker } = require('../src/schedule-picker');
 const { addDataset, addDatasetEntry, addWidget, updateGoalMeta } = require('../src/data-model');
 
 function createMockElement(tagName, attrs = {}) {
@@ -27,6 +28,13 @@ function createMockElement(tagName, attrs = {}) {
         cur.add(part);
         this.className = Array.from(cur).join(' ');
       }
+    },
+    toggleClass(cls, force) {
+      const cur = new Set(this.className.split(/\s+/).filter(Boolean));
+      const enable = typeof force === 'boolean' ? force : !cur.has(cls);
+      if (enable) cur.add(cls);
+      else cur.delete(cls);
+      this.className = Array.from(cur).join(' ');
     },
     empty() {
       this.children = [];
@@ -158,11 +166,35 @@ test('IterPanelView and GardenView render trees, subgoals, habits, and modals cl
     const charts = goalView.contentEl.findAll(el => el.className.includes('iter-chart-svg'));
     assert.equal(charts.length, 1);
 
+    // Habit GoalView renders inline repetitivity picker
+    const habitFile = app.vault.getAbstractFileByPath('Iter/Gym/habits/Go to the Gym.md');
+    await goalView.setState({ file: habitFile.path }, {});
+    const scheduleBox = goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-goal-schedule'));
+    assert.equal(scheduleBox.length, 1);
+
+    // Schedule picker switches cadence and toggles Wed + Thu
+    const pickerHost = createMockElement('div');
+    let latestSchedule = null;
+    const picker = renderSchedulePicker(pickerHost, {
+      frequency: 'daily',
+      days: [],
+      onChange: val => { latestSchedule = val; },
+    });
+    const specificBtn = pickerHost.findAll(el => el.textContent === 'Specific days')[0];
+    for (const fn of specificBtn.listeners.get('click') || []) fn();
+    const wedBtn = pickerHost.findAll(el => el.textContent === 'Wed')[0];
+    const thuBtn = pickerHost.findAll(el => el.textContent === 'Thu')[0];
+    for (const fn of wedBtn.listeners.get('click') || []) fn();
+    for (const fn of thuBtn.listeners.get('click') || []) fn();
+    assert.deepEqual(picker.getValue(), { frequency: 'weekdays', days: ['wed', 'thu'] });
+    assert.deepEqual(latestSchedule, { frequency: 'weekdays', days: ['wed', 'thu'] });
+
     // Exercise modals
     for (const modal of [
       new CreateTreeModal(app, { onSubmit: async () => {} }),
       new CreateSubgoalModal(app, { trees: [{ path: 'Iter/Gym', title: 'Gym' }], initialTreePath: 'Iter/Gym', onSubmit: async () => {} }),
       new CreateHabitModal(app, { trees: [{ path: 'Iter/Gym', title: 'Gym' }], initialTreePath: 'Iter/Gym', onSubmit: async () => {} }),
+      new EditHabitScheduleModal(app, { title: 'Go to the Gym', frequency: 'weekdays', days: ['wed', 'thu'], onSubmit: async () => {} }),
       new AddDatasetModal(app, { onSubmit: async () => {} }),
       new AddWidgetModal(app, { datasets: [ds1, ds2], onSubmit: async () => {} }),
       new NoteTimeMetaModal(app, { noteFile, onSubmit: async () => {} }),

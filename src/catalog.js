@@ -4,7 +4,11 @@ const {
   isFolder,
   normalizeModule,
   normalizeFrequency,
+  normalizeDays,
   normalizeStyle,
+  formatCadenceLabel,
+  formatCadenceShort,
+  isScheduledOnDate,
   normalizeWaterLog,
   isWateredInPeriod,
   computeHabitStreak,
@@ -66,21 +70,28 @@ function readHabits(app, treeFolder, now = new Date()) {
     .map(file => {
       const fm = getFrontmatter(app, file);
       const frequency = normalizeFrequency(fm?.frequency);
+      const days = normalizeDays(fm?.days);
       const waterLog = normalizeWaterLog(fm?.water_log);
       const lastWatered = typeof fm?.last_watered === 'string' && fm.last_watered.trim()
         ? fm.last_watered.trim()
         : (waterLog.length ? waterLog[waterLog.length - 1] : null);
-      const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now);
+      const isDueToday = isScheduledOnDate(frequency, days, today);
+      const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now, days);
       const wateredToday = waterLog.includes(today) || lastWatered === today;
       const streak = computeHabitStreak(
         lastWatered && !waterLog.includes(lastWatered) ? [...waterLog, lastWatered] : waterLog,
         frequency,
         now,
+        days,
       );
       return {
         file,
         title: readString(fm, 'title', stripExt(file)),
         frequency,
+        days,
+        cadenceLabel: formatCadenceLabel(frequency, days),
+        cadenceShort: formatCadenceShort(frequency, days),
+        isDueToday,
         target: readString(fm, 'target', ''),
         lastWatered,
         waterLog,
@@ -123,8 +134,11 @@ function readExtraEntries(directory, reservedNames = new Set()) {
 function computeTreeStats(subgoals, habits) {
   const subgoalTotal = subgoals.length;
   const subgoalDone = subgoals.filter(item => item.done).length;
-  const habitTotal = habits.length;
-  const habitWatered = habits.filter(item => item.wateredInPeriod).length;
+  const dueHabits = habits.filter(item => item.isDueToday);
+  const dueTotal = dueHabits.length;
+  const dueWatered = dueHabits.filter(item => item.wateredInPeriod).length;
+  const habitTotal = dueTotal > 0 ? dueTotal : habits.length;
+  const habitWatered = dueTotal > 0 ? dueWatered : habits.filter(item => item.wateredInPeriod).length;
   const totalWaterings = habits.reduce((sum, item) => sum + item.waterLog.length, 0);
 
   let progress = 0;
@@ -149,10 +163,16 @@ function computeTreeStats(subgoals, habits) {
   else if (growth >= 0.28) stageLabel = 'Sapling';
 
   let hydrationState = 'calm';
-  if (habitTotal > 0) {
-    if (habitWatered === habitTotal) hydrationState = 'hydrated';
-    else if (habitWatered > 0) hydrationState = 'partial';
-    else hydrationState = 'thirsty';
+  if (habits.length > 0) {
+    if (dueTotal === 0) {
+      hydrationState = habitWatered > 0 ? 'hydrated' : 'calm';
+    } else if (dueWatered === dueTotal) {
+      hydrationState = 'hydrated';
+    } else if (dueWatered > 0) {
+      hydrationState = 'partial';
+    } else {
+      hydrationState = 'thirsty';
+    }
   }
 
   return {

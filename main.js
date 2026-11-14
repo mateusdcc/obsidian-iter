@@ -16,7 +16,18 @@ var require_storage = __commonJS({
       { id: "creative", label: "Creative" },
       { id: "health", label: "Health" }
     ];
-    var FREQUENCIES = ["daily", "weekly", "monthly"];
+    var FREQUENCIES = ["daily", "weekdays", "weekly", "monthly"];
+    var WEEKDAYS = [
+      { id: "mon", tiny: "M", short: "Mo", label: "Mon", full: "Monday", jsDay: 1 },
+      { id: "tue", tiny: "T", short: "Tu", label: "Tue", full: "Tuesday", jsDay: 2 },
+      { id: "wed", tiny: "W", short: "We", label: "Wed", full: "Wednesday", jsDay: 3 },
+      { id: "thu", tiny: "T", short: "Th", label: "Thu", full: "Thursday", jsDay: 4 },
+      { id: "fri", tiny: "F", short: "Fr", label: "Fri", full: "Friday", jsDay: 5 },
+      { id: "sat", tiny: "S", short: "Sa", label: "Sat", full: "Saturday", jsDay: 6 },
+      { id: "sun", tiny: "S", short: "Su", label: "Sun", full: "Sunday", jsDay: 0 }
+    ];
+    var DAY_BY_JS_DAY = new Map(WEEKDAYS.map((d) => [d.jsDay, d.id]));
+    var DAY_ORDER = new Map(WEEKDAYS.map((d, i) => [d.id, i]));
     var STYLES = ["auto", "canopy", "bonsai", "pine", "willow"];
     function isFolder(entry) {
       return !!entry && Array.isArray(entry.children);
@@ -83,6 +94,49 @@ var require_storage = __commonJS({
       const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
       return FREQUENCIES.includes(normalized) ? normalized : "daily";
     }
+    function normalizeDays(raw) {
+      if (!Array.isArray(raw)) return [];
+      const chosen = /* @__PURE__ */ new Set();
+      for (const item of raw) {
+        if (typeof item === "number" && DAY_BY_JS_DAY.has(item)) {
+          chosen.add(DAY_BY_JS_DAY.get(item));
+          continue;
+        }
+        const clean = typeof item === "string" ? item.trim().toLowerCase() : "";
+        if (!clean) continue;
+        const match = WEEKDAYS.find(
+          (d) => d.id === clean || d.short.toLowerCase() === clean || d.label.toLowerCase() === clean || d.full.toLowerCase() === clean
+        );
+        if (match) chosen.add(match.id);
+      }
+      return Array.from(chosen).sort((a, b) => DAY_ORDER.get(a) - DAY_ORDER.get(b));
+    }
+    function formatCadenceLabel(frequency, days = []) {
+      const freq = normalizeFrequency(frequency);
+      if (freq === "weekdays") {
+        const clean = normalizeDays(days);
+        if (!clean.length) return "Specific days";
+        if (clean.length === 7) return "Every day";
+        if (clean.length === 5 && !clean.includes("sat") && !clean.includes("sun")) return "Weekdays";
+        if (clean.length === 2 && clean.includes("sat") && clean.includes("sun")) return "Weekends";
+        return clean.map((id) => WEEKDAYS[DAY_ORDER.get(id)].label).join(", ");
+      }
+      if (freq === "weekly") return "Weekly";
+      if (freq === "monthly") return "Monthly";
+      return "Daily";
+    }
+    function formatCadenceShort(frequency, days = []) {
+      const freq = normalizeFrequency(frequency);
+      if (freq === "weekdays") {
+        const clean = normalizeDays(days);
+        if (!clean.length) return "Days";
+        if (clean.length <= 3) return clean.map((id) => WEEKDAYS[DAY_ORDER.get(id)].short).join("\xB7");
+        return `${clean.length}d/w`;
+      }
+      if (freq === "weekly") return "W";
+      if (freq === "monthly") return "M";
+      return "D";
+    }
     function normalizeStyle(value) {
       const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
       return STYLES.includes(normalized) ? normalized : "auto";
@@ -146,10 +200,14 @@ var require_storage = __commonJS({
       if (cleanTarget) lines.push(`Target: ${cleanTarget}`, "");
       return vault.create(filePath, lines.join("\n"));
     }
-    async function createHabit2(vault, { treePath, name, frequency = "daily", target = "" }) {
+    async function createHabit2(vault, { treePath, name, frequency = "daily", days = [], target = "" }) {
       const dir = validTreePath(treePath);
       const title = validateName(name, "Habit name");
       const freq = normalizeFrequency(frequency);
+      const cleanDays = freq === "weekdays" ? normalizeDays(days) : [];
+      if (freq === "weekdays" && !cleanDays.length) {
+        throw new Error("Select at least one day of the week.");
+      }
       const cleanTarget = typeof target === "string" ? target.trim() : "";
       await ensureStructure2(vault);
       const folder = vault.getAbstractFileByPath(dir);
@@ -165,6 +223,7 @@ var require_storage = __commonJS({
         "type: habit",
         `title: ${JSON.stringify(title)}`,
         `frequency: ${JSON.stringify(freq)}`,
+        `days: ${JSON.stringify(cleanDays)}`,
         `target: ${JSON.stringify(cleanTarget)}`,
         "last_watered: null",
         "water_log: []",
@@ -173,11 +232,23 @@ var require_storage = __commonJS({
         "",
         `# ${title}`,
         "",
-        `Cadence: ${freq}`,
+        `Cadence: ${formatCadenceLabel(freq, cleanDays)}`,
         ""
       ];
       if (cleanTarget) lines.push(`Target: ${cleanTarget}`, "");
       return vault.create(filePath, lines.join("\n"));
+    }
+    async function updateHabitSchedule2(app, file, { frequency, days = [] }) {
+      const freq = normalizeFrequency(frequency);
+      const cleanDays = freq === "weekdays" ? normalizeDays(days) : [];
+      if (freq === "weekdays" && !cleanDays.length) {
+        throw new Error("Select at least one day of the week.");
+      }
+      await app.fileManager.processFrontMatter(file, (frontmatter) => {
+        frontmatter.frequency = freq;
+        frontmatter.days = cleanDays;
+      });
+      return { frequency: freq, days: cleanDays };
     }
     function toDateKey(date = /* @__PURE__ */ new Date()) {
       const year = date.getFullYear();
@@ -247,26 +318,86 @@ var require_storage = __commonJS({
       }
       return Array.from(valid).sort();
     }
-    function isWateredInPeriod(lastWatered, waterLog, frequency, now = /* @__PURE__ */ new Date()) {
-      const currentPeriod = periodKeyFor(toDateKey(now), frequency);
-      if (!currentPeriod) return false;
+    function weekdayIdForDateKey(key) {
+      const parsed = parseDateKey(key);
+      if (!parsed) return null;
+      return DAY_BY_JS_DAY.get(parsed.getUTCDay()) ?? null;
+    }
+    function isScheduledOnDate(frequency, days, dateKey) {
+      const freq = normalizeFrequency(frequency);
+      if (freq !== "weekdays") return true;
+      const cleanDays = normalizeDays(days);
+      if (!cleanDays.length) return false;
+      const dayId = weekdayIdForDateKey(dateKey);
+      return dayId ? cleanDays.includes(dayId) : false;
+    }
+    function isWateredInPeriod(lastWatered, waterLog, frequency, now = /* @__PURE__ */ new Date(), days = []) {
+      const freq = normalizeFrequency(frequency);
+      const todayKey = toDateKey(now);
       const dates = normalizeWaterLog(waterLog);
-      if (typeof lastWatered === "string" && parseDateKey(lastWatered)) {
+      if (typeof lastWatered === "string" && parseDateKey(lastWatered) && !dates.includes(lastWatered.trim())) {
         dates.push(lastWatered.trim());
       }
-      return dates.some((key) => periodKeyFor(key, frequency) === currentPeriod);
+      if (freq === "weekdays") {
+        if (dates.includes(todayKey)) return true;
+        const cleanDays = normalizeDays(days);
+        if (!cleanDays.length) return false;
+        if (isScheduledOnDate("weekdays", cleanDays, todayKey)) {
+          return false;
+        }
+        let cursor = shiftDateKey(todayKey, -1);
+        for (let i = 0; i < 7 && cursor; i += 1) {
+          if (isScheduledOnDate("weekdays", cleanDays, cursor)) {
+            return dates.includes(cursor);
+          }
+          cursor = shiftDateKey(cursor, -1);
+        }
+        return false;
+      }
+      const currentPeriod = periodKeyFor(todayKey, freq);
+      if (!currentPeriod) return false;
+      return dates.some((key) => periodKeyFor(key, freq) === currentPeriod);
     }
-    function computeHabitStreak(waterLog, frequency, now = /* @__PURE__ */ new Date()) {
+    function computeWeekdaysStreak(dates, days, todayKey) {
+      const cleanDays = normalizeDays(days);
+      if (!dates.length || !cleanDays.length) return 0;
+      const logSet = new Set(dates);
+      const daySet = new Set(cleanDays);
+      const earliest = dates[0];
+      let cursor = todayKey;
+      let streak = 0;
+      let skippedOpenToday = false;
+      for (let steps = 0; steps < 1095 && cursor && cursor >= earliest; steps += 1) {
+        const dayId = weekdayIdForDateKey(cursor);
+        if (dayId && daySet.has(dayId)) {
+          if (logSet.has(cursor)) {
+            streak += 1;
+            skippedOpenToday = true;
+          } else if (cursor === todayKey && !skippedOpenToday) {
+            skippedOpenToday = true;
+          } else {
+            break;
+          }
+        }
+        cursor = shiftDateKey(cursor, -1);
+      }
+      return streak;
+    }
+    function computeHabitStreak(waterLog, frequency, now = /* @__PURE__ */ new Date(), days = []) {
+      const freq = normalizeFrequency(frequency);
       const dates = normalizeWaterLog(waterLog);
       if (!dates.length) return 0;
-      const periods = new Set(dates.map((key) => periodKeyFor(key, frequency)).filter(Boolean));
-      const current = periodKeyFor(toDateKey(now), frequency);
-      const previous = previousPeriodKey(current, frequency);
+      if (freq === "weekdays") {
+        return computeWeekdaysStreak(dates, days, toDateKey(now));
+      }
+      const periods = new Set(dates.map((key) => periodKeyFor(key, freq)).filter(Boolean));
+      const current = periodKeyFor(toDateKey(now), freq);
+      const previous = previousPeriodKey(current, freq);
       let cursor = periods.has(current) ? current : periods.has(previous) ? previous : null;
       let streak = 0;
       while (cursor && periods.has(cursor)) {
         streak += 1;
-        cursor = previousPeriodKey(cursor, frequency);
+        cursor = previousPeriodKey(cursor, freq);
       }
       return streak;
     }
@@ -308,6 +439,7 @@ var require_storage = __commonJS({
       WE_PATH,
       MODULES,
       FREQUENCIES,
+      WEEKDAYS,
       STYLES,
       isFolder,
       validateName,
@@ -316,13 +448,19 @@ var require_storage = __commonJS({
       validTreePath,
       normalizeModule,
       normalizeFrequency,
+      normalizeDays,
       normalizeStyle,
+      formatCadenceLabel,
+      formatCadenceShort,
       createTree: createTree2,
       createSubgoal: createSubgoal2,
       createHabit: createHabit2,
+      updateHabitSchedule: updateHabitSchedule2,
       toDateKey,
       parseDateKey,
       periodKeyFor,
+      weekdayIdForDateKey,
+      isScheduledOnDate,
       normalizeWaterLog,
       isWateredInPeriod,
       computeHabitStreak,
@@ -341,7 +479,11 @@ var require_catalog = __commonJS({
       isFolder,
       normalizeModule,
       normalizeFrequency,
+      normalizeDays,
       normalizeStyle,
+      formatCadenceLabel,
+      formatCadenceShort,
+      isScheduledOnDate,
       normalizeWaterLog,
       isWateredInPeriod,
       computeHabitStreak,
@@ -388,19 +530,26 @@ var require_catalog = __commonJS({
       return dir.children.filter((child) => !isFolder(child) && child.extension === "md" && !isHiddenName(child.name)).map((file) => {
         const fm = getFrontmatter(app, file);
         const frequency = normalizeFrequency(fm?.frequency);
+        const days = normalizeDays(fm?.days);
         const waterLog = normalizeWaterLog(fm?.water_log);
         const lastWatered = typeof fm?.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : waterLog.length ? waterLog[waterLog.length - 1] : null;
-        const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now);
+        const isDueToday = isScheduledOnDate(frequency, days, today);
+        const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now, days);
         const wateredToday = waterLog.includes(today) || lastWatered === today;
         const streak = computeHabitStreak(
           lastWatered && !waterLog.includes(lastWatered) ? [...waterLog, lastWatered] : waterLog,
           frequency,
-          now
+          now,
+          days
         );
         return {
           file,
           title: readString(fm, "title", stripExt(file)),
           frequency,
+          days,
+          cadenceLabel: formatCadenceLabel(frequency, days),
+          cadenceShort: formatCadenceShort(frequency, days),
+          isDueToday,
           target: readString(fm, "target", ""),
           lastWatered,
           waterLog,
@@ -440,8 +589,11 @@ var require_catalog = __commonJS({
     function computeTreeStats(subgoals, habits) {
       const subgoalTotal = subgoals.length;
       const subgoalDone = subgoals.filter((item) => item.done).length;
-      const habitTotal = habits.length;
-      const habitWatered = habits.filter((item) => item.wateredInPeriod).length;
+      const dueHabits = habits.filter((item) => item.isDueToday);
+      const dueTotal = dueHabits.length;
+      const dueWatered = dueHabits.filter((item) => item.wateredInPeriod).length;
+      const habitTotal = dueTotal > 0 ? dueTotal : habits.length;
+      const habitWatered = dueTotal > 0 ? dueWatered : habits.filter((item) => item.wateredInPeriod).length;
       const totalWaterings = habits.reduce((sum, item) => sum + item.waterLog.length, 0);
       let progress = 0;
       if (subgoalTotal > 0 && habitTotal > 0) {
@@ -463,10 +615,16 @@ var require_catalog = __commonJS({
       else if (growth >= 0.48) stageLabel = "Young Tree";
       else if (growth >= 0.28) stageLabel = "Sapling";
       let hydrationState = "calm";
-      if (habitTotal > 0) {
-        if (habitWatered === habitTotal) hydrationState = "hydrated";
-        else if (habitWatered > 0) hydrationState = "partial";
-        else hydrationState = "thirsty";
+      if (habits.length > 0) {
+        if (dueTotal === 0) {
+          hydrationState = habitWatered > 0 ? "hydrated" : "calm";
+        } else if (dueWatered === dueTotal) {
+          hydrationState = "hydrated";
+        } else if (dueWatered > 0) {
+          hydrationState = "partial";
+        } else {
+          hydrationState = "thirsty";
+        }
       }
       return {
         subgoalDone,
@@ -565,22 +723,114 @@ var require_catalog = __commonJS({
   }
 });
 
+// src/schedule-picker.js
+var require_schedule_picker = __commonJS({
+  "src/schedule-picker.js"(exports2, module2) {
+    var { WEEKDAYS, normalizeFrequency, normalizeDays, formatCadenceLabel } = require_storage();
+    var CADENCE_OPTIONS = [
+      { id: "daily", label: "Daily" },
+      { id: "weekdays", label: "Specific days" },
+      { id: "weekly", label: "Weekly" },
+      { id: "monthly", label: "Monthly" }
+    ];
+    function renderSchedulePicker(container, { frequency = "daily", days = [], onChange } = {}) {
+      let currentFreq = normalizeFrequency(frequency);
+      let currentDays = new Set(normalizeDays(days));
+      const root = container.createDiv({ cls: "iter-schedule-picker" });
+      const cadenceRow = root.createDiv({ cls: "iter-cadence-pills", attr: { role: "radiogroup", "aria-label": "Habit repetitivity" } });
+      const weekdayWrap = root.createDiv({ cls: "iter-weekday-wrap" });
+      const weekdayGrid = weekdayWrap.createDiv({ cls: "iter-weekday-grid", attr: { role: "group", "aria-label": "Days of the week" } });
+      const summaryEl = weekdayWrap.createDiv({ cls: "iter-schedule-summary" });
+      const cadenceButtons = /* @__PURE__ */ new Map();
+      const dayButtons = /* @__PURE__ */ new Map();
+      const snapshot = () => ({
+        frequency: currentFreq,
+        days: currentFreq === "weekdays" ? normalizeDays(Array.from(currentDays)) : []
+      });
+      const syncUi = () => {
+        for (const [id, btn] of cadenceButtons) {
+          const active = id === currentFreq;
+          btn.toggleClass?.("is-active", active);
+          if (!btn.toggleClass) {
+            btn.className = `iter-cadence-pill${active ? " is-active" : ""}`;
+          }
+          btn.setAttribute("aria-checked", String(active));
+        }
+        const showDays = currentFreq === "weekdays";
+        weekdayWrap.style.display = showDays ? "" : "none";
+        const orderedDays = normalizeDays(Array.from(currentDays));
+        for (const [id, btn] of dayButtons) {
+          const selected = currentDays.has(id);
+          btn.toggleClass?.("is-selected", selected);
+          if (!btn.toggleClass) {
+            btn.className = `iter-weekday-pill${selected ? " is-selected" : ""}`;
+          }
+          btn.setAttribute("aria-pressed", String(selected));
+        }
+        if (showDays) {
+          summaryEl.textContent = orderedDays.length ? `Water on ${formatCadenceLabel("weekdays", orderedDays)}` : "Select one or more days of the week";
+          summaryEl.toggleClass?.("is-empty", orderedDays.length === 0);
+        }
+      };
+      for (const option of CADENCE_OPTIONS) {
+        const btn = cadenceRow.createEl("button", {
+          text: option.label,
+          type: "button",
+          cls: "iter-cadence-pill",
+          attr: { role: "radio" }
+        });
+        cadenceButtons.set(option.id, btn);
+        btn.addEventListener("click", () => {
+          if (currentFreq === option.id) return;
+          currentFreq = option.id;
+          syncUi();
+          onChange?.(snapshot());
+        });
+      }
+      for (const day of WEEKDAYS) {
+        const btn = weekdayGrid.createEl("button", {
+          text: day.label,
+          type: "button",
+          cls: "iter-weekday-pill",
+          attr: { title: day.full, "aria-label": day.full }
+        });
+        dayButtons.set(day.id, btn);
+        btn.addEventListener("click", () => {
+          if (currentDays.has(day.id)) currentDays.delete(day.id);
+          else currentDays.add(day.id);
+          syncUi();
+          onChange?.(snapshot());
+        });
+      }
+      syncUi();
+      return {
+        getValue: snapshot,
+        setValue(nextFreq, nextDays = []) {
+          currentFreq = normalizeFrequency(nextFreq);
+          currentDays = new Set(normalizeDays(nextDays));
+          syncUi();
+        }
+      };
+    }
+    module2.exports = {
+      CADENCE_OPTIONS,
+      renderSchedulePicker
+    };
+  }
+});
+
 // src/modals.js
 var require_modals = __commonJS({
   "src/modals.js"(exports2, module2) {
     var { Modal, Notice: Notice2 } = require("obsidian");
-    var { MODULES, FREQUENCIES, STYLES } = require_storage();
+    var { MODULES, STYLES } = require_storage();
+    var { renderSchedulePicker } = require_schedule_picker();
     var STYLE_LABELS = {
       auto: "Auto (from module)",
       canopy: "Canopy",
       bonsai: "Bonsai",
       pine: "Pine",
       willow: "Willow"
-    };
-    var FREQUENCY_LABELS = {
-      daily: "Daily",
-      weekly: "Weekly",
-      monthly: "Monthly"
     };
     var BaseIterModal = class extends Modal {
       constructor(app, title, submitLabel, onSubmit) {
@@ -721,19 +971,11 @@ var require_modals = __commonJS({
       }
       onOpen() {
         const form = this.buildForm(this.contentEl);
-        const row = form.createDiv({ cls: "iter-modal-row" });
-        const treeSelect = this.addField(row, "Tree", (parent) => {
+        const treeSelect = this.addField(form, "Tree", (parent) => {
           const select = parent.createEl("select", { cls: "iter-modal-select" });
           for (const tree of this.trees) {
             const option = select.createEl("option", { value: tree.path, text: tree.title });
             if (tree.path === this.initialTreePath) option.selected = true;
-          }
-          return select;
-        });
-        const freqSelect = this.addField(row, "Watering cadence", (parent) => {
-          const select = parent.createEl("select", { cls: "iter-modal-select" });
-          for (const freq of FREQUENCIES) {
-            select.createEl("option", { value: freq, text: FREQUENCY_LABELS[freq] || freq });
           }
           return select;
         });
@@ -742,6 +984,9 @@ var require_modals = __commonJS({
           input.required = true;
           return input;
         });
+        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
+        scheduleField.createEl("span", { text: "Repetitivity", cls: "iter-modal-label" });
+        const picker = renderSchedulePicker(scheduleField, { frequency: "daily", days: [] });
         const targetInput = this.addField(
           form,
           "Daily/period target (optional)",
@@ -749,21 +994,43 @@ var require_modals = __commonJS({
         );
         this.addActions(
           form,
-          () => ({
-            treePath: treeSelect.value,
-            frequency: freqSelect.value,
-            name: nameInput.value,
-            target: targetInput.value
-          }),
+          () => {
+            const schedule = picker.getValue();
+            return {
+              treePath: treeSelect.value,
+              frequency: schedule.frequency,
+              days: schedule.days,
+              name: nameInput.value,
+              target: targetInput.value
+            };
+          },
           nameInput
         );
         nameInput.focus();
       }
     };
+    var EditHabitScheduleModal2 = class extends BaseIterModal {
+      constructor(app, { title, frequency, days, onSubmit }) {
+        super(app, `Repetitivity \xB7 ${title}`, "Save schedule", onSubmit);
+        this.frequency = frequency;
+        this.days = days;
+      }
+      onOpen() {
+        const form = this.buildForm(this.contentEl);
+        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
+        scheduleField.createEl("span", { text: "Watering schedule", cls: "iter-modal-label" });
+        const picker = renderSchedulePicker(scheduleField, {
+          frequency: this.frequency,
+          days: this.days
+        });
+        this.addActions(form, () => picker.getValue());
+      }
+    };
     module2.exports = {
       CreateTreeModal: CreateTreeModal2,
       CreateSubgoalModal: CreateSubgoalModal2,
-      CreateHabitModal: CreateHabitModal2
+      CreateHabitModal: CreateHabitModal2,
+      EditHabitScheduleModal: EditHabitScheduleModal2
     };
   }
 });
@@ -781,11 +1048,6 @@ var require_panel_view = __commonJS({
       creative: "sparkles",
       health: "heart",
       general: "trees"
-    };
-    var CADENCE_SHORT = {
-      daily: "D",
-      weekly: "W",
-      monthly: "M"
     };
     function iconButton(parent, icon, label, callback, extraClass = "") {
       const button = parent.createEl("button", {
@@ -943,7 +1205,7 @@ var require_panel_view = __commonJS({
         }
         menu.showAtMouseEvent(event);
       }
-      showGoalItemMenu(event, file, extraLabel, extraIcon, extraAction) {
+      showGoalItemMenu(event, file, extraActions = []) {
         const menu = new Menu();
         menu.addItem(
           (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
@@ -951,9 +1213,11 @@ var require_panel_view = __commonJS({
         menu.addItem(
           (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
         );
-        if (extraAction) {
+        if (extraActions.length) {
           menu.addSeparator();
-          menu.addItem((item) => item.setTitle(extraLabel).setIcon(extraIcon).onClick(extraAction));
+          for (const action of extraActions) {
+            menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
+          }
         }
         menu.showAtMouseEvent(event);
       }
@@ -1032,26 +1296,27 @@ var require_panel_view = __commonJS({
         titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          this.showGoalItemMenu(
-            event,
-            subgoal.file,
-            subgoal.done ? "Mark incomplete" : "Mark done",
-            subgoal.done ? "circle" : "check-circle-2",
-            async () => {
-              await toggleSubgoal(this.app, subgoal.file);
-              this.plugin.scheduleRefresh();
+          this.showGoalItemMenu(event, subgoal.file, [
+            {
+              label: subgoal.done ? "Mark incomplete" : "Mark done",
+              icon: subgoal.done ? "circle" : "check-circle-2",
+              run: async () => {
+                await toggleSubgoal(this.app, subgoal.file);
+                this.plugin.scheduleRefresh();
+              }
             }
-          );
+          ]);
         });
       }
       renderHabit(parent, habit) {
+        const resting = !habit.isDueToday && !habit.wateredToday;
         const row = parent.createDiv({
-          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}`
+          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
         });
         const waterBtn = iconButton(
           row,
           "droplet",
-          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : `Water "${habit.title}"`,
+          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water "${habit.title}" anyway` : `Water "${habit.title}"`,
           async () => {
             try {
               const watered = await waterHabit(this.app, habit.file);
@@ -1061,31 +1326,39 @@ var require_panel_view = __commonJS({
               new Notice2(error?.message || "Could not water habit.");
             }
           },
-          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}`
+          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
         );
         waterBtn.setAttribute("aria-pressed", String(habit.wateredToday));
         const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute("title", habit.target ? `${habit.title} (${habit.frequency}) \xB7 ${habit.target}` : `${habit.title} (${habit.frequency})`);
+        titleBtn.setAttribute(
+          "title",
+          habit.target ? `${habit.title} (${habit.cadenceLabel}) \xB7 ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`
+        );
         if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
         titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
         titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          this.showGoalItemMenu(
-            event,
-            habit.file,
-            habit.wateredToday ? "Undo today's watering" : "Water now",
-            "droplet",
-            async () => {
-              await waterHabit(this.app, habit.file);
-              this.plugin.scheduleRefresh();
+          this.showGoalItemMenu(event, habit.file, [
+            {
+              label: habit.wateredToday ? "Undo today's watering" : "Water now",
+              icon: "droplet",
+              run: async () => {
+                await waterHabit(this.app, habit.file);
+                this.plugin.scheduleRefresh();
+              }
+            },
+            {
+              label: "Edit repetitivity",
+              icon: "calendar-days",
+              run: () => this.plugin.promptEditHabitSchedule(habit)
             }
-          );
+          ]);
         });
         row.createSpan({
-          text: CADENCE_SHORT[habit.frequency] || "D",
+          text: habit.cadenceShort,
           cls: "iter-cadence-badge",
-          attr: { title: `${habit.frequency} habit` }
+          attr: { title: `${habit.cadenceLabel} habit` }
         });
       }
       renderExtraEntry(parent, entry) {
@@ -1680,12 +1953,13 @@ var require_garden_view = __commonJS({
           const waterBar = card.createDiv({ cls: "iter-pot-water-bar" });
           const visibleHabits = tree.habits.slice(0, 3);
           for (const habit of visibleHabits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
             const chip = waterBar.createEl("button", {
-              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}`,
+              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
               type: "button",
               attr: {
                 "aria-pressed": String(habit.wateredToday),
-                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : `Water ${habit.title}`
+                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water ${habit.title}` : `Water ${habit.title} (${habit.cadenceLabel})`
               }
             });
             const drop = chip.createSpan({ cls: "iter-chip-icon" });
@@ -1805,22 +2079,25 @@ var require_garden_view = __commonJS({
         } else {
           const list = habCol.createDiv({ cls: "iter-detail-list" });
           for (const habit of tree.habits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
             const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? " is-watered" : ""}` });
             const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
             textBtn.createSpan({ text: habit.title, cls: "iter-detail-title" });
-            const subMeta = [habit.frequency];
+            const subMeta = [habit.cadenceLabel];
             if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
             if (habit.target) subMeta.push(habit.target);
             textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
             textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
             const waterBtn = row.createEl("button", {
-              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}`,
+              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
               type: "button",
               attr: { "aria-pressed": String(habit.wateredToday) }
             });
             const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
             setIcon(drop, "droplet");
-            waterBtn.createSpan({ text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : "Water" });
+            waterBtn.createSpan({
+              text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
+            });
             waterBtn.addEventListener("click", async () => {
               try {
                 const watered = await waterHabit(this.app, habit.file);
@@ -1844,7 +2121,7 @@ var require_garden_view = __commonJS({
 // src/data-model.js
 var require_data_model = __commonJS({
   "src/data-model.js"(exports2, module2) {
-    var { ROOT, parseDateKey, toDateKey } = require_storage();
+    var { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays } = require_storage();
     var DATASET_TYPES = [
       { id: "number_time", label: "Number & Time" },
       { id: "text", label: "Text List" },
@@ -2003,7 +2280,8 @@ var require_data_model = __commonJS({
         due,
         target,
         done: Boolean(fm.done),
-        frequency: typeof fm.frequency === "string" ? fm.frequency : "daily",
+        frequency: normalizeFrequency(fm.frequency),
+        days: normalizeDays(fm.days),
         module: typeof fm.module === "string" ? fm.module : "general",
         datasets,
         widgets
@@ -2672,8 +2950,9 @@ var require_goal_modals = __commonJS({
 var require_goal_view = __commonJS({
   "src/goal-view.js"(exports2, module2) {
     var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
-    var { ROOT, toDateKey, toggleSubgoal, waterHabit } = require_storage();
+    var { ROOT, toDateKey, toggleSubgoal, waterHabit, updateHabitSchedule: updateHabitSchedule2, formatCadenceLabel, isScheduledOnDate } = require_storage();
     var { listGarden: listGarden2 } = require_catalog();
+    var { renderSchedulePicker } = require_schedule_picker();
     var {
       DATASET_TYPES,
       readGoalDocument,
@@ -2820,6 +3099,9 @@ var require_goal_view = __commonJS({
         const shell = container.createDiv({ cls: "iter-goal-shell" });
         this.renderHeader(shell, doc);
         this.renderOverview(shell, doc);
+        if (doc.kind === "habit") {
+          this.renderHabitSchedule(shell, doc);
+        }
         this.renderWidgetsSection(shell, doc);
         this.renderDatasetsSection(shell, doc);
         if (doc.kind === "tree" && doc.treePath) {
@@ -2858,14 +3140,16 @@ var require_goal_view = __commonJS({
           const habit = tree?.habits?.find((h) => h.file.path === this.file.path);
           const watered = habit?.wateredInPeriod ?? false;
           const wateredToday = habit?.wateredToday ?? false;
+          const dueToday = isScheduledOnDate(doc.frequency, doc.days, toDateKey());
+          const cadenceLabel = formatCadenceLabel(doc.frequency, doc.days);
           const waterBtn = actions.createEl("button", {
-            cls: `iter-water-action${watered ? " is-watered" : ""}`,
+            cls: `iter-water-action${watered ? " is-watered" : ""}${!dueToday && !wateredToday ? " is-rest" : ""}`,
             type: "button"
           });
           const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
           setIcon(drop, "droplet");
           waterBtn.createSpan({
-            text: wateredToday ? "Watered today" : watered ? `Watered (${doc.frequency})` : `Water (${doc.frequency})`
+            text: wateredToday ? "Watered today" : watered ? `Done (${cadenceLabel})` : !dueToday ? `Rest day (${cadenceLabel})` : `Water (${cadenceLabel})`
           });
           waterBtn.addEventListener("click", async () => {
             const res = await waterHabit(this.app, this.file);
@@ -2921,6 +3205,28 @@ var require_goal_view = __commonJS({
           await updateGoalMeta(this.app, this.file, { due: dueInput.value });
           this.render();
           this.plugin.scheduleRefresh();
+        });
+      }
+      renderHabitSchedule(shell, doc) {
+        const box = shell.createDiv({ cls: "iter-goal-schedule" });
+        const top = box.createDiv({ cls: "iter-schedule-head" });
+        top.createEl("span", { text: "Repetitivity", cls: "iter-micro-label" });
+        const currentLabel = top.createSpan({
+          text: formatCadenceLabel(doc.frequency, doc.days),
+          cls: "iter-schedule-current"
+        });
+        renderSchedulePicker(box, {
+          frequency: doc.frequency,
+          days: doc.days,
+          onChange: async (next) => {
+            if (next.frequency === "weekdays" && !next.days.length) {
+              currentLabel.textContent = "Pick days below";
+              return;
+            }
+            await updateHabitSchedule2(this.app, this.file, next);
+            currentLabel.textContent = formatCadenceLabel(next.frequency, next.days);
+            this.plugin.scheduleRefresh();
+          }
         });
       }
       renderWidgetsSection(shell, doc) {
@@ -3277,7 +3583,7 @@ var require_goal_view = __commonJS({
           const icon = btn.createSpan({ cls: "iter-btn-icon" });
           setIcon(icon, "droplet");
           btn.createSpan({ text: habit.title, cls: "iter-tree-link-name" });
-          btn.createSpan({ text: habit.frequency, cls: "iter-tree-link-kind" });
+          btn.createSpan({ text: habit.cadenceLabel, cls: "iter-tree-link-kind" });
           btn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
         }
       }
@@ -3291,9 +3597,9 @@ var require_goal_view = __commonJS({
 
 // src/plugin.js
 var { Plugin, Notice } = require("obsidian");
-var { ensureStructure, createTree, createSubgoal, createHabit } = require_storage();
+var { ensureStructure, createTree, createSubgoal, createHabit, updateHabitSchedule } = require_storage();
 var { listGarden, findTreeContext } = require_catalog();
-var { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require_modals();
+var { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require_modals();
 var { IterPanelView, PANEL_VIEW } = require_panel_view();
 var { GardenView, GARDEN_VIEW } = require_garden_view();
 var { GoalView, GOAL_VIEW } = require_goal_view();
@@ -3517,6 +3823,18 @@ var IterPlugin = class extends Plugin {
       onSubmit: async (values) => {
         await createHabit(this.app.vault, values);
         new Notice(`Added habit "${values.name.trim()}"`);
+        this.scheduleRefresh();
+      }
+    }).open();
+  }
+  promptEditHabitSchedule(habit) {
+    new EditHabitScheduleModal(this.app, {
+      title: habit.title,
+      frequency: habit.frequency,
+      days: habit.days,
+      onSubmit: async (schedule) => {
+        await updateHabitSchedule(this.app, habit.file, schedule);
+        new Notice(`Updated repetitivity for "${habit.title}"`);
         this.scheduleRefresh();
       }
     }).open();
