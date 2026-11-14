@@ -102,9 +102,10 @@ class AddDatasetModal extends Modal {
 }
 
 class AddWidgetModal extends Modal {
-  constructor(app, { datasets, onSubmit }) {
+  constructor(app, { datasets = [], goalKind = 'goal', onSubmit }) {
     super(app);
     this.datasets = datasets;
+    this.goalKind = goalKind;
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
@@ -118,12 +119,17 @@ class AddWidgetModal extends Modal {
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
     const row = form.createDiv({ cls: 'iter-modal-row' });
 
+    const availableTypes = WIDGET_TYPES.filter(item =>
+      item.id === 'streak' ? this.goalKind === 'habit' : this.datasets.length > 0,
+    );
+
     const typeField = row.createDiv({ cls: 'iter-modal-field' });
     typeField.createEl('label', { text: 'Widget type', cls: 'iter-modal-label' });
     const typeSelect = typeField.createEl('select', { cls: 'iter-modal-select' });
-    for (const item of WIDGET_TYPES) {
+    for (const item of availableTypes) {
       typeSelect.createEl('option', { value: item.id, text: item.label });
     }
+    if (availableTypes.length) typeSelect.value = availableTypes[0].id;
 
     const dsField = row.createDiv({ cls: 'iter-modal-field' });
     dsField.createEl('label', { text: 'Linked data', cls: 'iter-modal-label' });
@@ -131,6 +137,7 @@ class AddWidgetModal extends Modal {
     for (const ds of this.datasets) {
       dsSelect.createEl('option', { value: ds.id, text: ds.name });
     }
+    if (this.datasets.length) dsSelect.value = this.datasets[0].id;
 
     const titleField = form.createDiv({ cls: 'iter-modal-field' });
     titleField.createEl('label', { text: 'Widget title (optional)', cls: 'iter-modal-label' });
@@ -155,7 +162,14 @@ class AddWidgetModal extends Modal {
       variantSelect = null;
 
       const wType = typeSelect.value;
-      if (wType === 'stat') {
+      dsField.style.display = wType === 'streak' ? 'none' : '';
+      titleInput.placeholder = wType === 'streak' ? 'Streak' : 'Auto-named from data if left blank';
+      if (wType === 'streak') {
+        dynamicSlot.createEl('p', {
+          text: 'Tracks consecutive scheduled completions from this habit\'s watering log.',
+          cls: 'iter-section-hint',
+        });
+      } else if (wType === 'stat') {
         const field = dynamicSlot.createDiv({ cls: 'iter-modal-field' });
         field.createEl('label', { text: 'Calculation', cls: 'iter-modal-label' });
         aggSelect = field.createEl('select', { cls: 'iter-modal-select' });
@@ -213,7 +227,7 @@ class AddWidgetModal extends Modal {
       try {
         await this.onSubmit({
           type: typeSelect.value,
-          datasetId: dsSelect.value,
+          datasetId: typeSelect.value === 'streak' ? '' : dsSelect.value,
           title: titleInput.value,
           agg: aggSelect?.value ?? 'latest',
           mode: modeSelect?.value ?? 'latest',

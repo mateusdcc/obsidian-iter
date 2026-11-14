@@ -227,6 +227,7 @@ var require_storage = __commonJS({
         `target: ${JSON.stringify(cleanTarget)}`,
         "last_watered: null",
         "water_log: []",
+        'widgets: [{"id":"w_streak","title":"Streak","type":"streak"}]',
         `created: ${(/* @__PURE__ */ new Date()).toISOString()}`,
         "---",
         "",
@@ -358,6 +359,13 @@ var require_storage = __commonJS({
       if (!currentPeriod) return false;
       return dates.some((key) => periodKeyFor(key, freq) === currentPeriod);
     }
+    function mergeWaterDates(waterLog, lastWatered = null) {
+      const valid = new Set(normalizeWaterLog(waterLog));
+      if (typeof lastWatered === "string" && parseDateKey(lastWatered)) {
+        valid.add(lastWatered.trim());
+      }
+      return Array.from(valid).sort();
+    }
     function computeWeekdaysStreak(dates, days, todayKey) {
       const cleanDays = normalizeDays(days);
       if (!dates.length || !cleanDays.length) return 0;
@@ -367,7 +375,7 @@ var require_storage = __commonJS({
       let cursor = todayKey;
       let streak = 0;
       let skippedOpenToday = false;
-      for (let steps = 0; steps < 1095 && cursor && cursor >= earliest; steps += 1) {
+      for (let steps = 0; steps < 36500 && cursor && cursor >= earliest; steps += 1) {
         const dayId = weekdayIdForDateKey(cursor);
         if (dayId && daySet.has(dayId)) {
           if (logSet.has(cursor)) {
@@ -383,9 +391,49 @@ var require_storage = __commonJS({
       }
       return streak;
     }
-    function computeHabitStreak(waterLog, frequency, now = /* @__PURE__ */ new Date(), days = []) {
+    function computeWeekdaysBestStreak(dates, days, todayKey) {
+      const cleanDays = normalizeDays(days);
+      if (!dates.length || !cleanDays.length) return 0;
+      const logSet = new Set(dates);
+      const daySet = new Set(cleanDays);
+      const end = dates[dates.length - 1] > todayKey ? dates[dates.length - 1] : todayKey;
+      let cursor = dates[0];
+      let run = 0;
+      let best = 0;
+      for (let steps = 0; steps < 36500 && cursor && cursor <= end; steps += 1) {
+        const dayId = weekdayIdForDateKey(cursor);
+        if (dayId && daySet.has(dayId)) {
+          if (logSet.has(cursor)) {
+            run += 1;
+            if (run > best) best = run;
+          } else if (cursor !== todayKey) {
+            run = 0;
+          }
+        }
+        cursor = shiftDateKey(cursor, 1);
+      }
+      return best;
+    }
+    function computePeriodBestStreak(periodsSet, freq) {
+      if (!periodsSet.size) return 0;
+      const sorted = Array.from(periodsSet).sort();
+      let run = 0;
+      let best = 0;
+      let prev = null;
+      for (const period of sorted) {
+        if (prev && previousPeriodKey(period, freq) === prev) {
+          run += 1;
+        } else {
+          run = 1;
+        }
+        if (run > best) best = run;
+        prev = period;
+      }
+      return best;
+    }
+    function computeHabitStreak(waterLog, frequency, now = /* @__PURE__ */ new Date(), days = [], lastWatered = null) {
       const freq = normalizeFrequency(frequency);
-      const dates = normalizeWaterLog(waterLog);
+      const dates = mergeWaterDates(waterLog, lastWatered);
       if (!dates.length) return 0;
       if (freq === "weekdays") {
         return computeWeekdaysStreak(dates, days, toDateKey(now));
@@ -400,6 +448,92 @@ var require_storage = __commonJS({
         cursor = previousPeriodKey(cursor, freq);
       }
       return streak;
+    }
+    function shortDayLabel(dateKey) {
+      const id = weekdayIdForDateKey(dateKey);
+      if (!id) return dateKey;
+      return WEEKDAYS[DAY_ORDER.get(id)].short;
+    }
+    function recentScheduledSlots(dates, freq, days, todayKey, count = 6) {
+      const logSet = new Set(dates);
+      if (freq === "weekdays") {
+        const cleanDays = normalizeDays(days);
+        if (!cleanDays.length) return [];
+        const daySet = new Set(cleanDays);
+        const slots2 = [];
+        let cursor2 = todayKey;
+        for (let i = 0; i < 60 && slots2.length < count && cursor2; i += 1) {
+          const id = weekdayIdForDateKey(cursor2);
+          if (id && daySet.has(id)) {
+            slots2.unshift({
+              key: cursor2,
+              label: shortDayLabel(cursor2),
+              completed: logSet.has(cursor2),
+              isCurrent: cursor2 === todayKey
+            });
+          }
+          cursor2 = shiftDateKey(cursor2, -1);
+        }
+        return slots2;
+      }
+      const periods = new Set(dates.map((key) => periodKeyFor(key, freq)).filter(Boolean));
+      const slots = [];
+      let cursor = periodKeyFor(todayKey, freq);
+      for (let i = 0; i < count && cursor; i += 1) {
+        let label = cursor;
+        if (freq === "daily") label = shortDayLabel(cursor);
+        else if (freq === "weekly") label = cursor.slice(5);
+        else if (freq === "monthly") label = cursor.slice(5);
+        slots.unshift({
+          key: cursor,
+          label,
+          completed: periods.has(cursor),
+          isCurrent: i === 0
+        });
+        cursor = previousPeriodKey(cursor, freq);
+      }
+      return slots;
+    }
+    function streakUnit(freq, count) {
+      if (freq === "weekly") return count === 1 ? "week" : "weeks";
+      if (freq === "monthly") return count === 1 ? "month" : "months";
+      if (freq === "weekdays") return count === 1 ? "scheduled day" : "scheduled days";
+      return count === 1 ? "day" : "days";
+    }
+    function computeHabitStreakDetails(waterLog, frequency, now = /* @__PURE__ */ new Date(), days = [], lastWatered = null) {
+      const freq = normalizeFrequency(frequency);
+      const cleanDays = normalizeDays(days);
+      const dates = mergeWaterDates(waterLog, lastWatered);
+      const todayKey = toDateKey(now);
+      const streak = computeHabitStreak(dates, freq, now, cleanDays, lastWatered);
+      let bestStreak = 0;
+      if (dates.length) {
+        if (freq === "weekdays") {
+          bestStreak = computeWeekdaysBestStreak(dates, cleanDays, todayKey);
+        } else {
+          const periods = new Set(dates.map((key) => periodKeyFor(key, freq)).filter(Boolean));
+          bestStreak = computePeriodBestStreak(periods, freq);
+        }
+      }
+      if (streak > bestStreak) bestStreak = streak;
+      const wateredToday = dates.includes(todayKey);
+      const wateredPeriod = isWateredInPeriod(lastWatered, dates, freq, now, cleanDays);
+      const dueToday = isScheduledOnDate(freq, cleanDays, todayKey);
+      let statusLabel = "Due today";
+      if (wateredToday) statusLabel = "Watered today";
+      else if (freq === "weekly" && wateredPeriod) statusLabel = "Done this week";
+      else if (freq === "monthly" && wateredPeriod) statusLabel = "Done this month";
+      else if (!dueToday) statusLabel = "Rest day";
+      else if (freq === "weekly") statusLabel = "Due this week";
+      else if (freq === "monthly") statusLabel = "Due this month";
+      return {
+        streak,
+        bestStreak,
+        unit: streakUnit(freq, streak),
+        cadenceLabel: formatCadenceLabel(freq, cleanDays),
+        statusLabel,
+        recentSlots: recentScheduledSlots(dates, freq, cleanDays, todayKey, 6)
+      };
     }
     async function toggleSubgoal(app, file, nextDone) {
       let result = false;
@@ -462,8 +596,10 @@ var require_storage = __commonJS({
       weekdayIdForDateKey,
       isScheduledOnDate,
       normalizeWaterLog,
+      mergeWaterDates,
       isWateredInPeriod,
       computeHabitStreak,
+      computeHabitStreakDetails,
       toggleSubgoal,
       waterHabit
     };
@@ -2121,7 +2257,7 @@ var require_garden_view = __commonJS({
 // src/data-model.js
 var require_data_model = __commonJS({
   "src/data-model.js"(exports2, module2) {
-    var { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays } = require_storage();
+    var { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays, mergeWaterDates } = require_storage();
     var DATASET_TYPES = [
       { id: "number_time", label: "Number & Time" },
       { id: "text", label: "Text List" },
@@ -2132,7 +2268,8 @@ var require_data_model = __commonJS({
       { id: "stat", label: "Metric Stat" },
       { id: "goal_bar", label: "Goal Comparison Bar" },
       { id: "chart", label: "Time Graph" },
-      { id: "note_navigator", label: "Note Navigator" }
+      { id: "note_navigator", label: "Note Navigator" },
+      { id: "streak", label: "Habit Streak" }
     ];
     var STAT_AGGS = [
       { id: "count", label: "Count" },
@@ -2228,9 +2365,9 @@ var require_data_model = __commonJS({
     }
     function normalizeWidget(raw) {
       if (!raw || typeof raw !== "object") return null;
-      const datasetId = typeof raw.datasetId === "string" ? raw.datasetId.trim() : "";
-      if (!datasetId) return null;
       const type = normalizeWidgetType(raw.type);
+      const datasetId = typeof raw.datasetId === "string" ? raw.datasetId.trim() : "";
+      if (type !== "streak" && !datasetId) return null;
       const title = typeof raw.title === "string" ? raw.title.trim() : "";
       return {
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : generateId("w"),
@@ -2282,6 +2419,8 @@ var require_data_model = __commonJS({
         done: Boolean(fm.done),
         frequency: normalizeFrequency(fm.frequency),
         days: normalizeDays(fm.days),
+        waterLog: mergeWaterDates(fm.water_log),
+        lastWatered: typeof fm.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : null,
         module: typeof fm.module === "string" ? fm.module : "general",
         datasets,
         widgets
@@ -2452,13 +2591,17 @@ var require_data_model = __commonJS({
         }
       });
     }
-    async function addWidget(app, file, { title = "", type, datasetId, agg = "latest", mode = "latest", target = null, variant = "line", metricKey = "" }) {
-      if (!datasetId) throw new Error("Select a data list to link this widget to.");
+    async function addWidget(app, file, { title = "", type, datasetId = "", agg = "latest", mode = "latest", target = null, variant = "line", metricKey = "" }) {
+      const wType = normalizeWidgetType(type);
+      const resolvedDatasetId = wType === "streak" ? "" : typeof datasetId === "string" ? datasetId.trim() : "";
+      if (wType !== "streak" && !resolvedDatasetId) {
+        throw new Error("Select a data list to link this widget to.");
+      }
       const widget = {
         id: generateId("w"),
         title: typeof title === "string" ? title.trim() : "",
-        type: normalizeWidgetType(type),
-        datasetId,
+        type: wType,
+        datasetId: resolvedDatasetId,
         agg: normalizeStatAgg(agg),
         mode: normalizeBarMode(mode),
         target: toFiniteNumber(target),
@@ -2745,9 +2888,10 @@ var require_goal_modals = __commonJS({
       }
     };
     var AddWidgetModal = class extends Modal {
-      constructor(app, { datasets, onSubmit }) {
+      constructor(app, { datasets = [], goalKind = "goal", onSubmit }) {
         super(app);
         this.datasets = datasets;
+        this.goalKind = goalKind;
         this.onSubmit = onSubmit;
         this.submitting = false;
       }
@@ -2758,18 +2902,23 @@ var require_goal_modals = __commonJS({
         contentEl.createEl("h2", { text: "Add widget", cls: "iter-modal-title" });
         const form = contentEl.createEl("form", { cls: "iter-modal-form" });
         const row = form.createDiv({ cls: "iter-modal-row" });
+        const availableTypes = WIDGET_TYPES.filter(
+          (item) => item.id === "streak" ? this.goalKind === "habit" : this.datasets.length > 0
+        );
         const typeField = row.createDiv({ cls: "iter-modal-field" });
         typeField.createEl("label", { text: "Widget type", cls: "iter-modal-label" });
         const typeSelect = typeField.createEl("select", { cls: "iter-modal-select" });
-        for (const item of WIDGET_TYPES) {
+        for (const item of availableTypes) {
           typeSelect.createEl("option", { value: item.id, text: item.label });
         }
+        if (availableTypes.length) typeSelect.value = availableTypes[0].id;
         const dsField = row.createDiv({ cls: "iter-modal-field" });
         dsField.createEl("label", { text: "Linked data", cls: "iter-modal-label" });
         const dsSelect = dsField.createEl("select", { cls: "iter-modal-select" });
         for (const ds of this.datasets) {
           dsSelect.createEl("option", { value: ds.id, text: ds.name });
         }
+        if (this.datasets.length) dsSelect.value = this.datasets[0].id;
         const titleField = form.createDiv({ cls: "iter-modal-field" });
         titleField.createEl("label", { text: "Widget title (optional)", cls: "iter-modal-label" });
         const titleInput = titleField.createEl("input", {
@@ -2789,7 +2938,14 @@ var require_goal_modals = __commonJS({
           targetInput = null;
           variantSelect = null;
           const wType = typeSelect.value;
-          if (wType === "stat") {
+          dsField.style.display = wType === "streak" ? "none" : "";
+          titleInput.placeholder = wType === "streak" ? "Streak" : "Auto-named from data if left blank";
+          if (wType === "streak") {
+            dynamicSlot.createEl("p", {
+              text: "Tracks consecutive scheduled completions from this habit's watering log.",
+              cls: "iter-section-hint"
+            });
+          } else if (wType === "stat") {
             const field = dynamicSlot.createDiv({ cls: "iter-modal-field" });
             field.createEl("label", { text: "Calculation", cls: "iter-modal-label" });
             aggSelect = field.createEl("select", { cls: "iter-modal-select" });
@@ -2842,7 +2998,7 @@ var require_goal_modals = __commonJS({
           try {
             await this.onSubmit({
               type: typeSelect.value,
-              datasetId: dsSelect.value,
+              datasetId: typeSelect.value === "streak" ? "" : dsSelect.value,
               title: titleInput.value,
               agg: aggSelect?.value ?? "latest",
               mode: modeSelect?.value ?? "latest",
@@ -2950,7 +3106,16 @@ var require_goal_modals = __commonJS({
 var require_goal_view = __commonJS({
   "src/goal-view.js"(exports2, module2) {
     var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
-    var { ROOT, toDateKey, toggleSubgoal, waterHabit, updateHabitSchedule: updateHabitSchedule2, formatCadenceLabel, isScheduledOnDate } = require_storage();
+    var {
+      ROOT,
+      toDateKey,
+      toggleSubgoal,
+      waterHabit,
+      updateHabitSchedule: updateHabitSchedule2,
+      formatCadenceLabel,
+      isScheduledOnDate,
+      computeHabitStreakDetails
+    } = require_storage();
     var { listGarden: listGarden2 } = require_catalog();
     var { renderSchedulePicker } = require_schedule_picker();
     var {
@@ -3238,12 +3403,13 @@ var require_goal_view = __commonJS({
         setIcon(plus, "plus");
         addBtn.createSpan({ text: "Add widget" });
         addBtn.addEventListener("click", () => {
-          if (!doc.datasets.length) {
+          if (doc.kind !== "habit" && !doc.datasets.length) {
             new Notice2("Add a data list first, then link a widget to it.");
             return;
           }
           new AddWidgetModal(this.app, {
             datasets: doc.datasets,
+            goalKind: doc.kind,
             onSubmit: async (config) => {
               await addWidget(this.app, this.file, config);
               this.render();
@@ -3252,7 +3418,7 @@ var require_goal_view = __commonJS({
         });
         if (!doc.widgets.length) {
           section.createEl("p", {
-            text: doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
+            text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
             cls: "iter-section-hint"
           });
           return;
@@ -3260,17 +3426,17 @@ var require_goal_view = __commonJS({
         const grid = section.createDiv({ cls: "iter-widget-grid" });
         const datasetById = new Map(doc.datasets.map((d) => [d.id, d]));
         for (const widget of doc.widgets) {
-          const ds = datasetById.get(widget.datasetId);
-          this.renderWidgetCard(grid, widget, ds);
+          const ds = widget.datasetId ? datasetById.get(widget.datasetId) : null;
+          this.renderWidgetCard(grid, widget, ds, doc);
         }
       }
-      renderWidgetCard(grid, widget, dataset) {
+      renderWidgetCard(grid, widget, dataset, doc) {
         const wide = widget.type === "chart" || widget.type === "goal_bar" || widget.type === "note_navigator";
         const card = grid.createDiv({
           cls: `iter-widget-card type-${widget.type}${wide ? " is-wide" : ""}`
         });
         const top = card.createDiv({ cls: "iter-widget-top" });
-        const defaultTitle = !dataset ? "Missing dataset" : widget.type === "stat" ? `${dataset.name} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : dataset.name;
+        const defaultTitle = widget.type === "streak" ? "Streak" : !dataset ? "Missing dataset" : widget.type === "stat" ? `${dataset.name} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : dataset.name;
         top.createSpan({ text: widget.title || defaultTitle, cls: "iter-widget-title" });
         const removeBtn = top.createEl("button", {
           cls: "iter-icon-button iter-widget-remove",
@@ -3282,6 +3448,34 @@ var require_goal_view = __commonJS({
           await removeWidget(this.app, this.file, widget.id);
           this.render();
         });
+        if (widget.type === "streak") {
+          const details = computeHabitStreakDetails(
+            doc.waterLog,
+            doc.frequency,
+            /* @__PURE__ */ new Date(),
+            doc.days,
+            doc.lastWatered
+          );
+          const valRow = card.createDiv({ cls: "iter-streak-main" });
+          valRow.createSpan({ text: String(details.streak), cls: "iter-streak-number" });
+          valRow.createSpan({ text: details.unit, cls: "iter-streak-unit" });
+          card.createDiv({
+            text: `${details.statusLabel} \xB7 Best: ${details.bestStreak} \xB7 ${details.cadenceLabel}`,
+            cls: "iter-streak-meta"
+          });
+          const slotsRow = card.createDiv({ cls: "iter-streak-slots" });
+          for (const slot of details.recentSlots) {
+            slotsRow.createSpan({
+              text: slot.label,
+              cls: `iter-streak-slot${slot.completed ? " is-done" : ""}${slot.isCurrent ? " is-current" : ""}`,
+              attr: {
+                title: `${slot.key} (${slot.completed ? "Completed" : slot.isCurrent ? "Pending" : "Missed"})`,
+                "aria-label": `${slot.key}: ${slot.completed ? "completed" : "not completed"}`
+              }
+            });
+          }
+          return;
+        }
         if (!dataset) {
           card.createEl("p", { text: "Linked data list was removed.", cls: "iter-widget-empty" });
           return;

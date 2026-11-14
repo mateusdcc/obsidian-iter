@@ -252,6 +252,7 @@ async function createHabit(vault, { treePath, name, frequency = 'daily', days = 
     `target: ${JSON.stringify(cleanTarget)}`,
     'last_watered: null',
     'water_log: []',
+    'widgets: [{"id":"w_streak","title":"Streak","type":"streak"}]',
     `created: ${new Date().toISOString()}`,
     '---',
     '',
@@ -399,6 +400,14 @@ function isWateredInPeriod(lastWatered, waterLog, frequency, now = new Date(), d
   return dates.some(key => periodKeyFor(key, freq) === currentPeriod);
 }
 
+function mergeWaterDates(waterLog, lastWatered = null) {
+  const valid = new Set(normalizeWaterLog(waterLog));
+  if (typeof lastWatered === 'string' && parseDateKey(lastWatered)) {
+    valid.add(lastWatered.trim());
+  }
+  return Array.from(valid).sort();
+}
+
 function computeWeekdaysStreak(dates, days, todayKey) {
   const cleanDays = normalizeDays(days);
   if (!dates.length || !cleanDays.length) return 0;
@@ -409,7 +418,7 @@ function computeWeekdaysStreak(dates, days, todayKey) {
   let streak = 0;
   let skippedOpenToday = false;
 
-  for (let steps = 0; steps < 1095 && cursor && cursor >= earliest; steps += 1) {
+  for (let steps = 0; steps < 36500 && cursor && cursor >= earliest; steps += 1) {
     const dayId = weekdayIdForDateKey(cursor);
     if (dayId && daySet.has(dayId)) {
       if (logSet.has(cursor)) {
@@ -426,9 +435,52 @@ function computeWeekdaysStreak(dates, days, todayKey) {
   return streak;
 }
 
-function computeHabitStreak(waterLog, frequency, now = new Date(), days = []) {
+function computeWeekdaysBestStreak(dates, days, todayKey) {
+  const cleanDays = normalizeDays(days);
+  if (!dates.length || !cleanDays.length) return 0;
+  const logSet = new Set(dates);
+  const daySet = new Set(cleanDays);
+  const end = dates[dates.length - 1] > todayKey ? dates[dates.length - 1] : todayKey;
+  let cursor = dates[0];
+  let run = 0;
+  let best = 0;
+
+  for (let steps = 0; steps < 36500 && cursor && cursor <= end; steps += 1) {
+    const dayId = weekdayIdForDateKey(cursor);
+    if (dayId && daySet.has(dayId)) {
+      if (logSet.has(cursor)) {
+        run += 1;
+        if (run > best) best = run;
+      } else if (cursor !== todayKey) {
+        run = 0;
+      }
+    }
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return best;
+}
+
+function computePeriodBestStreak(periodsSet, freq) {
+  if (!periodsSet.size) return 0;
+  const sorted = Array.from(periodsSet).sort();
+  let run = 0;
+  let best = 0;
+  let prev = null;
+  for (const period of sorted) {
+    if (prev && previousPeriodKey(period, freq) === prev) {
+      run += 1;
+    } else {
+      run = 1;
+    }
+    if (run > best) best = run;
+    prev = period;
+  }
+  return best;
+}
+
+function computeHabitStreak(waterLog, frequency, now = new Date(), days = [], lastWatered = null) {
   const freq = normalizeFrequency(frequency);
-  const dates = normalizeWaterLog(waterLog);
+  const dates = mergeWaterDates(waterLog, lastWatered);
   if (!dates.length) return 0;
   if (freq === 'weekdays') {
     return computeWeekdaysStreak(dates, days, toDateKey(now));
@@ -443,6 +495,101 @@ function computeHabitStreak(waterLog, frequency, now = new Date(), days = []) {
     cursor = previousPeriodKey(cursor, freq);
   }
   return streak;
+}
+
+function shortDayLabel(dateKey) {
+  const id = weekdayIdForDateKey(dateKey);
+  if (!id) return dateKey;
+  return WEEKDAYS[DAY_ORDER.get(id)].short;
+}
+
+function recentScheduledSlots(dates, freq, days, todayKey, count = 6) {
+  const logSet = new Set(dates);
+  if (freq === 'weekdays') {
+    const cleanDays = normalizeDays(days);
+    if (!cleanDays.length) return [];
+    const daySet = new Set(cleanDays);
+    const slots = [];
+    let cursor = todayKey;
+    for (let i = 0; i < 60 && slots.length < count && cursor; i += 1) {
+      const id = weekdayIdForDateKey(cursor);
+      if (id && daySet.has(id)) {
+        slots.unshift({
+          key: cursor,
+          label: shortDayLabel(cursor),
+          completed: logSet.has(cursor),
+          isCurrent: cursor === todayKey,
+        });
+      }
+      cursor = shiftDateKey(cursor, -1);
+    }
+    return slots;
+  }
+
+  const periods = new Set(dates.map(key => periodKeyFor(key, freq)).filter(Boolean));
+  const slots = [];
+  let cursor = periodKeyFor(todayKey, freq);
+  for (let i = 0; i < count && cursor; i += 1) {
+    let label = cursor;
+    if (freq === 'daily') label = shortDayLabel(cursor);
+    else if (freq === 'weekly') label = cursor.slice(5);
+    else if (freq === 'monthly') label = cursor.slice(5);
+    slots.unshift({
+      key: cursor,
+      label,
+      completed: periods.has(cursor),
+      isCurrent: i === 0,
+    });
+    cursor = previousPeriodKey(cursor, freq);
+  }
+  return slots;
+}
+
+function streakUnit(freq, count) {
+  if (freq === 'weekly') return count === 1 ? 'week' : 'weeks';
+  if (freq === 'monthly') return count === 1 ? 'month' : 'months';
+  if (freq === 'weekdays') return count === 1 ? 'scheduled day' : 'scheduled days';
+  return count === 1 ? 'day' : 'days';
+}
+
+function computeHabitStreakDetails(waterLog, frequency, now = new Date(), days = [], lastWatered = null) {
+  const freq = normalizeFrequency(frequency);
+  const cleanDays = normalizeDays(days);
+  const dates = mergeWaterDates(waterLog, lastWatered);
+  const todayKey = toDateKey(now);
+  const streak = computeHabitStreak(dates, freq, now, cleanDays, lastWatered);
+
+  let bestStreak = 0;
+  if (dates.length) {
+    if (freq === 'weekdays') {
+      bestStreak = computeWeekdaysBestStreak(dates, cleanDays, todayKey);
+    } else {
+      const periods = new Set(dates.map(key => periodKeyFor(key, freq)).filter(Boolean));
+      bestStreak = computePeriodBestStreak(periods, freq);
+    }
+  }
+  if (streak > bestStreak) bestStreak = streak;
+
+  const wateredToday = dates.includes(todayKey);
+  const wateredPeriod = isWateredInPeriod(lastWatered, dates, freq, now, cleanDays);
+  const dueToday = isScheduledOnDate(freq, cleanDays, todayKey);
+
+  let statusLabel = 'Due today';
+  if (wateredToday) statusLabel = 'Watered today';
+  else if (freq === 'weekly' && wateredPeriod) statusLabel = 'Done this week';
+  else if (freq === 'monthly' && wateredPeriod) statusLabel = 'Done this month';
+  else if (!dueToday) statusLabel = 'Rest day';
+  else if (freq === 'weekly') statusLabel = 'Due this week';
+  else if (freq === 'monthly') statusLabel = 'Due this month';
+
+  return {
+    streak,
+    bestStreak,
+    unit: streakUnit(freq, streak),
+    cadenceLabel: formatCadenceLabel(freq, cleanDays),
+    statusLabel,
+    recentSlots: recentScheduledSlots(dates, freq, cleanDays, todayKey, 6),
+  };
 }
 
 async function toggleSubgoal(app, file, nextDone) {
@@ -508,8 +655,10 @@ module.exports = {
   weekdayIdForDateKey,
   isScheduledOnDate,
   normalizeWaterLog,
+  mergeWaterDates,
   isWateredInPeriod,
   computeHabitStreak,
+  computeHabitStreakDetails,
   toggleSubgoal,
   waterHabit,
 };

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createMockApp } = require('./obsidian-mock');
-const { ensureStructure, createTree, createSubgoal, createHabit } = require('../src/storage');
+const { ensureStructure, createTree, createSubgoal, createHabit, waterHabit } = require('../src/storage');
 const {
   readGoalDocument,
   updateGoalMeta,
@@ -132,4 +132,42 @@ test('Reach A1 mock exams scenario: note_time reads frontmatter scores for count
   const due = formatDueStatus('2026-11-20', new Date(2026, 10, 13, 12, 0, 0));
   assert.equal(due.badge, '7d left');
   assert.equal(due.tone, 'soon');
+});
+
+test('Habit streak widget works without datasets and createHabit seeds default streak widget', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  await createTree(app.vault, { name: 'Gym', module: 'gym' });
+  const habit = await createHabit(app.vault, {
+    treePath: 'Iter/Gym',
+    name: 'Morning Run',
+    frequency: 'weekdays',
+    days: ['mon', 'wed', 'fri'],
+  });
+
+  let doc = readGoalDocument(app, habit);
+  assert.equal(doc.datasets.length, 0);
+  assert.equal(doc.widgets.length, 1);
+  assert.equal(doc.widgets[0].type, 'streak');
+  assert.equal(doc.widgets[0].id, 'w_streak');
+
+  await removeWidget(app, habit, 'w_streak');
+  doc = readGoalDocument(app, habit);
+  assert.equal(doc.widgets.length, 0);
+
+  const added = await addWidget(app, habit, { type: 'streak', title: 'Run Streak' });
+  assert.equal(added.type, 'streak');
+  assert.equal(added.datasetId, '');
+
+  await assert.rejects(
+    () => addWidget(app, habit, { type: 'stat', datasetId: '' }),
+    /Select a data list/,
+  );
+
+  await waterHabit(app, habit, new Date(2026, 10, 13, 10, 0, 0));
+  doc = readGoalDocument(app, habit);
+  assert.equal(doc.widgets.length, 1);
+  assert.equal(doc.widgets[0].title, 'Run Streak');
+  assert.deepEqual(doc.waterLog, ['2026-11-13']);
+  assert.equal(doc.lastWatered, '2026-11-13');
 });

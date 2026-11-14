@@ -15,6 +15,7 @@ const {
   isScheduledOnDate,
   isWateredInPeriod,
   computeHabitStreak,
+  computeHabitStreakDetails,
   formatCadenceLabel,
   formatCadenceShort,
 } = require('../src/storage');
@@ -187,4 +188,58 @@ test('weekday-specific habits validate days, update repetitivity, compute streak
   fm = app.metadataCache.getFileCache(habit).frontmatter;
   assert.equal(fm.frequency, 'weekly');
   assert.deepEqual(fm.days, []);
+});
+
+test('computeHabitStreak and computeHabitStreakDetails handle all repetitivities accurately', () => {
+  // Weekdays: bonus waterings on unscheduled days never count and never bridge missed scheduled days
+  const wedThuBonus = ['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-09', '2026-11-11', '2026-11-12'];
+  const friNov13 = new Date(2026, 10, 13, 12, 0, 0);
+  const wedThuDetails = computeHabitStreakDetails(wedThuBonus, 'weekdays', friNov13, ['wed', 'thu']);
+  assert.equal(wedThuDetails.streak, 4);
+  assert.equal(wedThuDetails.bestStreak, 4);
+  assert.equal(wedThuDetails.recentSlots.length, 6);
+  assert.ok(wedThuDetails.recentSlots.every(slot => !slot.key.endsWith('-06') && !slot.key.endsWith('-09')));
+  assert.ok(wedThuDetails.recentSlots.every(slot => {
+    const [y, m, d] = slot.key.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    return dow === 3 || dow === 4;
+  }));
+
+  // Only off-day waterings yield 0 scheduled streak
+  assert.equal(computeHabitStreak(['2026-11-06', '2026-11-09'], 'weekdays', friNov13, ['wed', 'thu']), 0);
+
+  // Missed Wed Nov 11 resets current streak to 1 (Thu Nov 12), while bestStreak remains 2 (Nov 4+5)
+  const missedWedLog = ['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-09', '2026-11-12'];
+  const brokenWedDetails = computeHabitStreakDetails(missedWedLog, 'weekdays', friNov13, ['wed', 'thu']);
+  assert.equal(brokenWedDetails.streak, 1);
+  assert.equal(brokenWedDetails.bestStreak, 2);
+
+  // Weekly: multiple waterings in the same week count once; skipping a week breaks streak
+  const weeklyLog = ['2026-11-02', '2026-11-04', '2026-11-07', '2026-11-13'];
+  assert.equal(computeHabitStreak(weeklyLog, 'weekly', friNov13), 2);
+  assert.equal(computeHabitStreak(weeklyLog, 'weekly', new Date(2026, 10, 16, 12, 0, 0)), 2);
+  const brokenWeekly = computeHabitStreakDetails(weeklyLog, 'weekly', new Date(2026, 10, 23, 12, 0, 0));
+  assert.equal(brokenWeekly.streak, 0);
+  assert.equal(brokenWeekly.bestStreak, 2);
+  assert.equal(brokenWeekly.recentSlots.length, 6);
+
+  // Monthly: multiple waterings in the same month count once; consecutive & historical best
+  const monthlyLog = ['2026-06-01', '2026-07-12', '2026-08-19', '2026-09-02', '2026-11-02', '2026-11-13'];
+  const monthlyDetails = computeHabitStreakDetails(monthlyLog, 'monthly', friNov13);
+  assert.equal(monthlyDetails.streak, 1);
+  assert.equal(monthlyDetails.bestStreak, 4);
+  assert.equal(computeHabitStreak(monthlyLog, 'monthly', new Date(2026, 11, 5, 12, 0, 0)), 1);
+  assert.equal(computeHabitStreak(['2026-10-05', '2026-11-13'], 'monthly', new Date(2026, 11, 5, 12, 0, 0)), 2);
+
+  // Daily: historical best > current and merges lastWatered fallback
+  const dailyDetails = computeHabitStreakDetails(
+    ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-12'],
+    'daily',
+    friNov13,
+    [],
+    '2026-11-13',
+  );
+  assert.equal(dailyDetails.streak, 2);
+  assert.equal(dailyDetails.bestStreak, 3);
+  assert.equal(dailyDetails.recentSlots.length, 6);
 });

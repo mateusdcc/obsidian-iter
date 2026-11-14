@@ -1,5 +1,14 @@
 const { ItemView, Notice, setIcon } = require('obsidian');
-const { ROOT, toDateKey, toggleSubgoal, waterHabit, updateHabitSchedule, formatCadenceLabel, isScheduledOnDate } = require('./storage');
+const {
+  ROOT,
+  toDateKey,
+  toggleSubgoal,
+  waterHabit,
+  updateHabitSchedule,
+  formatCadenceLabel,
+  isScheduledOnDate,
+  computeHabitStreakDetails,
+} = require('./storage');
 const { listGarden } = require('./catalog');
 const { renderSchedulePicker } = require('./schedule-picker');
 const {
@@ -336,12 +345,13 @@ class GoalView extends ItemView {
     setIcon(plus, 'plus');
     addBtn.createSpan({ text: 'Add widget' });
     addBtn.addEventListener('click', () => {
-      if (!doc.datasets.length) {
+      if (doc.kind !== 'habit' && !doc.datasets.length) {
         new Notice('Add a data list first, then link a widget to it.');
         return;
       }
       new AddWidgetModal(this.app, {
         datasets: doc.datasets,
+        goalKind: doc.kind,
         onSubmit: async config => {
           await addWidget(this.app, this.file, config);
           this.render();
@@ -351,9 +361,11 @@ class GoalView extends ItemView {
 
     if (!doc.widgets.length) {
       section.createEl('p', {
-        text: doc.datasets.length
-          ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
-          : 'Add custom data below, then pin widgets here to visualize your progress.',
+        text: doc.kind === 'habit'
+          ? 'No widgets yet. Add a streak widget or link custom data below.'
+          : doc.datasets.length
+            ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
+            : 'Add custom data below, then pin widgets here to visualize your progress.',
         cls: 'iter-section-hint',
       });
       return;
@@ -362,23 +374,25 @@ class GoalView extends ItemView {
     const grid = section.createDiv({ cls: 'iter-widget-grid' });
     const datasetById = new Map(doc.datasets.map(d => [d.id, d]));
     for (const widget of doc.widgets) {
-      const ds = datasetById.get(widget.datasetId);
-      this.renderWidgetCard(grid, widget, ds);
+      const ds = widget.datasetId ? datasetById.get(widget.datasetId) : null;
+      this.renderWidgetCard(grid, widget, ds, doc);
     }
   }
 
-  renderWidgetCard(grid, widget, dataset) {
+  renderWidgetCard(grid, widget, dataset, doc) {
     const wide = widget.type === 'chart' || widget.type === 'goal_bar' || widget.type === 'note_navigator';
     const card = grid.createDiv({
       cls: `iter-widget-card type-${widget.type}${wide ? ' is-wide' : ''}`,
     });
 
     const top = card.createDiv({ cls: 'iter-widget-top' });
-    const defaultTitle = !dataset
-      ? 'Missing dataset'
-      : widget.type === 'stat'
-        ? `${dataset.name} · ${AGG_LABELS[widget.agg] || widget.agg}`
-        : dataset.name;
+    const defaultTitle = widget.type === 'streak'
+      ? 'Streak'
+      : !dataset
+        ? 'Missing dataset'
+        : widget.type === 'stat'
+          ? `${dataset.name} · ${AGG_LABELS[widget.agg] || widget.agg}`
+          : dataset.name;
     top.createSpan({ text: widget.title || defaultTitle, cls: 'iter-widget-title' });
 
     const removeBtn = top.createEl('button', {
@@ -391,6 +405,37 @@ class GoalView extends ItemView {
       await removeWidget(this.app, this.file, widget.id);
       this.render();
     });
+
+    if (widget.type === 'streak') {
+      const details = computeHabitStreakDetails(
+        doc.waterLog,
+        doc.frequency,
+        new Date(),
+        doc.days,
+        doc.lastWatered,
+      );
+      const valRow = card.createDiv({ cls: 'iter-streak-main' });
+      valRow.createSpan({ text: String(details.streak), cls: 'iter-streak-number' });
+      valRow.createSpan({ text: details.unit, cls: 'iter-streak-unit' });
+
+      card.createDiv({
+        text: `${details.statusLabel} · Best: ${details.bestStreak} · ${details.cadenceLabel}`,
+        cls: 'iter-streak-meta',
+      });
+
+      const slotsRow = card.createDiv({ cls: 'iter-streak-slots' });
+      for (const slot of details.recentSlots) {
+        slotsRow.createSpan({
+          text: slot.label,
+          cls: `iter-streak-slot${slot.completed ? ' is-done' : ''}${slot.isCurrent ? ' is-current' : ''}`,
+          attr: {
+            title: `${slot.key} (${slot.completed ? 'Completed' : slot.isCurrent ? 'Pending' : 'Missed'})`,
+            'aria-label': `${slot.key}: ${slot.completed ? 'completed' : 'not completed'}`,
+          },
+        });
+      }
+      return;
+    }
 
     if (!dataset) {
       card.createEl('p', { text: 'Linked data list was removed.', cls: 'iter-widget-empty' });

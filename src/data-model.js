@@ -1,4 +1,4 @@
-const { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays } = require('./storage');
+const { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays, mergeWaterDates } = require('./storage');
 
 const DATASET_TYPES = [
   { id: 'number_time', label: 'Number & Time' },
@@ -12,6 +12,7 @@ const WIDGET_TYPES = [
   { id: 'goal_bar', label: 'Goal Comparison Bar' },
   { id: 'chart', label: 'Time Graph' },
   { id: 'note_navigator', label: 'Note Navigator' },
+  { id: 'streak', label: 'Habit Streak' },
 ];
 
 const STAT_AGGS = [
@@ -123,9 +124,9 @@ function normalizeDataset(raw) {
 
 function normalizeWidget(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const datasetId = typeof raw.datasetId === 'string' ? raw.datasetId.trim() : '';
-  if (!datasetId) return null;
   const type = normalizeWidgetType(raw.type);
+  const datasetId = typeof raw.datasetId === 'string' ? raw.datasetId.trim() : '';
+  if (type !== 'streak' && !datasetId) return null;
   const title = typeof raw.title === 'string' ? raw.title.trim() : '';
   return {
     id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : generateId('w'),
@@ -183,6 +184,8 @@ function readGoalDocument(app, file) {
     done: Boolean(fm.done),
     frequency: normalizeFrequency(fm.frequency),
     days: normalizeDays(fm.days),
+    waterLog: mergeWaterDates(fm.water_log),
+    lastWatered: typeof fm.last_watered === 'string' && fm.last_watered.trim() ? fm.last_watered.trim() : null,
     module: typeof fm.module === 'string' ? fm.module : 'general',
     datasets,
     widgets,
@@ -371,13 +374,17 @@ async function removeDatasetEntry(app, file, datasetId, entryIndex) {
   });
 }
 
-async function addWidget(app, file, { title = '', type, datasetId, agg = 'latest', mode = 'latest', target = null, variant = 'line', metricKey = '' }) {
-  if (!datasetId) throw new Error('Select a data list to link this widget to.');
+async function addWidget(app, file, { title = '', type, datasetId = '', agg = 'latest', mode = 'latest', target = null, variant = 'line', metricKey = '' }) {
+  const wType = normalizeWidgetType(type);
+  const resolvedDatasetId = wType === 'streak' ? '' : (typeof datasetId === 'string' ? datasetId.trim() : '');
+  if (wType !== 'streak' && !resolvedDatasetId) {
+    throw new Error('Select a data list to link this widget to.');
+  }
   const widget = {
     id: generateId('w'),
     title: typeof title === 'string' ? title.trim() : '',
-    type: normalizeWidgetType(type),
-    datasetId,
+    type: wType,
+    datasetId: resolvedDatasetId,
     agg: normalizeStatAgg(agg),
     mode: normalizeBarMode(mode),
     target: toFiniteNumber(target),

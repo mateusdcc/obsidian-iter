@@ -197,6 +197,7 @@ test('IterPanelView and GardenView render trees, subgoals, habits, and modals cl
       new EditHabitScheduleModal(app, { title: 'Go to the Gym', frequency: 'weekdays', days: ['wed', 'thu'], onSubmit: async () => {} }),
       new AddDatasetModal(app, { onSubmit: async () => {} }),
       new AddWidgetModal(app, { datasets: [ds1, ds2], onSubmit: async () => {} }),
+      new AddWidgetModal(app, { datasets: [], goalKind: 'habit', onSubmit: async () => {} }),
       new NoteTimeMetaModal(app, { noteFile, onSubmit: async () => {} }),
     ]) {
       modal.contentEl = createMockElement('div');
@@ -204,6 +205,53 @@ test('IterPanelView and GardenView render trees, subgoals, habits, and modals cl
       assert.ok(modal.contentEl.children.length >= 2);
       modal.onClose();
     }
+  } finally {
+    global.document = prevDocument;
+  }
+});
+
+test('Habit GoalView renders streak widget with recent scheduled slots and AddWidgetModal offers streak for habits', async () => {
+  const prevDocument = global.document;
+  global.document = {
+    createElement: tag => createMockElement(tag),
+  };
+
+  try {
+    const app = createMockApp();
+    await ensureStructure(app.vault);
+    await createTree(app.vault, { name: 'Gym', module: 'gym' });
+    const habit = await createHabit(app.vault, {
+      treePath: 'Iter/Gym',
+      name: 'Leg Day',
+      frequency: 'weekdays',
+      days: ['wed', 'thu'],
+    });
+
+    const view = new GoalView(
+      { containerEl: createMockElement('div') },
+      { openFile: async () => {}, registerView: () => {} },
+    );
+    view.app = app;
+    view.contentEl = createMockElement('div');
+    await view.setState({ file: habit.path }, {});
+
+    const streakCards = view.contentEl.findAll(el =>
+      el.className.split(/\s+/).includes('iter-widget-card') &&
+      el.className.split(/\s+/).includes('type-streak'),
+    );
+    assert.equal(streakCards.length, 1);
+    const slots = streakCards[0].findAll(el => el.className.split(/\s+/).includes('iter-streak-slot'));
+    assert.equal(slots.length, 6);
+
+    const modal = new AddWidgetModal(app, { datasets: [], goalKind: 'habit', onSubmit: async () => {} });
+    modal.contentEl = createMockElement('div');
+    modal.onOpen();
+    const fields = modal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-modal-field'));
+    const selects = modal.contentEl.findAll(el => el.tagName === 'SELECT');
+    const typeOptions = selects[0].children.map(opt => opt.value);
+    assert.deepEqual(typeOptions, ['streak']);
+    assert.equal(fields[1].style.display, 'none');
+    modal.onClose();
   } finally {
     global.document = prevDocument;
   }
