@@ -251,6 +251,35 @@ var require_storage = __commonJS({
       });
       return { frequency: freq, days: cleanDays };
     }
+    async function trashEntry(app, target) {
+      if (!target) throw new Error("Entry not found.");
+      if (typeof app.fileManager?.trashFile === "function") {
+        await app.fileManager.trashFile(target);
+        return;
+      }
+      if (typeof app.vault?.trash === "function") {
+        await app.vault.trash(target, true);
+        return;
+      }
+      if (typeof app.vault?.delete === "function") {
+        await app.vault.delete(target, true);
+        return;
+      }
+      throw new Error("Vault deletion is unavailable.");
+    }
+    async function deleteTree2(app, treePath) {
+      const dir = validTreePath(treePath);
+      const folder = app.vault.getAbstractFileByPath(dir);
+      if (!isFolder(folder)) throw new Error("Tree folder not found.");
+      await trashEntry(app, folder);
+    }
+    async function deleteGoalFile2(app, file) {
+      if (!file || isFolder(file)) throw new Error("Goal file not found.");
+      if (typeof file.path !== "string" || !file.path.startsWith(`${ROOT}/`) || file.path === WE_PATH || file.path.startsWith(`${INDEX_FOLDER}/`)) {
+        throw new Error("Invalid goal file path.");
+      }
+      await trashEntry(app, file);
+    }
     function toDateKey(date = /* @__PURE__ */ new Date()) {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -590,6 +619,8 @@ var require_storage = __commonJS({
       createSubgoal: createSubgoal2,
       createHabit: createHabit2,
       updateHabitSchedule: updateHabitSchedule2,
+      deleteTree: deleteTree2,
+      deleteGoalFile: deleteGoalFile2,
       toDateKey,
       parseDateKey,
       periodKeyFor,
@@ -1162,11 +1193,55 @@ var require_modals = __commonJS({
         this.addActions(form, () => picker.getValue());
       }
     };
+    var ConfirmDeleteModal2 = class extends Modal {
+      constructor(app, { title, message, confirmLabel = "Delete", onConfirm }) {
+        super(app);
+        this.modalTitle = title;
+        this.message = message;
+        this.confirmLabel = confirmLabel;
+        this.onConfirm = onConfirm;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: this.modalTitle, cls: "iter-modal-title" });
+        contentEl.createEl("p", { text: this.message, cls: "iter-modal-message" });
+        const actions = contentEl.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const confirm = actions.createEl("button", {
+          text: this.confirmLabel,
+          type: "button",
+          cls: "mod-warning"
+        });
+        confirm.addEventListener("click", async () => {
+          if (this.submitting) return;
+          this.submitting = true;
+          confirm.disabled = true;
+          try {
+            await this.onConfirm();
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+          } finally {
+            this.submitting = false;
+            confirm.disabled = false;
+          }
+        });
+        confirm.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
     module2.exports = {
       CreateTreeModal: CreateTreeModal2,
       CreateSubgoalModal: CreateSubgoalModal2,
       CreateHabitModal: CreateHabitModal2,
-      EditHabitScheduleModal: EditHabitScheduleModal2
+      EditHabitScheduleModal: EditHabitScheduleModal2,
+      ConfirmDeleteModal: ConfirmDeleteModal2
     };
   }
 });
@@ -1254,7 +1329,7 @@ var require_panel_view = __commonJS({
       isActiveFile(file) {
         if (!file) return false;
         const recent = this.app.workspace.getMostRecentLeaf?.();
-        if (recent?.view?.getViewType?.() === this.plugin.goalViewType && recent.view.file?.path === file.path) {
+        if (this.plugin?.goalViewType && recent?.view?.getViewType?.() === this.plugin.goalViewType && recent?.view?.file?.path === file.path) {
           return true;
         }
         const active = this.app.workspace.getActiveFile?.();
@@ -1262,7 +1337,7 @@ var require_panel_view = __commonJS({
       }
       isGardenActive() {
         const recent = this.app.workspace.getMostRecentLeaf?.();
-        return recent?.view?.getViewType?.() === this.plugin.gardenViewType;
+        return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
       }
       render() {
         const container = this.contentEl;
@@ -1319,7 +1394,7 @@ var require_panel_view = __commonJS({
         toggle.setAttribute("aria-expanded", String(expanded));
         return expanded;
       }
-      showTreeMenu(event, tree) {
+      showTreeMenu(event, tree, { allowDelete = true } = {}) {
         const menu = new Menu();
         menu.addItem(
           (item) => item.setTitle("Create subgoal").setIcon("target").onClick(() => this.plugin.promptCreateSubgoal(tree.path))
@@ -1339,9 +1414,16 @@ var require_panel_view = __commonJS({
             (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
           );
         }
+        if (allowDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(() => this.plugin.promptDeleteTree(tree));
+            item.setWarning?.(true);
+          });
+        }
         menu.showAtMouseEvent(event);
       }
-      showGoalItemMenu(event, file, extraActions = []) {
+      showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
         const menu = new Menu();
         menu.addItem(
           (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
@@ -1354,6 +1436,13 @@ var require_panel_view = __commonJS({
           for (const action of extraActions) {
             menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
           }
+        }
+        if (onDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(onDelete);
+            item.setWarning?.(true);
+          });
         }
         menu.showAtMouseEvent(event);
       }
@@ -1373,7 +1462,8 @@ var require_panel_view = __commonJS({
         });
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          this.showTreeMenu(event, tree);
+          event.stopPropagation();
+          this.showTreeMenu(event, tree, { allowDelete: true });
         });
         if (tree.stats.habitTotal > 0) {
           const dot = row.createSpan({
@@ -1388,7 +1478,7 @@ var require_panel_view = __commonJS({
           row,
           "plus",
           `Add to ${tree.title}`,
-          (event) => this.showTreeMenu(event, tree),
+          (event) => this.showTreeMenu(event, tree, { allowDelete: false }),
           "iter-row-action"
         );
         if (!expanded) return;
@@ -1432,16 +1522,22 @@ var require_panel_view = __commonJS({
         titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          this.showGoalItemMenu(event, subgoal.file, [
-            {
-              label: subgoal.done ? "Mark incomplete" : "Mark done",
-              icon: subgoal.done ? "circle" : "check-circle-2",
-              run: async () => {
-                await toggleSubgoal(this.app, subgoal.file);
-                this.plugin.scheduleRefresh();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            subgoal.file,
+            [
+              {
+                label: subgoal.done ? "Mark incomplete" : "Mark done",
+                icon: subgoal.done ? "circle" : "check-circle-2",
+                run: async () => {
+                  await toggleSubgoal(this.app, subgoal.file);
+                  this.plugin.scheduleRefresh();
+                }
               }
-            }
-          ]);
+            ],
+            () => this.plugin.promptDeleteGoalItem("goal", subgoal)
+          );
         });
       }
       renderHabit(parent, habit) {
@@ -1475,21 +1571,27 @@ var require_panel_view = __commonJS({
         titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          this.showGoalItemMenu(event, habit.file, [
-            {
-              label: habit.wateredToday ? "Undo today's watering" : "Water now",
-              icon: "droplet",
-              run: async () => {
-                await waterHabit(this.app, habit.file);
-                this.plugin.scheduleRefresh();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            habit.file,
+            [
+              {
+                label: habit.wateredToday ? "Undo today's watering" : "Water now",
+                icon: "droplet",
+                run: async () => {
+                  await waterHabit(this.app, habit.file);
+                  this.plugin.scheduleRefresh();
+                }
+              },
+              {
+                label: "Edit repetitivity",
+                icon: "calendar-days",
+                run: () => this.plugin.promptEditHabitSchedule(habit)
               }
-            },
-            {
-              label: "Edit repetitivity",
-              icon: "calendar-days",
-              run: () => this.plugin.promptEditHabitSchedule(habit)
-            }
-          ]);
+            ],
+            () => this.plugin.promptDeleteGoalItem("habit", habit)
+          );
         });
         row.createSpan({
           text: habit.cadenceShort,
@@ -3209,7 +3311,7 @@ var require_goal_view = __commonJS({
         };
         for (const event of ["modify", "delete"]) {
           this.registerEvent(this.app.vault.on(event, (file) => {
-            if (event === "delete" && file?.path === this.filePath) {
+            if (event === "delete" && file?.path && (file.path === this.filePath || this.filePath?.startsWith(`${file.path}/`))) {
               this.file = null;
               this.render();
               return;
@@ -3791,9 +3893,23 @@ var require_goal_view = __commonJS({
 
 // src/plugin.js
 var { Plugin, Notice } = require("obsidian");
-var { ensureStructure, createTree, createSubgoal, createHabit, updateHabitSchedule } = require_storage();
+var {
+  ensureStructure,
+  createTree,
+  createSubgoal,
+  createHabit,
+  updateHabitSchedule,
+  deleteTree,
+  deleteGoalFile
+} = require_storage();
 var { listGarden, findTreeContext } = require_catalog();
-var { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require_modals();
+var {
+  CreateTreeModal,
+  CreateSubgoalModal,
+  CreateHabitModal,
+  EditHabitScheduleModal,
+  ConfirmDeleteModal
+} = require_modals();
 var { IterPanelView, PANEL_VIEW } = require_panel_view();
 var { GardenView, GARDEN_VIEW } = require_garden_view();
 var { GoalView, GOAL_VIEW } = require_goal_view();
@@ -4029,6 +4145,48 @@ var IterPlugin = class extends Plugin {
       onSubmit: async (schedule) => {
         await updateHabitSchedule(this.app, habit.file, schedule);
         new Notice(`Updated repetitivity for "${habit.title}"`);
+        this.scheduleRefresh();
+      }
+    }).open();
+  }
+  closeGoalLeavesMatching(targetPath, isFolderTarget = false) {
+    if (!targetPath || !this.app.workspace?.getLeavesOfType) return;
+    const matches = (leafPath) => leafPath === targetPath || isFolderTarget && typeof leafPath === "string" && leafPath.startsWith(`${targetPath}/`);
+    for (const leaf of [...this.app.workspace.getLeavesOfType(GOAL_VIEW)]) {
+      const leafPath = leaf.view?.filePath ?? leaf.view?.file?.path ?? leaf.getViewState?.()?.state?.file;
+      if (matches(leafPath)) {
+        leaf.detach?.();
+      }
+    }
+  }
+  promptDeleteTree(tree) {
+    if (!tree?.path) return;
+    const parts = [];
+    if (tree.subgoals?.length) parts.push(tree.subgoals.length === 1 ? "1 goal" : `${tree.subgoals.length} goals`);
+    if (tree.habits?.length) parts.push(tree.habits.length === 1 ? "1 habit" : `${tree.habits.length} habits`);
+    const detail = parts.length ? ` (including ${parts.join(" and ")})` : "";
+    new ConfirmDeleteModal(this.app, {
+      title: `Delete "${tree.title}"?`,
+      message: `Move tree "${tree.title}"${detail} to Obsidian's trash?`,
+      confirmLabel: "Delete",
+      onConfirm: async () => {
+        await deleteTree(this.app, tree.path);
+        this.closeGoalLeavesMatching(tree.path, true);
+        new Notice(`Deleted "${tree.title}"`);
+        this.scheduleRefresh();
+      }
+    }).open();
+  }
+  promptDeleteGoalItem(kind, item) {
+    if (!item?.file) return;
+    new ConfirmDeleteModal(this.app, {
+      title: `Delete ${kind}?`,
+      message: `Move "${item.title}" to Obsidian's trash?`,
+      confirmLabel: "Delete",
+      onConfirm: async () => {
+        await deleteGoalFile(this.app, item.file);
+        this.closeGoalLeavesMatching(item.file.path, false);
+        new Notice(`Deleted "${item.title}"`);
         this.scheduleRefresh();
       }
     }).open();

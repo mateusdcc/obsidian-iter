@@ -10,6 +10,8 @@ const {
   createSubgoal,
   createHabit,
   updateHabitSchedule,
+  deleteTree,
+  deleteGoalFile,
   toggleSubgoal,
   waterHabit,
   isScheduledOnDate,
@@ -242,4 +244,34 @@ test('computeHabitStreak and computeHabitStreakDetails handle all repetitivities
   assert.equal(dailyDetails.streak, 2);
   assert.equal(dailyDetails.bestStreak, 3);
   assert.equal(dailyDetails.recentSlots.length, 6);
+});
+
+test('deleteGoalFile and deleteTree safely trash items and guard protected paths', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  await createTree(app.vault, { name: 'Gym', module: 'gym' });
+  const sub = await createSubgoal(app.vault, { treePath: 'Iter/Gym', name: 'Bench 80kg' });
+  const habit = await createHabit(app.vault, { treePath: 'Iter/Gym', name: 'Go to the Gym' });
+
+  await deleteGoalFile(app, sub);
+  assert.equal(app.vault.getAbstractFileByPath(sub.path), null);
+  assert.ok(app.vault.getAbstractFileByPath(habit.path));
+
+  await assert.rejects(
+    () => deleteGoalFile(app, app.vault.getAbstractFileByPath(WE_PATH)),
+    /Invalid goal file path/,
+  );
+  await assert.rejects(
+    () => deleteTree(app, 'Iter/_index'),
+    /Tree name is invalid/,
+  );
+  await assert.rejects(
+    () => deleteTree(app, 'Other/Gym'),
+    /Invalid tree path/,
+  );
+
+  await deleteTree(app, 'Iter/Gym');
+  assert.equal(app.vault.getAbstractFileByPath('Iter/Gym'), null);
+  assert.equal(app.vault.getAbstractFileByPath('Iter/Gym/_tree.md'), null);
+  assert.equal(app.vault.getAbstractFileByPath(habit.path), null);
 });

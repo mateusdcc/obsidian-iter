@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createMockApp } = require('./obsidian-mock');
+const { createMockApp, Menu } = require('./obsidian-mock');
+const IterPlugin = require('../src/plugin');
 const { createTree, createSubgoal, createHabit, ensureStructure } = require('../src/storage');
 const { IterPanelView } = require('../src/panel-view');
 const { GardenView } = require('../src/garden-view');
@@ -253,6 +254,125 @@ test('Habit GoalView renders streak widget with recent scheduled slots and AddWi
     assert.equal(fields[1].style.display, 'none');
     modal.onClose();
   } finally {
+    global.document = prevDocument;
+  }
+});
+
+test('IterPanelView right-click menu exposes Delete for trees, subgoals, and habits', async () => {
+  const prevDocument = global.document;
+  global.document = {
+    createElement: tag => createMockElement(tag),
+  };
+
+  try {
+    const app = createMockApp();
+    let detachedLeaf = false;
+    const leaves = [
+      {
+        view: { filePath: 'Iter/Gym/_tree.md' },
+        detach() {
+          detachedLeaf = true;
+        },
+      },
+    ];
+    app.workspace = {
+      getActiveFile() { return null; },
+      getMostRecentLeaf() { return null; },
+      getLeavesOfType(type) { return type === 'iter-goal' ? leaves : []; },
+      on() { return {}; },
+    };
+
+    await ensureStructure(app.vault);
+    await createTree(app.vault, { name: 'Gym', module: 'gym' });
+    const subFile = await createSubgoal(app.vault, { treePath: 'Iter/Gym', name: 'Bench 80kg' });
+    const habitFile = await createHabit(app.vault, { treePath: 'Iter/Gym', name: 'Go to the Gym' });
+
+    const plugin = new IterPlugin(app, { id: 'iter', name: 'Iter' });
+    plugin.alive = true;
+    plugin.scheduleRefresh = () => {};
+    const panel = new IterPanelView({ app }, plugin);
+    panel.contentEl = createMockElement('div');
+    panel.render();
+
+    const dispatchContextMenu = row => {
+      Menu.lastMenu = null;
+      const event = {
+        preventDefault() {},
+        stopPropagation() {},
+      };
+      for (const fn of row.listeners.get('contextmenu') || []) fn(event);
+      return Menu.lastMenu;
+    };
+
+    const confirmActiveDeleteModal = async () => {
+      const modal = app.lastModal;
+      assert.ok(modal);
+      modal.contentEl = createMockElement('div');
+      modal.onOpen();
+      const delBtn = modal.contentEl.findAll(
+        el => el.tagName === 'BUTTON' && el.textContent === 'Delete' && el.className.includes('mod-warning'),
+      )[0];
+      assert.ok(delBtn);
+      for (const fn of delBtn.listeners.get('click') || []) await fn();
+    };
+
+    // Clicking '+' on the tree row does not show Delete
+    const addBtn = panel.contentEl.findAll(
+      el => el.tagName === 'BUTTON' && el.getAttribute('aria-label') === 'Add to Gym',
+    )[0];
+    Menu.lastMenu = null;
+    for (const fn of addBtn.listeners.get('click') || []) fn({ stopPropagation() {} });
+    assert.ok(Menu.lastMenu);
+    assert.equal(Menu.lastMenu.items.some(item => item.title === 'Delete'), false);
+
+    // 1. Delete habit via right-click
+    const habitRow = panel.contentEl.findAll(el => el.className.includes('iter-habit-row'))[0];
+    const habitMenu = dispatchContextMenu(habitRow);
+    const habitDel = habitMenu.items.find(item => item.title === 'Delete');
+    assert.ok(habitDel && habitDel.warning === true && habitDel.icon === 'trash');
+
+    // Cancel first -> keeps habit
+    app.lastModal = null;
+    habitDel.callback();
+    app.lastModal.contentEl = createMockElement('div');
+    app.lastModal.onOpen();
+    const cancelBtn = app.lastModal.contentEl.findAll(
+      el => el.tagName === 'BUTTON' && el.textContent === 'Cancel',
+    )[0];
+    for (const fn of cancelBtn.listeners.get('click') || []) fn();
+    assert.ok(app.vault.getAbstractFileByPath(habitFile.path));
+
+    // Confirm -> removes habit
+    habitDel.callback();
+    await confirmActiveDeleteModal();
+    assert.equal(app.vault.getAbstractFileByPath(habitFile.path), null);
+    panel.render();
+    assert.equal(panel.contentEl.findAll(el => el.className.includes('iter-habit-row')).length, 0);
+
+    // 2. Delete subgoal (goal) via right-click
+    const subRow = panel.contentEl.findAll(el => el.className.includes('iter-subgoal-row'))[0];
+    const subMenu = dispatchContextMenu(subRow);
+    const subDel = subMenu.items.find(item => item.title === 'Delete');
+    assert.ok(subDel && subDel.warning === true && subDel.icon === 'trash');
+    subDel.callback();
+    await confirmActiveDeleteModal();
+    assert.equal(app.vault.getAbstractFileByPath(subFile.path), null);
+    panel.render();
+    assert.equal(panel.contentEl.findAll(el => el.className.includes('iter-subgoal-row')).length, 0);
+
+    // 3. Delete tree via right-click (and detaches open GoalView leaf)
+    const treeRow = panel.contentEl.findAll(el => el.className.includes('iter-tree-row'))[0];
+    const treeMenu = dispatchContextMenu(treeRow);
+    const treeDel = treeMenu.items.find(item => item.title === 'Delete');
+    assert.ok(treeDel && treeDel.warning === true && treeDel.icon === 'trash');
+    treeDel.callback();
+    await confirmActiveDeleteModal();
+    assert.equal(app.vault.getAbstractFileByPath('Iter/Gym'), null);
+    assert.equal(detachedLeaf, true);
+    panel.render();
+    assert.equal(panel.contentEl.findAll(el => el.className.includes('iter-tree-row')).length, 0);
+  } finally {
+    Menu.lastMenu = null;
     global.document = prevDocument;
   }
 });

@@ -278,6 +278,43 @@ async function updateHabitSchedule(app, file, { frequency, days = [] }) {
   return { frequency: freq, days: cleanDays };
 }
 
+async function trashEntry(app, target) {
+  if (!target) throw new Error('Entry not found.');
+  if (typeof app.fileManager?.trashFile === 'function') {
+    await app.fileManager.trashFile(target);
+    return;
+  }
+  if (typeof app.vault?.trash === 'function') {
+    await app.vault.trash(target, true);
+    return;
+  }
+  if (typeof app.vault?.delete === 'function') {
+    await app.vault.delete(target, true);
+    return;
+  }
+  throw new Error('Vault deletion is unavailable.');
+}
+
+async function deleteTree(app, treePath) {
+  const dir = validTreePath(treePath);
+  const folder = app.vault.getAbstractFileByPath(dir);
+  if (!isFolder(folder)) throw new Error('Tree folder not found.');
+  await trashEntry(app, folder);
+}
+
+async function deleteGoalFile(app, file) {
+  if (!file || isFolder(file)) throw new Error('Goal file not found.');
+  if (
+    typeof file.path !== 'string' ||
+    !file.path.startsWith(`${ROOT}/`) ||
+    file.path === WE_PATH ||
+    file.path.startsWith(`${INDEX_FOLDER}/`)
+  ) {
+    throw new Error('Invalid goal file path.');
+  }
+  await trashEntry(app, file);
+}
+
 function toDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -649,6 +686,8 @@ module.exports = {
   createSubgoal,
   createHabit,
   updateHabitSchedule,
+  deleteTree,
+  deleteGoalFile,
   toDateKey,
   parseDateKey,
   periodKeyFor,

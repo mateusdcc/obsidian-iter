@@ -89,7 +89,11 @@ class IterPanelView extends ItemView {
   isActiveFile(file) {
     if (!file) return false;
     const recent = this.app.workspace.getMostRecentLeaf?.();
-    if (recent?.view?.getViewType?.() === this.plugin.goalViewType && recent.view.file?.path === file.path) {
+    if (
+      this.plugin?.goalViewType &&
+      recent?.view?.getViewType?.() === this.plugin.goalViewType &&
+      recent?.view?.file?.path === file.path
+    ) {
       return true;
     }
     const active = this.app.workspace.getActiveFile?.();
@@ -98,7 +102,7 @@ class IterPanelView extends ItemView {
 
   isGardenActive() {
     const recent = this.app.workspace.getMostRecentLeaf?.();
-    return recent?.view?.getViewType?.() === this.plugin.gardenViewType;
+    return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
   }
 
   render() {
@@ -165,7 +169,7 @@ class IterPanelView extends ItemView {
     return expanded;
   }
 
-  showTreeMenu(event, tree) {
+  showTreeMenu(event, tree, { allowDelete = true } = {}) {
     const menu = new Menu();
     menu.addItem(item =>
       item.setTitle('Create subgoal').setIcon('target').onClick(() => this.plugin.promptCreateSubgoal(tree.path)),
@@ -185,10 +189,17 @@ class IterPanelView extends ItemView {
         item.setTitle('Open markdown').setIcon('file-text').onClick(() => void this.plugin.openFile(tree.indexFile)),
       );
     }
+    if (allowDelete) {
+      menu.addSeparator();
+      menu.addItem(item => {
+        item.setTitle('Delete').setIcon('trash').onClick(() => this.plugin.promptDeleteTree(tree));
+        item.setWarning?.(true);
+      });
+    }
     menu.showAtMouseEvent(event);
   }
 
-  showGoalItemMenu(event, file, extraActions = []) {
+  showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
     const menu = new Menu();
     menu.addItem(item =>
       item.setTitle('Open goal view').setIcon('layout-dashboard').onClick(() => void this.plugin.openGoal(file)),
@@ -201,6 +212,13 @@ class IterPanelView extends ItemView {
       for (const action of extraActions) {
         menu.addItem(item => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
       }
+    }
+    if (onDelete) {
+      menu.addSeparator();
+      menu.addItem(item => {
+        item.setTitle('Delete').setIcon('trash').onClick(onDelete);
+        item.setWarning?.(true);
+      });
     }
     menu.showAtMouseEvent(event);
   }
@@ -225,7 +243,8 @@ class IterPanelView extends ItemView {
     });
     row.addEventListener('contextmenu', event => {
       event.preventDefault();
-      this.showTreeMenu(event, tree);
+      event.stopPropagation();
+      this.showTreeMenu(event, tree, { allowDelete: true });
     });
 
     if (tree.stats.habitTotal > 0) {
@@ -242,7 +261,7 @@ class IterPanelView extends ItemView {
       row,
       'plus',
       `Add to ${tree.title}`,
-      event => this.showTreeMenu(event, tree),
+      event => this.showTreeMenu(event, tree, { allowDelete: false }),
       'iter-row-action',
     );
 
@@ -291,16 +310,22 @@ class IterPanelView extends ItemView {
     titleBtn.addEventListener('click', () => void this.plugin.openGoal(subgoal.file));
     row.addEventListener('contextmenu', event => {
       event.preventDefault();
-      this.showGoalItemMenu(event, subgoal.file, [
-        {
-          label: subgoal.done ? 'Mark incomplete' : 'Mark done',
-          icon: subgoal.done ? 'circle' : 'check-circle-2',
-          run: async () => {
-            await toggleSubgoal(this.app, subgoal.file);
-            this.plugin.scheduleRefresh();
+      event.stopPropagation();
+      this.showGoalItemMenu(
+        event,
+        subgoal.file,
+        [
+          {
+            label: subgoal.done ? 'Mark incomplete' : 'Mark done',
+            icon: subgoal.done ? 'circle' : 'check-circle-2',
+            run: async () => {
+              await toggleSubgoal(this.app, subgoal.file);
+              this.plugin.scheduleRefresh();
+            },
           },
-        },
-      ]);
+        ],
+        () => this.plugin.promptDeleteGoalItem('goal', subgoal),
+      );
     });
   }
 
@@ -341,21 +366,27 @@ class IterPanelView extends ItemView {
     titleBtn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
     row.addEventListener('contextmenu', event => {
       event.preventDefault();
-      this.showGoalItemMenu(event, habit.file, [
-        {
-          label: habit.wateredToday ? "Undo today's watering" : 'Water now',
-          icon: 'droplet',
-          run: async () => {
-            await waterHabit(this.app, habit.file);
-            this.plugin.scheduleRefresh();
+      event.stopPropagation();
+      this.showGoalItemMenu(
+        event,
+        habit.file,
+        [
+          {
+            label: habit.wateredToday ? "Undo today's watering" : 'Water now',
+            icon: 'droplet',
+            run: async () => {
+              await waterHabit(this.app, habit.file);
+              this.plugin.scheduleRefresh();
+            },
           },
-        },
-        {
-          label: 'Edit repetitivity',
-          icon: 'calendar-days',
-          run: () => this.plugin.promptEditHabitSchedule(habit),
-        },
-      ]);
+          {
+            label: 'Edit repetitivity',
+            icon: 'calendar-days',
+            run: () => this.plugin.promptEditHabitSchedule(habit),
+          },
+        ],
+        () => this.plugin.promptDeleteGoalItem('habit', habit),
+      );
     });
 
     row.createSpan({

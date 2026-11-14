@@ -1,7 +1,21 @@
 const { Plugin, Notice } = require('obsidian');
-const { ensureStructure, createTree, createSubgoal, createHabit, updateHabitSchedule } = require('./storage');
+const {
+  ensureStructure,
+  createTree,
+  createSubgoal,
+  createHabit,
+  updateHabitSchedule,
+  deleteTree,
+  deleteGoalFile,
+} = require('./storage');
 const { listGarden, findTreeContext } = require('./catalog');
-const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('./modals');
+const {
+  CreateTreeModal,
+  CreateSubgoalModal,
+  CreateHabitModal,
+  EditHabitScheduleModal,
+  ConfirmDeleteModal,
+} = require('./modals');
 const { IterPanelView, PANEL_VIEW } = require('./panel-view');
 const { GardenView, GARDEN_VIEW } = require('./garden-view');
 const { GoalView, GOAL_VIEW } = require('./goal-view');
@@ -266,6 +280,53 @@ class IterPlugin extends Plugin {
       onSubmit: async schedule => {
         await updateHabitSchedule(this.app, habit.file, schedule);
         new Notice(`Updated repetitivity for "${habit.title}"`);
+        this.scheduleRefresh();
+      },
+    }).open();
+  }
+
+  closeGoalLeavesMatching(targetPath, isFolderTarget = false) {
+    if (!targetPath || !this.app.workspace?.getLeavesOfType) return;
+    const matches = leafPath =>
+      leafPath === targetPath || (isFolderTarget && typeof leafPath === 'string' && leafPath.startsWith(`${targetPath}/`));
+    for (const leaf of [...this.app.workspace.getLeavesOfType(GOAL_VIEW)]) {
+      const leafPath = leaf.view?.filePath ?? leaf.view?.file?.path ?? leaf.getViewState?.()?.state?.file;
+      if (matches(leafPath)) {
+        leaf.detach?.();
+      }
+    }
+  }
+
+  promptDeleteTree(tree) {
+    if (!tree?.path) return;
+    const parts = [];
+    if (tree.subgoals?.length) parts.push(tree.subgoals.length === 1 ? '1 goal' : `${tree.subgoals.length} goals`);
+    if (tree.habits?.length) parts.push(tree.habits.length === 1 ? '1 habit' : `${tree.habits.length} habits`);
+    const detail = parts.length ? ` (including ${parts.join(' and ')})` : '';
+
+    new ConfirmDeleteModal(this.app, {
+      title: `Delete "${tree.title}"?`,
+      message: `Move tree "${tree.title}"${detail} to Obsidian's trash?`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        await deleteTree(this.app, tree.path);
+        this.closeGoalLeavesMatching(tree.path, true);
+        new Notice(`Deleted "${tree.title}"`);
+        this.scheduleRefresh();
+      },
+    }).open();
+  }
+
+  promptDeleteGoalItem(kind, item) {
+    if (!item?.file) return;
+    new ConfirmDeleteModal(this.app, {
+      title: `Delete ${kind}?`,
+      message: `Move "${item.title}" to Obsidian's trash?`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        await deleteGoalFile(this.app, item.file);
+        this.closeGoalLeavesMatching(item.file.path, false);
+        new Notice(`Deleted "${item.title}"`);
         this.scheduleRefresh();
       },
     }).open();

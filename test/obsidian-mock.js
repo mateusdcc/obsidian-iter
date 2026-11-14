@@ -30,6 +30,40 @@ class FuzzySuggestModal extends Modal {
   setPlaceholder(text) { this.placeholder = text; }
 }
 
+class MenuItem {
+  constructor() {
+    this.title = '';
+    this.icon = '';
+    this.warning = false;
+    this.callback = null;
+  }
+  setTitle(title) { this.title = title; return this; }
+  setIcon(icon) { this.icon = icon; return this; }
+  setWarning(flag) { this.warning = Boolean(flag); return this; }
+  onClick(cb) { this.callback = cb; return this; }
+}
+
+class Menu {
+  constructor() {
+    this.items = [];
+    this.shownAt = null;
+  }
+  addItem(fn) {
+    const item = new MenuItem();
+    fn(item);
+    this.items.push(item);
+    return this;
+  }
+  addSeparator() {
+    this.items.push({ separator: true });
+    return this;
+  }
+  showAtMouseEvent(event) {
+    this.shownAt = event;
+    Menu.lastMenu = this;
+  }
+}
+
 class Notice {
   constructor(message) { this.message = message; }
 }
@@ -129,6 +163,25 @@ function createMockApp() {
     getMarkdownFiles() {
       return Array.from(entries.values()).filter(item => !Array.isArray(item.children) && item.extension === 'md');
     },
+    async delete(entry, force = false) {
+      if (!entry || !entries.has(entry.path)) return;
+      if (Array.isArray(entry.children) && entry.children.length > 0 && !force) {
+        throw new Error(`Folder is not empty: ${entry.path}`);
+      }
+      const prefix = `${entry.path}/`;
+      for (const path of Array.from(entries.keys())) {
+        if (path === entry.path || path.startsWith(prefix)) {
+          entries.delete(path);
+          frontmatters.delete(path);
+        }
+      }
+      if (entry.parent && Array.isArray(entry.parent.children)) {
+        entry.parent.children = entry.parent.children.filter(child => child !== entry);
+      }
+    },
+    async trash(entry) {
+      await vault.delete(entry, true);
+    },
   };
 
   const metadataCache = {
@@ -144,6 +197,9 @@ function createMockApp() {
       updater(fm);
       frontmatters.set(file.path, fm);
     },
+    async trashFile(entry) {
+      await vault.delete(entry, true);
+    },
   };
 
   return { vault, metadataCache, fileManager, _frontmatters: frontmatters };
@@ -154,6 +210,7 @@ module.exports = {
   Plugin,
   Modal,
   FuzzySuggestModal,
+  Menu,
   Notice,
   setIcon,
   createMockApp,

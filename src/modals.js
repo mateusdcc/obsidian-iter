@@ -228,9 +228,58 @@ class EditHabitScheduleModal extends BaseIterModal {
   }
 }
 
+class ConfirmDeleteModal extends Modal {
+  constructor(app, { title, message, confirmLabel = 'Delete', onConfirm }) {
+    super(app);
+    this.modalTitle = title;
+    this.message = message;
+    this.confirmLabel = confirmLabel;
+    this.onConfirm = onConfirm;
+    this.submitting = false;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('iter-modal');
+    contentEl.createEl('h2', { text: this.modalTitle, cls: 'iter-modal-title' });
+    contentEl.createEl('p', { text: this.message, cls: 'iter-modal-message' });
+
+    const actions = contentEl.createDiv({ cls: 'iter-modal-actions' });
+    const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
+    cancel.addEventListener('click', () => this.close());
+
+    const confirm = actions.createEl('button', {
+      text: this.confirmLabel,
+      type: 'button',
+      cls: 'mod-warning',
+    });
+    confirm.addEventListener('click', async () => {
+      if (this.submitting) return;
+      this.submitting = true;
+      confirm.disabled = true;
+      try {
+        await this.onConfirm();
+        this.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error));
+      } finally {
+        this.submitting = false;
+        confirm.disabled = false;
+      }
+    });
+    confirm.focus();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 module.exports = {
   CreateTreeModal,
   CreateSubgoalModal,
   CreateHabitModal,
   EditHabitScheduleModal,
+  ConfirmDeleteModal,
 };

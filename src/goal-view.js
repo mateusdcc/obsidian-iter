@@ -116,7 +116,11 @@ class GoalView extends ItemView {
 
     for (const event of ['modify', 'delete']) {
       this.registerEvent(this.app.vault.on(event, file => {
-        if (event === 'delete' && file?.path === this.filePath) {
+        if (
+          event === 'delete' &&
+          file?.path &&
+          (file.path === this.filePath || this.filePath?.startsWith(`${file.path}/`))
+        ) {
           this.file = null;
           this.render();
           return;

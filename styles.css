@@ -899,6 +899,13 @@ button.iter-water-action.is-watered {
   font-weight: 500;
 }
 
+.iter-modal-message {
+  margin: 0 0 18px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
 .iter-modal-form {
   display: flex;
   flex-direction: column;
