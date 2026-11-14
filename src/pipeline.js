@@ -165,10 +165,12 @@ const FILTER_OPS = [
   { id: 'is_number', label: 'is numeric' },
   { id: 'this_month', label: 'in this month' },
   { id: 'this_week', label: 'in this week' },
+  { id: 'this_year', label: 'in this year' },
   { id: 'within_days', label: 'in last N days' },
+  { id: 'regex', label: 'matches regex' },
 ];
 
-const OPS_WITHOUT_VALUE = new Set(['exists', 'is_number', 'this_month', 'this_week']);
+const OPS_WITHOUT_VALUE = new Set(['exists', 'is_number', 'this_month', 'this_week', 'this_year']);
 
 const MATH_OPS = [
   { id: 'multiply', label: 'Multiply (×)' },
@@ -179,6 +181,9 @@ const MATH_OPS = [
   { id: 'abs', label: 'Absolute value' },
   { id: 'clamp_min', label: 'Minimum floor' },
   { id: 'clamp_max', label: 'Maximum cap' },
+  { id: 'cumulative', label: 'Running total (cumulative)' },
+  { id: 'moving_avg', label: 'Moving average (window N)' },
+  { id: 'pct_of_target', label: '% of target (÷ N × 100)' },
 ];
 
 const GROUP_BYS = [
@@ -446,6 +451,11 @@ function ruleMatchesItem(item, rule, now = new Date()) {
     const curWeek = periodKeyFor(toDateKey(now), 'weekly');
     return Boolean(itemWeek && itemWeek === curWeek);
   }
+  if (op === 'this_year') {
+    const rawDate = typeof val === 'string' ? val : (item.date || '');
+    const curYear = toDateKey(now).slice(0, 4);
+    return Boolean(rawDate && rawDate.slice(0, 4) === curYear);
+  }
   if (op === 'within_days') {
     const days = toFiniteNumber(targetStr);
     const parsedItem = parseDateKey(typeof val === 'string' ? val : item.date);
@@ -453,6 +463,15 @@ function ruleMatchesItem(item, rule, now = new Date()) {
     if (days === null || !parsedItem || !parsedToday) return false;
     const diff = Math.round((parsedToday.getTime() - parsedItem.getTime()) / 86400000);
     return diff >= 0 && diff <= days;
+  }
+  if (op === 'regex') {
+    if (!targetStr) return true;
+    try {
+      const re = new RegExp(targetStr, 'i');
+      return re.test(val !== undefined && val !== null ? String(val) : '');
+    } catch {
+      return false;
+    }
   }
 
   const valNum = toFiniteNumber(val);
@@ -643,6 +662,9 @@ function evalMathNode(items, cfg) {
   const n = operand === null ? 1 : operand;
   const unitOverride = typeof cfg.unit === 'string' ? cfg.unit.trim() : '';
   const out = [];
+  let runningSum = 0;
+  const windowVals = [];
+  const winSize = Math.max(2, Math.round(n || 3));
 
   for (const item of items) {
     const v = toFiniteNumber(item.value);
@@ -661,12 +683,25 @@ function evalMathNode(items, cfg) {
     } else if (op === 'abs') next = Math.abs(v);
     else if (op === 'clamp_min') next = Math.max(n, v);
     else if (op === 'clamp_max') next = Math.min(n, v);
+    else if (op === 'cumulative') {
+      runningSum += v;
+      next = runningSum;
+    } else if (op === 'moving_avg') {
+      windowVals.push(v);
+      if (windowVals.length > winSize) windowVals.shift();
+      const sum = windowVals.reduce((a, b) => a + b, 0);
+      next = Math.round((sum / windowVals.length) * 100) / 100;
+    } else if (op === 'pct_of_target') {
+      const denom = n !== 0 ? n : 100;
+      next = Math.round((v / denom) * 1000) / 10;
+    }
 
+    const defaultUnit = op === 'pct_of_target' && !unitOverride ? '%' : (unitOverride || item.unit);
     out.push({
       ...item,
       index: out.length,
       value: next,
-      unit: unitOverride || item.unit,
+      unit: defaultUnit,
     });
   }
   return out;
@@ -977,6 +1012,9 @@ function formatPipelineNodeSummary(node) {
   }
   if (node.type === 'math') {
     if (cfg.op === 'abs') return 'abs(value)';
+    if (cfg.op === 'cumulative') return 'Running total';
+    if (cfg.op === 'moving_avg') return `Moving avg (${cfg.operand || 3})`;
+    if (cfg.op === 'pct_of_target') return `% of ${cfg.operand || 100}`;
     return `${cfg.op} ${cfg.operand ?? 1}`;
   }
   if (node.type === 'group') {
@@ -1212,6 +1250,53 @@ function buildPipelineTemplate(templateId, doc, context = null) {
       edges: [
         { id: 'e_1', from: w.id, to: grp.id },
         { id: 'e_2', from: grp.id, to: out.id },
+      ],
+    });
+  }
+
+  if (templateId === 'cumulative_chart') {
+    const src = createNode('source', {
+      id: 'n_src',
+      config: { scope: defaultScope, datasetFilter: 'any' },
+    });
+    const flt = createNode('filter', {
+      id: 'n_flt',
+      config: {
+        match: 'any',
+        rules: [
+          { field: 'datasetName', op: 'contains', value: preferredField },
+          { field: preferredField, op: 'is_number', value: '' },
+        ],
+      },
+    });
+    const ext = createNode('extract', {
+      id: 'n_ext',
+      config: { field: preferredField, fallbackToValue: true, dropMissing: true, unit: preferredField },
+    });
+    const srt = createNode('sort', {
+      id: 'n_srt',
+      config: { by: 'date_asc', limit: 0 },
+    });
+    const mth = createNode('math', {
+      id: 'n_mth',
+      config: { op: 'cumulative', operand: 1, unit: preferredField },
+    });
+    const out = createNode('output', {
+      id: 'n_out',
+      config: { displayType: 'chart', variant: 'line', unit: preferredField },
+    });
+    return autoLayoutPipeline({
+      version: 1,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      nodes: [src, flt, ext, srt, mth, out],
+      edges: [
+        { id: 'e_1', from: src.id, to: flt.id },
+        { id: 'e_2', from: flt.id, to: ext.id },
+        { id: 'e_3', from: ext.id, to: srt.id },
+        { id: 'e_4', from: srt.id, to: mth.id },
+        { id: 'e_5', from: mth.id, to: out.id },
       ],
     });
   }

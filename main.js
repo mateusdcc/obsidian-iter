@@ -3835,9 +3835,11 @@ var require_pipeline = __commonJS({
       { id: "is_number", label: "is numeric" },
       { id: "this_month", label: "in this month" },
       { id: "this_week", label: "in this week" },
-      { id: "within_days", label: "in last N days" }
+      { id: "this_year", label: "in this year" },
+      { id: "within_days", label: "in last N days" },
+      { id: "regex", label: "matches regex" }
     ];
-    var OPS_WITHOUT_VALUE = /* @__PURE__ */ new Set(["exists", "is_number", "this_month", "this_week"]);
+    var OPS_WITHOUT_VALUE = /* @__PURE__ */ new Set(["exists", "is_number", "this_month", "this_week", "this_year"]);
     var MATH_OPS = [
       { id: "multiply", label: "Multiply (\xD7)" },
       { id: "divide", label: "Divide (\xF7)" },
@@ -3846,7 +3848,10 @@ var require_pipeline = __commonJS({
       { id: "round", label: "Round (decimals)" },
       { id: "abs", label: "Absolute value" },
       { id: "clamp_min", label: "Minimum floor" },
-      { id: "clamp_max", label: "Maximum cap" }
+      { id: "clamp_max", label: "Maximum cap" },
+      { id: "cumulative", label: "Running total (cumulative)" },
+      { id: "moving_avg", label: "Moving average (window N)" },
+      { id: "pct_of_target", label: "% of target (\xF7 N \xD7 100)" }
     ];
     var GROUP_BYS = [
       { id: "sourceTitle", label: "Child (Habit / Subgoal)" },
@@ -4084,6 +4089,11 @@ var require_pipeline = __commonJS({
         const curWeek = periodKeyFor(toDateKey(now), "weekly");
         return Boolean(itemWeek && itemWeek === curWeek);
       }
+      if (op === "this_year") {
+        const rawDate = typeof val === "string" ? val : item.date || "";
+        const curYear = toDateKey(now).slice(0, 4);
+        return Boolean(rawDate && rawDate.slice(0, 4) === curYear);
+      }
       if (op === "within_days") {
         const days = toFiniteNumber(targetStr);
         const parsedItem = parseDateKey(typeof val === "string" ? val : item.date);
@@ -4091,6 +4101,15 @@ var require_pipeline = __commonJS({
         if (days === null || !parsedItem || !parsedToday) return false;
         const diff = Math.round((parsedToday.getTime() - parsedItem.getTime()) / 864e5);
         return diff >= 0 && diff <= days;
+      }
+      if (op === "regex") {
+        if (!targetStr) return true;
+        try {
+          const re = new RegExp(targetStr, "i");
+          return re.test(val !== void 0 && val !== null ? String(val) : "");
+        } catch {
+          return false;
+        }
       }
       const valNum = toFiniteNumber(val);
       const targetNum = toFiniteNumber(targetStr);
@@ -4264,6 +4283,9 @@ var require_pipeline = __commonJS({
       const n = operand === null ? 1 : operand;
       const unitOverride = typeof cfg.unit === "string" ? cfg.unit.trim() : "";
       const out = [];
+      let runningSum = 0;
+      const windowVals = [];
+      const winSize = Math.max(2, Math.round(n || 3));
       for (const item of items) {
         const v = toFiniteNumber(item.value);
         if (v === null) {
@@ -4281,11 +4303,24 @@ var require_pipeline = __commonJS({
         } else if (op === "abs") next = Math.abs(v);
         else if (op === "clamp_min") next = Math.max(n, v);
         else if (op === "clamp_max") next = Math.min(n, v);
+        else if (op === "cumulative") {
+          runningSum += v;
+          next = runningSum;
+        } else if (op === "moving_avg") {
+          windowVals.push(v);
+          if (windowVals.length > winSize) windowVals.shift();
+          const sum = windowVals.reduce((a, b) => a + b, 0);
+          next = Math.round(sum / windowVals.length * 100) / 100;
+        } else if (op === "pct_of_target") {
+          const denom = n !== 0 ? n : 100;
+          next = Math.round(v / denom * 1e3) / 10;
+        }
+        const defaultUnit = op === "pct_of_target" && !unitOverride ? "%" : unitOverride || item.unit;
         out.push({
           ...item,
           index: out.length,
           value: next,
-          unit: unitOverride || item.unit
+          unit: defaultUnit
         });
       }
       return out;
@@ -4546,6 +4581,9 @@ var require_pipeline = __commonJS({
       }
       if (node.type === "math") {
         if (cfg.op === "abs") return "abs(value)";
+        if (cfg.op === "cumulative") return "Running total";
+        if (cfg.op === "moving_avg") return `Moving avg (${cfg.operand || 3})`;
+        if (cfg.op === "pct_of_target") return `% of ${cfg.operand || 100}`;
         return `${cfg.op} ${cfg.operand ?? 1}`;
       }
       if (node.type === "group") {
@@ -4768,6 +4806,52 @@ var require_pipeline = __commonJS({
           edges: [
             { id: "e_1", from: w.id, to: grp.id },
             { id: "e_2", from: grp.id, to: out.id }
+          ]
+        });
+      }
+      if (templateId === "cumulative_chart") {
+        const src = createNode("source", {
+          id: "n_src",
+          config: { scope: defaultScope, datasetFilter: "any" }
+        });
+        const flt = createNode("filter", {
+          id: "n_flt",
+          config: {
+            match: "any",
+            rules: [
+              { field: "datasetName", op: "contains", value: preferredField },
+              { field: preferredField, op: "is_number", value: "" }
+            ]
+          }
+        });
+        const ext = createNode("extract", {
+          id: "n_ext",
+          config: { field: preferredField, fallbackToValue: true, dropMissing: true, unit: preferredField }
+        });
+        const srt = createNode("sort", {
+          id: "n_srt",
+          config: { by: "date_asc", limit: 0 }
+        });
+        const mth = createNode("math", {
+          id: "n_mth",
+          config: { op: "cumulative", operand: 1, unit: preferredField }
+        });
+        const out = createNode("output", {
+          id: "n_out",
+          config: { displayType: "chart", variant: "line", unit: preferredField }
+        });
+        return autoLayoutPipeline({
+          version: 1,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          nodes: [src, flt, ext, srt, mth, out],
+          edges: [
+            { id: "e_1", from: src.id, to: flt.id },
+            { id: "e_2", from: flt.id, to: ext.id },
+            { id: "e_3", from: ext.id, to: srt.id },
+            { id: "e_4", from: srt.id, to: mth.id },
+            { id: "e_5", from: mth.id, to: out.id }
           ]
         });
       }
@@ -5232,6 +5316,7 @@ var require_canvas_editor = __commonJS({
         tplSelect.createEl("option", { value: "filter_field", text: "Filter by property (e.g. pages)" });
         tplSelect.createEl("option", { value: "count_items", text: "Count entries / notes" });
         tplSelect.createEl("option", { value: "compare_children", text: "Compare children (Bar Chart)" });
+        tplSelect.createEl("option", { value: "cumulative_chart", text: "Cumulative growth over time" });
         tplSelect.createEl("option", { value: "goal_progress", text: "Goal Progress Bar" });
         tplSelect.createEl("option", { value: "habit_waterings", text: "Habit waterings over time" });
         tplSelect.createEl("option", { value: "merge_branches", text: "Merge two branches" });
@@ -5243,6 +5328,12 @@ var require_canvas_editor = __commonJS({
           if (!id) return;
           tplSelect.value = "";
           this.applyTemplateRecipe(id);
+        });
+        const jsonBtn = toolsRight.createEl("button", {
+          text: "Flow JSON",
+          type: "button",
+          cls: "iter-btn-ghost iter-flow-json-btn",
+          attr: { title: "Export or import raw pipeline JSON" }
         });
         const layoutBtn = toolsRight.createEl("button", {
           text: "Auto-layout",
@@ -5292,6 +5383,7 @@ var require_canvas_editor = __commonJS({
           { id: "filter_field", label: `Sum "${preferredField}"`, title: `Total ${preferredField}` },
           { id: "count_items", label: "Count entries", title: "Total entries" },
           { id: "compare_children", label: "Compare children", title: "Breakdown by child" },
+          { id: "cumulative_chart", label: "Cumulative graph", title: `Cumulative ${preferredField}` },
           { id: "goal_progress", label: "Goal progress bar", title: `${preferredField} progress` },
           { id: "habit_waterings", label: "Habit waterings", title: "Habit waterings" },
           { id: "filtered_notes", label: "This month notes", title: "Recent notes" }
@@ -5304,6 +5396,49 @@ var require_canvas_editor = __commonJS({
           });
           pill.addEventListener("click", () => this.applyTemplateRecipe(rec.id, rec.title));
         }
+        const jsonDrawer = contentEl.createDiv({ cls: "iter-flow-json-drawer" });
+        jsonDrawer.style.display = "none";
+        const jsonArea = jsonDrawer.createEl("textarea", {
+          cls: "iter-flow-json-textarea",
+          placeholder: "Paste pipeline JSON here\u2026"
+        });
+        jsonArea.rows = 4;
+        const jsonActions = jsonDrawer.createDiv({ cls: "iter-flow-json-actions" });
+        const applyJsonBtn = jsonActions.createEl("button", {
+          text: "Apply JSON",
+          type: "button",
+          cls: "mod-cta iter-flow-json-apply"
+        });
+        const closeJsonBtn = jsonActions.createEl("button", {
+          text: "Hide JSON",
+          type: "button",
+          cls: "iter-btn-ghost"
+        });
+        jsonBtn.addEventListener("click", () => {
+          const opening = jsonDrawer.style.display === "none";
+          if (opening) {
+            jsonArea.value = JSON.stringify(this.pipeline, null, 2);
+            jsonDrawer.style.display = "";
+          } else {
+            jsonDrawer.style.display = "none";
+          }
+        });
+        closeJsonBtn.addEventListener("click", () => {
+          jsonDrawer.style.display = "none";
+        });
+        applyJsonBtn.addEventListener("click", () => {
+          try {
+            const parsed = JSON.parse(jsonArea.value);
+            this.pipeline = normalizePipeline(parsed, this.doc);
+            this.selectedNodeId = this.pipeline.nodes[0]?.id || null;
+            this.selectedEdgeId = null;
+            jsonDrawer.style.display = "none";
+            this.refreshAll();
+            new Notice2("Loaded flow from JSON.");
+          } catch (err) {
+            new Notice2(`Invalid flow JSON: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        });
         const body = contentEl.createDiv({ cls: "iter-flow-body" });
         const canvasCol = body.createDiv({ cls: "iter-flow-canvas-col" });
         const statusBar = canvasCol.createDiv({ cls: "iter-flow-canvas-bar" });
@@ -5509,6 +5644,32 @@ var require_canvas_editor = __commonJS({
         this.selectedEdgeId = null;
         this.pendingFromNodeId = null;
         this.refreshAll();
+      }
+      duplicateNode(nodeId) {
+        const orig = this.pipeline.nodes.find((n) => n.id === nodeId);
+        if (!orig) return null;
+        const def = getNodeDef(orig.type);
+        const copy = createNode(orig.type, {
+          label: orig.label ? `${orig.label} (copy)` : "",
+          x: Math.min(CANVAS_W - 260, orig.x + 48),
+          y: Math.min(CANVAS_H - 120, orig.y + 84),
+          config: orig.config
+        });
+        this.pipeline.nodes.push(copy);
+        if (def?.hasIn && def?.hasOut) {
+          const outEdges = this.pipeline.edges.filter((e) => e.from === orig.id);
+          if (outEdges.length === 1) {
+            const targetId = outEdges[0].to;
+            this.pipeline.edges = this.pipeline.edges.filter((e) => e.id !== outEdges[0].id);
+            this.connectNodes(orig.id, copy.id);
+            this.connectNodes(copy.id, targetId);
+          }
+        }
+        this.pipeline = autoLayoutPipeline(this.pipeline);
+        this.selectedNodeId = copy.id;
+        this.selectedEdgeId = null;
+        this.refreshAll();
+        return copy;
       }
       connectNodes(fromId, toId) {
         if (!fromId || !toId || fromId === toId) return;
@@ -5803,8 +5964,18 @@ var require_canvas_editor = __commonJS({
         const def = getNodeDef(node.type);
         const header = host.createDiv({ cls: "iter-flow-ins-head" });
         header.createEl("h3", { text: def?.label || node.type, cls: "iter-flow-ins-title" });
+        const headActions = header.createDiv({ cls: "iter-widget-top-actions" });
+        if (node.type !== "output") {
+          const dupBtn = headActions.createEl("button", {
+            type: "button",
+            cls: "iter-icon-button iter-flow-node-dup",
+            attr: { "aria-label": "Duplicate node", title: "Duplicate node" }
+          });
+          setIcon(dupBtn, "copy");
+          dupBtn.addEventListener("click", () => this.duplicateNode(node.id));
+        }
         if (this.pipeline.nodes.length > 1) {
-          const delBtn = header.createEl("button", {
+          const delBtn = headActions.createEl("button", {
             type: "button",
             cls: "iter-icon-button",
             attr: { "aria-label": "Delete node", title: "Delete node" }
@@ -6106,14 +6277,21 @@ var require_canvas_editor = __commonJS({
           const opSel = opF.createEl("select", { cls: "iter-modal-select" });
           for (const item of MATH_OPS) opSel.createEl("option", { value: item.id, text: item.label });
           opSel.value = cfg.op || "multiply";
-          opSel.addEventListener("change", () => {
-            cfg.op = opSel.value;
-            onChange(false);
-          });
           const valF = row.createDiv({ cls: "iter-modal-field" });
-          valF.createEl("label", { text: "Number", cls: "iter-modal-label" });
+          const valLabel = valF.createEl("label", { text: "Number", cls: "iter-modal-label" });
           const valIn = valF.createEl("input", { type: "number", step: "any", cls: "iter-modal-input" });
           valIn.value = String(cfg.operand ?? 1);
+          const syncOperandField = () => {
+            const curOp = opSel.value;
+            valF.style.display = curOp === "cumulative" || curOp === "abs" ? "none" : "";
+            valLabel.textContent = curOp === "moving_avg" ? "Window size (N)" : curOp === "pct_of_target" ? "Target (N)" : "Number";
+          };
+          syncOperandField();
+          opSel.addEventListener("change", () => {
+            cfg.op = opSel.value;
+            syncOperandField();
+            onChange(false);
+          });
           valIn.addEventListener("input", () => {
             cfg.operand = Number(valIn.value);
             onChange(false);

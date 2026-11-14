@@ -915,6 +915,19 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     await fire(sugChips[0], 'click');
     const widgetsAfter = (await readGoalDocument(app, readingTree)).widgets.length;
     assert.equal(widgetsAfter, widgetsBefore + 1);
+
+    // i) WorkflowEditorModal supports Duplicate Node and Flow JSON import/export
+    const dupNodeBtn = app.lastModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-node-dup'))[0];
+    assert.ok(dupNodeBtn, 'Inspector should expose Duplicate node button');
+    const nodesBeforeDup = app.lastModal.pipeline.nodes.length;
+    await fire(dupNodeBtn, 'click');
+    assert.equal(app.lastModal.pipeline.nodes.length, nodesBeforeDup + 1);
+
+    const jsonBtn = app.lastModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-json-btn'))[0];
+    assert.ok(jsonBtn, 'Toolbar should expose Flow JSON button');
+    await fire(jsonBtn, 'click');
+    const jsonArea = app.lastModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-json-textarea'))[0];
+    assert.ok(jsonArea.value.includes('"nodes"'));
   } finally {
     global.document = prevDocument;
   }

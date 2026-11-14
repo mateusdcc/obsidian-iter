@@ -245,6 +245,7 @@ class WorkflowEditorModal extends Modal {
     tplSelect.createEl('option', { value: 'filter_field', text: 'Filter by property (e.g. pages)' });
     tplSelect.createEl('option', { value: 'count_items', text: 'Count entries / notes' });
     tplSelect.createEl('option', { value: 'compare_children', text: 'Compare children (Bar Chart)' });
+    tplSelect.createEl('option', { value: 'cumulative_chart', text: 'Cumulative growth over time' });
     tplSelect.createEl('option', { value: 'goal_progress', text: 'Goal Progress Bar' });
     tplSelect.createEl('option', { value: 'habit_waterings', text: 'Habit waterings over time' });
     tplSelect.createEl('option', { value: 'merge_branches', text: 'Merge two branches' });
@@ -256,6 +257,13 @@ class WorkflowEditorModal extends Modal {
       if (!id) return;
       tplSelect.value = '';
       this.applyTemplateRecipe(id);
+    });
+
+    const jsonBtn = toolsRight.createEl('button', {
+      text: 'Flow JSON',
+      type: 'button',
+      cls: 'iter-btn-ghost iter-flow-json-btn',
+      attr: { title: 'Export or import raw pipeline JSON' },
     });
 
     const layoutBtn = toolsRight.createEl('button', {
@@ -313,6 +321,7 @@ class WorkflowEditorModal extends Modal {
       { id: 'filter_field', label: `Sum "${preferredField}"`, title: `Total ${preferredField}` },
       { id: 'count_items', label: 'Count entries', title: 'Total entries' },
       { id: 'compare_children', label: 'Compare children', title: 'Breakdown by child' },
+      { id: 'cumulative_chart', label: 'Cumulative graph', title: `Cumulative ${preferredField}` },
       { id: 'goal_progress', label: 'Goal progress bar', title: `${preferredField} progress` },
       { id: 'habit_waterings', label: 'Habit waterings', title: 'Habit waterings' },
       { id: 'filtered_notes', label: 'This month notes', title: 'Recent notes' },
@@ -325,6 +334,50 @@ class WorkflowEditorModal extends Modal {
       });
       pill.addEventListener('click', () => this.applyTemplateRecipe(rec.id, rec.title));
     }
+
+    const jsonDrawer = contentEl.createDiv({ cls: 'iter-flow-json-drawer' });
+    jsonDrawer.style.display = 'none';
+    const jsonArea = jsonDrawer.createEl('textarea', {
+      cls: 'iter-flow-json-textarea',
+      placeholder: 'Paste pipeline JSON here…',
+    });
+    jsonArea.rows = 4;
+    const jsonActions = jsonDrawer.createDiv({ cls: 'iter-flow-json-actions' });
+    const applyJsonBtn = jsonActions.createEl('button', {
+      text: 'Apply JSON',
+      type: 'button',
+      cls: 'mod-cta iter-flow-json-apply',
+    });
+    const closeJsonBtn = jsonActions.createEl('button', {
+      text: 'Hide JSON',
+      type: 'button',
+      cls: 'iter-btn-ghost',
+    });
+    jsonBtn.addEventListener('click', () => {
+      const opening = jsonDrawer.style.display === 'none';
+      if (opening) {
+        jsonArea.value = JSON.stringify(this.pipeline, null, 2);
+        jsonDrawer.style.display = '';
+      } else {
+        jsonDrawer.style.display = 'none';
+      }
+    });
+    closeJsonBtn.addEventListener('click', () => {
+      jsonDrawer.style.display = 'none';
+    });
+    applyJsonBtn.addEventListener('click', () => {
+      try {
+        const parsed = JSON.parse(jsonArea.value);
+        this.pipeline = normalizePipeline(parsed, this.doc);
+        this.selectedNodeId = this.pipeline.nodes[0]?.id || null;
+        this.selectedEdgeId = null;
+        jsonDrawer.style.display = 'none';
+        this.refreshAll();
+        new Notice('Loaded flow from JSON.');
+      } catch (err) {
+        new Notice(`Invalid flow JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
 
     // Main split: canvas on left, inspector + live widget preview on right
     const body = contentEl.createDiv({ cls: 'iter-flow-body' });
@@ -560,6 +613,33 @@ class WorkflowEditorModal extends Modal {
     this.selectedEdgeId = null;
     this.pendingFromNodeId = null;
     this.refreshAll();
+  }
+
+  duplicateNode(nodeId) {
+    const orig = this.pipeline.nodes.find(n => n.id === nodeId);
+    if (!orig) return null;
+    const def = getNodeDef(orig.type);
+    const copy = createNode(orig.type, {
+      label: orig.label ? `${orig.label} (copy)` : '',
+      x: Math.min(CANVAS_W - 260, orig.x + 48),
+      y: Math.min(CANVAS_H - 120, orig.y + 84),
+      config: orig.config,
+    });
+    this.pipeline.nodes.push(copy);
+    if (def?.hasIn && def?.hasOut) {
+      const outEdges = this.pipeline.edges.filter(e => e.from === orig.id);
+      if (outEdges.length === 1) {
+        const targetId = outEdges[0].to;
+        this.pipeline.edges = this.pipeline.edges.filter(e => e.id !== outEdges[0].id);
+        this.connectNodes(orig.id, copy.id);
+        this.connectNodes(copy.id, targetId);
+      }
+    }
+    this.pipeline = autoLayoutPipeline(this.pipeline);
+    this.selectedNodeId = copy.id;
+    this.selectedEdgeId = null;
+    this.refreshAll();
+    return copy;
   }
 
   connectNodes(fromId, toId) {
@@ -887,8 +967,18 @@ class WorkflowEditorModal extends Modal {
     const def = getNodeDef(node.type);
     const header = host.createDiv({ cls: 'iter-flow-ins-head' });
     header.createEl('h3', { text: def?.label || node.type, cls: 'iter-flow-ins-title' });
+    const headActions = header.createDiv({ cls: 'iter-widget-top-actions' });
+    if (node.type !== 'output') {
+      const dupBtn = headActions.createEl('button', {
+        type: 'button',
+        cls: 'iter-icon-button iter-flow-node-dup',
+        attr: { 'aria-label': 'Duplicate node', title: 'Duplicate node' },
+      });
+      setIcon(dupBtn, 'copy');
+      dupBtn.addEventListener('click', () => this.duplicateNode(node.id));
+    }
     if (this.pipeline.nodes.length > 1) {
-      const delBtn = header.createEl('button', {
+      const delBtn = headActions.createEl('button', {
         type: 'button',
         cls: 'iter-icon-button',
         attr: { 'aria-label': 'Delete node', title: 'Delete node' },
@@ -1221,15 +1311,28 @@ class WorkflowEditorModal extends Modal {
       const opSel = opF.createEl('select', { cls: 'iter-modal-select' });
       for (const item of MATH_OPS) opSel.createEl('option', { value: item.id, text: item.label });
       opSel.value = cfg.op || 'multiply';
-      opSel.addEventListener('change', () => {
-        cfg.op = opSel.value;
-        onChange(false);
-      });
 
       const valF = row.createDiv({ cls: 'iter-modal-field' });
-      valF.createEl('label', { text: 'Number', cls: 'iter-modal-label' });
+      const valLabel = valF.createEl('label', { text: 'Number', cls: 'iter-modal-label' });
       const valIn = valF.createEl('input', { type: 'number', step: 'any', cls: 'iter-modal-input' });
       valIn.value = String(cfg.operand ?? 1);
+
+      const syncOperandField = () => {
+        const curOp = opSel.value;
+        valF.style.display = curOp === 'cumulative' || curOp === 'abs' ? 'none' : '';
+        valLabel.textContent = curOp === 'moving_avg'
+          ? 'Window size (N)'
+          : curOp === 'pct_of_target'
+            ? 'Target (N)'
+            : 'Number';
+      };
+      syncOperandField();
+
+      opSel.addEventListener('change', () => {
+        cfg.op = opSel.value;
+        syncOperandField();
+        onChange(false);
+      });
       valIn.addEventListener('input', () => {
         cfg.operand = Number(valIn.value);
         onChange(false);

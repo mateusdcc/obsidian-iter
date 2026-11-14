@@ -723,4 +723,32 @@ test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, m
   const treeSugs = buildSmartWidgetSuggestions(app, docAfterDup);
   assert.ok(treeSugs.length >= 1);
   assert.ok(treeSugs.some(s => s.label.includes('Sum All Child Counters') || s.label.includes('Tree "chapters" Sum')));
+
+  // cumulative, moving_avg, pct_of_target, regex, and cumulative_chart template
+  const cumTpl = buildPipelineTemplate('cumulative_chart', treeDoc, ctx);
+  const cumEval = evaluatePipeline(app, cumTpl, treeDoc);
+  assert.equal(cumEval.output.displayType, 'chart');
+  const cumPts = cumEval.output.points;
+  assert.ok(cumPts.length >= 2);
+  // Cumulative points should be non-decreasing and end at 325 (25 + 90 + 210 after entry 0 edit)
+  assert.equal(cumPts[cumPts.length - 1].value, 325);
+
+  const regexMathFlow = {
+    nodes: [
+      { id: 'n_src', type: 'source', config: { scope: 'tree_children', datasetFilter: 'any' } },
+      { id: 'n_flt', type: 'filter', config: { match: 'all', rules: [{ field: 'title', op: 'regex', value: '^(Eros|Seneca)' }] } },
+      { id: 'n_ext', type: 'extract', config: { field: 'pages', fallbackToValue: false, dropMissing: true } },
+      { id: 'n_mth', type: 'math', config: { op: 'moving_avg', operand: 2 } },
+      { id: 'n_out', type: 'output', config: { displayType: 'stat', agg: 'latest' } },
+    ],
+    edges: [
+      { id: 'e1', from: 'n_src', to: 'n_flt' },
+      { id: 'e2', from: 'n_flt', to: 'n_ext' },
+      { id: 'e3', from: 'n_ext', to: 'n_mth' },
+      { id: 'e4', from: 'n_mth', to: 'n_out' },
+    ],
+  };
+  const regexRes = evaluatePipeline(app, regexMathFlow, treeDoc);
+  // Note 0 was updated to 25 pages, Note 1 (Seneca) has 60 pages -> 2-point moving average is (25 + 60)/2 = 42.5
+  assert.equal(regexRes.output.stat.value, 42.5);
 });
