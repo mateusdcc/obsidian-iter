@@ -1,0 +1,10 @@
+{
+  "id": "iter",
+  "name": "Iter",
+  "version": "0.1.0",
+  "minAppVersion": "1.14.5",
+  "description": "Shared long-term goal garden with modular trees, subgoals, and habit watering for Obsidian.",
+  "author": "Mateus Cavalcanti",
+  "authorUrl": "https://github.com/mateusdcc",
+  "isDesktopOnly": false
+}
