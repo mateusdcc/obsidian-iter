@@ -934,6 +934,10 @@ button.iter-water-action.is-watered {
   width: 100%;
 }
 
+.iter-tree-due-slot {
+  margin-top: 2px;
+}
+
 .iter-modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1039,6 +1043,11 @@ button.iter-water-action.is-watered {
   text-transform: uppercase;
 }
 
+.iter-kind-pill.is-endless {
+  background: color-mix(in srgb, var(--iter-sage-1) 14%, transparent);
+  color: var(--iter-sage-1);
+}
+
 .iter-goal-top-actions {
   display: flex;
   align-items: center;
@@ -1070,6 +1079,10 @@ button.iter-primary-pill.is-done {
   border: 1px solid var(--background-modifier-border);
   border-radius: 12px;
   background: color-mix(in srgb, var(--background-secondary) 50%, var(--background-primary));
+}
+
+.iter-goal-overview.is-single {
+  grid-template-columns: 1fr;
 }
 
 @media (max-width: 700px) {

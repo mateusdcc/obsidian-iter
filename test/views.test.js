@@ -376,3 +376,92 @@ test('IterPanelView right-click menu exposes Delete for trees, subgoals, and hab
     global.document = prevDocument;
   }
 });
+
+test('CreateTreeModal, GoalView, and GardenView support endless vs target-date trees', async () => {
+  const prevDocument = global.document;
+  global.document = {
+    createElement: tag => createMockElement(tag),
+    createElementNS: (_ns, tag) => createMockElement(tag),
+  };
+
+  try {
+    const app = createMockApp();
+    await ensureStructure(app.vault);
+
+    // CreateTreeModal toggles Expected completion visibility between Target date and Never-ending
+    let submitted = null;
+    const modal = new CreateTreeModal(app, {
+      onSubmit: async values => {
+        submitted = values;
+      },
+    });
+    modal.contentEl = createMockElement('div');
+    modal.onOpen();
+
+    const nameInput = modal.contentEl.findAll(el => el.tagName === 'INPUT' && el.getAttribute('type') === 'text')[0];
+    const dateInput = modal.contentEl.findAll(el => el.tagName === 'INPUT' && el.getAttribute('type') === 'date')[0];
+    const dueSlot = modal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-tree-due-slot'))[0];
+    const targetBtn = modal.contentEl.findAll(el => el.tagName === 'BUTTON' && el.textContent === 'Target date')[0];
+    const endlessBtn = modal.contentEl.findAll(el => el.tagName === 'BUTTON' && el.textContent === 'Never-ending')[0];
+
+    assert.equal(dueSlot.style.display, '');
+    nameInput.value = 'Gym';
+    dateInput.value = '2026-12-31';
+
+    for (const fn of endlessBtn.listeners.get('click') || []) fn();
+    assert.equal(dueSlot.style.display, 'none');
+    assert.equal(dateInput.value, '');
+
+    // Switching back shows date slot; switching to Never-ending submits endless: true, due: ''
+    for (const fn of targetBtn.listeners.get('click') || []) fn();
+    assert.equal(dueSlot.style.display, '');
+    for (const fn of endlessBtn.listeners.get('click') || []) fn();
+    assert.equal(dueSlot.style.display, 'none');
+
+    const form = modal.contentEl.findAll(el => el.tagName === 'FORM')[0];
+    for (const fn of form.listeners.get('submit') || []) {
+      await fn({ preventDefault() {} });
+    }
+    assert.equal(submitted.name, 'Gym');
+    assert.equal(submitted.endless, true);
+    assert.equal(submitted.due, '');
+
+    // GoalView omits Expected completion field on Never-ending trees, keeps it on Target date trees
+    const gymTree = await createTree(app.vault, submitted);
+    const codeTree = await createTree(app.vault, {
+      name: 'Learn How to Code',
+      module: 'learning',
+      endless: false,
+      due: '2027-06-01',
+    });
+
+    const goalView = new GoalView(
+      { containerEl: createMockElement('div'), updateHeader() {} },
+      { openGarden() {}, promptCreateSubgoal() {}, promptCreateHabit() {}, scheduleRefresh() {} },
+    );
+    goalView.app = app;
+    goalView.contentEl = createMockElement('div');
+
+    await goalView.setState({ file: gymTree.path }, {});
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-goal-due-wrap')).length, 0);
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-goal-overview') && el.className.split(/\s+/).includes('is-single')).length, 1);
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('is-endless')).length, 1);
+
+    await goalView.setState({ file: codeTree.path }, {});
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-goal-due-wrap')).length, 1);
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('is-endless')).length, 0);
+
+    // GardenView inspector indicates Never-ending on endless trees
+    const garden = new GardenView(
+      { containerEl: createMockElement('div') },
+      { openGoal() {}, promptCreateTree() {}, promptCreateSubgoal() {}, promptCreateHabit() {}, scheduleRefresh() {} },
+    );
+    garden.app = app;
+    garden.contentEl = createMockElement('div');
+    garden.selectedTreePath = 'Iter/Gym';
+    garden.render();
+    assert.equal(garden.contentEl.findAll(el => el.className.split(/\s+/).includes('is-endless')).length, 1);
+  } finally {
+    global.document = prevDocument;
+  }
+});

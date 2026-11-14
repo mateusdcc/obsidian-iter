@@ -275,3 +275,26 @@ test('deleteGoalFile and deleteTree safely trash items and guard protected paths
   assert.equal(app.vault.getAbstractFileByPath('Iter/Gym/_tree.md'), null);
   assert.equal(app.vault.getAbstractFileByPath(habit.path), null);
 });
+
+test('createTree persists endless flag and skips due date for Never-ending trees', async () => {
+  const app = createMockApp();
+  const gymFile = await createTree(app.vault, {
+    name: 'Gym',
+    module: 'gym',
+    endless: true,
+    due: '2026-12-31',
+  });
+  const gymFm = app.metadataCache.getFileCache(gymFile).frontmatter;
+  assert.equal(gymFm.endless, true);
+  assert.equal(gymFm.due, undefined);
+
+  const codeFile = await createTree(app.vault, {
+    name: 'Learn How to Code',
+    module: 'learning',
+    endless: false,
+    due: '2027-06-01',
+  });
+  const codeFm = app.metadataCache.getFileCache(codeFile).frontmatter;
+  assert.equal(codeFm.endless, false);
+  assert.equal(codeFm.due, '2027-06-01');
+});

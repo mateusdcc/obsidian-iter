@@ -156,11 +156,13 @@ function normalizeStyle(value) {
   return STYLES.includes(normalized) ? normalized : 'auto';
 }
 
-async function createTree(vault, { name, module = 'general', goal = '', style = 'auto' }) {
+async function createTree(vault, { name, module = 'general', goal = '', style = 'auto', endless = false, due = '' }) {
   const title = validateName(name, 'Tree name');
   const mod = normalizeModule(module);
   const treeStyle = normalizeStyle(style);
   const cleanGoal = typeof goal === 'string' ? goal.trim() : '';
+  const isEndless = Boolean(endless);
+  const cleanDue = !isEndless && typeof due === 'string' && parseDateKey(due) ? due.trim() : '';
 
   await ensureStructure(vault);
   const treeDir = `${ROOT}/${title}`;
@@ -177,12 +179,18 @@ async function createTree(vault, { name, module = 'general', goal = '', style = 
     `module: ${JSON.stringify(mod)}`,
     `goal: ${JSON.stringify(cleanGoal)}`,
     `style: ${JSON.stringify(treeStyle)}`,
+    `endless: ${isEndless ? 'true' : 'false'}`,
+  ];
+  if (cleanDue) {
+    lines.push(`due: ${JSON.stringify(cleanDue)}`);
+  }
+  lines.push(
     `created: ${new Date().toISOString()}`,
     '---',
     '',
     `# ${title}`,
     '',
-  ];
+  );
   if (cleanGoal) {
     lines.push('## Goal', cleanGoal, '');
   }

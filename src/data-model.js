@@ -180,6 +180,7 @@ function readGoalDocument(app, file) {
     title,
     description,
     due,
+    endless: kind === 'tree' && Boolean(fm.endless),
     target,
     done: Boolean(fm.done),
     frequency: normalizeFrequency(fm.frequency),
@@ -305,14 +306,18 @@ function formatDueStatus(due, now = new Date()) {
   return { formatted, badge: `${diffDays}d left`, tone: 'calm' };
 }
 
-async function updateGoalMeta(app, file, { description, due }) {
+async function updateGoalMeta(app, file, { description, due, endless }) {
   await app.fileManager.processFrontMatter(file, fm => {
     if (description !== undefined) {
       const clean = String(description).trim();
       fm.description = clean;
       if (file.name === '_tree.md') fm.goal = clean;
     }
-    if (due !== undefined) {
+    if (endless !== undefined && file.name === '_tree.md') {
+      fm.endless = Boolean(endless);
+      if (fm.endless) fm.due = '';
+    }
+    if (due !== undefined && !(file.name === '_tree.md' && fm.endless)) {
       const cleanDue = String(due).trim();
       fm.due = parseDateKey(cleanDue) ? cleanDue : '';
     }

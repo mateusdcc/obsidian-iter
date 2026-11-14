@@ -141,11 +141,13 @@ var require_storage = __commonJS({
       const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
       return STYLES.includes(normalized) ? normalized : "auto";
     }
-    async function createTree2(vault, { name, module: module3 = "general", goal = "", style = "auto" }) {
+    async function createTree2(vault, { name, module: module3 = "general", goal = "", style = "auto", endless = false, due = "" }) {
       const title = validateName(name, "Tree name");
       const mod = normalizeModule(module3);
       const treeStyle = normalizeStyle(style);
       const cleanGoal = typeof goal === "string" ? goal.trim() : "";
+      const isEndless = Boolean(endless);
+      const cleanDue = !isEndless && typeof due === "string" && parseDateKey(due) ? due.trim() : "";
       await ensureStructure2(vault);
       const treeDir = `${ROOT}/${title}`;
       if (vault.getAbstractFileByPath(treeDir)) {
@@ -160,12 +162,18 @@ var require_storage = __commonJS({
         `module: ${JSON.stringify(mod)}`,
         `goal: ${JSON.stringify(cleanGoal)}`,
         `style: ${JSON.stringify(treeStyle)}`,
+        `endless: ${isEndless ? "true" : "false"}`
+      ];
+      if (cleanDue) {
+        lines.push(`due: ${JSON.stringify(cleanDue)}`);
+      }
+      lines.push(
         `created: ${(/* @__PURE__ */ new Date()).toISOString()}`,
         "---",
         "",
         `# ${title}`,
         ""
-      ];
+      );
       if (cleanGoal) {
         lines.push("## Goal", cleanGoal, "");
       }
@@ -654,7 +662,8 @@ var require_catalog = __commonJS({
       normalizeWaterLog,
       isWateredInPeriod,
       computeHabitStreak,
-      toDateKey
+      toDateKey,
+      parseDateKey
     } = require_storage();
     function compareNames(a, b) {
       return a.localeCompare(b, void 0, { sensitivity: "base", numeric: true });
@@ -837,6 +846,8 @@ var require_catalog = __commonJS({
             module: normalizeModule(fm?.module),
             goal: readString(fm, "goal", ""),
             style: normalizeStyle(fm?.style),
+            endless: Boolean(fm?.endless),
+            due: fm?.endless ? "" : typeof fm?.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "",
             targets: parseTargets(fm?.targets),
             subgoals,
             habits,
@@ -1079,13 +1090,56 @@ var require_modals = __commonJS({
           "Long-term goal (optional)",
           (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. Reach 70kg at 12% body fat", cls: "iter-modal-input" })
         );
+        let endless = false;
+        const completionField = form.createDiv({ cls: "iter-modal-field" });
+        completionField.createEl("span", { text: "Expected completion", cls: "iter-modal-label" });
+        const horizonPills = completionField.createDiv({ cls: "iter-cadence-pills" });
+        const targetBtn = horizonPills.createEl("button", {
+          text: "Target date",
+          type: "button",
+          cls: "iter-cadence-pill is-active"
+        });
+        const endlessBtn = horizonPills.createEl("button", {
+          text: "Never-ending",
+          type: "button",
+          cls: "iter-cadence-pill"
+        });
+        const dueWrap = completionField.createDiv({ cls: "iter-tree-due-slot" });
+        const dueInput = dueWrap.createEl("input", {
+          type: "date",
+          cls: "iter-modal-input"
+        });
+        const endlessHint = completionField.createDiv({
+          text: "Grows continuously through subgoals and habits without an end date.",
+          cls: "iter-schedule-summary"
+        });
+        const syncHorizon = () => {
+          targetBtn.toggleClass("is-active", !endless);
+          endlessBtn.toggleClass("is-active", endless);
+          targetBtn.setAttribute("aria-pressed", String(!endless));
+          endlessBtn.setAttribute("aria-pressed", String(endless));
+          dueWrap.style.display = endless ? "none" : "";
+          endlessHint.style.display = endless ? "" : "none";
+        };
+        targetBtn.addEventListener("click", () => {
+          endless = false;
+          syncHorizon();
+        });
+        endlessBtn.addEventListener("click", () => {
+          endless = true;
+          dueInput.value = "";
+          syncHorizon();
+        });
+        syncHorizon();
         this.addActions(
           form,
           () => ({
             name: nameInput.value,
             module: moduleSelect.value,
             style: styleSelect.value,
-            goal: goalInput.value
+            goal: goalInput.value,
+            endless,
+            due: endless ? "" : dueInput.value
           }),
           nameInput
         );
@@ -2237,6 +2291,13 @@ var require_garden_view = __commonJS({
         const heading = top.createDiv({ cls: "iter-inspector-heading" });
         heading.createEl("h2", { text: tree.title, cls: "iter-inspector-title" });
         heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.endless) {
+          heading.createSpan({
+            text: "Never-ending",
+            cls: "iter-kind-pill is-endless",
+            attr: { title: "Grows continuously without an expected completion date" }
+          });
+        }
         const topActions = top.createDiv({ cls: "iter-inspector-top-actions" });
         if (tree.indexFile) {
           const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
@@ -2517,6 +2578,7 @@ var require_data_model = __commonJS({
         title,
         description,
         due,
+        endless: kind === "tree" && Boolean(fm.endless),
         target,
         done: Boolean(fm.done),
         frequency: normalizeFrequency(fm.frequency),
@@ -2631,14 +2693,18 @@ var require_data_model = __commonJS({
       if (diffDays <= 7) return { formatted, badge: `${diffDays}d left`, tone: "soon" };
       return { formatted, badge: `${diffDays}d left`, tone: "calm" };
     }
-    async function updateGoalMeta(app, file, { description, due }) {
+    async function updateGoalMeta(app, file, { description, due, endless }) {
       await app.fileManager.processFrontMatter(file, (fm) => {
         if (description !== void 0) {
           const clean = String(description).trim();
           fm.description = clean;
           if (file.name === "_tree.md") fm.goal = clean;
         }
-        if (due !== void 0) {
+        if (endless !== void 0 && file.name === "_tree.md") {
+          fm.endless = Boolean(endless);
+          if (fm.endless) fm.due = "";
+        }
+        if (due !== void 0 && !(file.name === "_tree.md" && fm.endless)) {
           const cleanDue = String(due).trim();
           fm.due = parseDateKey(cleanDue) ? cleanDue : "";
         }
@@ -3387,6 +3453,13 @@ var require_goal_view = __commonJS({
           parentBtn.addEventListener("click", () => void this.plugin.openGoal(doc.parentTreeFile));
         }
         crumbs.createSpan({ text: KIND_LABELS[doc.kind] || "Goal", cls: "iter-kind-pill" });
+        if (doc.kind === "tree" && doc.endless) {
+          crumbs.createSpan({
+            text: "Never-ending",
+            cls: "iter-kind-pill is-endless",
+            attr: { title: "Grows continuously without an expected completion date" }
+          });
+        }
         const actions = topBar.createDiv({ cls: "iter-goal-top-actions" });
         if (doc.kind === "subgoal") {
           const doneBtn = actions.createEl("button", {
@@ -3437,12 +3510,15 @@ var require_goal_view = __commonJS({
         shell.createEl("h1", { text: doc.title, cls: "iter-goal-title" });
       }
       renderOverview(shell, doc) {
-        const overview = shell.createDiv({ cls: "iter-goal-overview" });
+        const isEndlessTree = doc.kind === "tree" && doc.endless;
+        const overview = shell.createDiv({
+          cls: `iter-goal-overview${isEndlessTree ? " is-single" : ""}`
+        });
         const descWrap = overview.createDiv({ cls: "iter-goal-desc-wrap" });
         descWrap.createEl("label", { text: "Description", cls: "iter-micro-label" });
         const descInput = descWrap.createEl("textarea", {
           cls: "iter-goal-desc-input",
-          placeholder: "Describe this goal, why it matters, and what success looks like\u2026"
+          placeholder: isEndlessTree ? "Describe this ongoing tree and what you want to keep building here\u2026" : "Describe this goal, why it matters, and what success looks like\u2026"
         });
         descInput.rows = 2;
         descInput.value = doc.description;
@@ -3454,6 +3530,7 @@ var require_goal_view = __commonJS({
           await updateGoalMeta(this.app, this.file, { description: next });
           this.plugin.scheduleRefresh();
         });
+        if (isEndlessTree) return;
         const dueWrap = overview.createDiv({ cls: "iter-goal-due-wrap" });
         dueWrap.createEl("label", { text: "Expected completion", cls: "iter-micro-label" });
         const dueRow = dueWrap.createDiv({ cls: "iter-due-row" });

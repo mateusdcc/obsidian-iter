@@ -171,3 +171,23 @@ test('Habit streak widget works without datasets and createHabit seeds default s
   assert.deepEqual(doc.waterLog, ['2026-11-13']);
   assert.equal(doc.lastWatered, '2026-11-13');
 });
+
+test('readGoalDocument and updateGoalMeta distinguish endless trees from target-date trees', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  const gymTree = await createTree(app.vault, { name: 'Gym', module: 'gym', endless: true });
+  const codeTree = await createTree(app.vault, { name: 'Coding', module: 'learning', due: '2027-01-15' });
+
+  let gymDoc = readGoalDocument(app, gymTree);
+  assert.equal(gymDoc.endless, true);
+  assert.equal(gymDoc.due, '');
+
+  // Attempting to set due while endless keeps due empty
+  await updateGoalMeta(app, gymTree, { due: '2027-05-01' });
+  gymDoc = readGoalDocument(app, gymTree);
+  assert.equal(gymDoc.due, '');
+
+  const codeDoc = readGoalDocument(app, codeTree);
+  assert.equal(codeDoc.endless, false);
+  assert.equal(codeDoc.due, '2027-01-15');
+});

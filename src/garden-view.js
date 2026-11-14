@@ -270,6 +270,13 @@ class GardenView extends ItemView {
     const heading = top.createDiv({ cls: 'iter-inspector-heading' });
     heading.createEl('h2', { text: tree.title, cls: 'iter-inspector-title' });
     heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: 'iter-module-pill' });
+    if (tree.endless) {
+      heading.createSpan({
+        text: 'Never-ending',
+        cls: 'iter-kind-pill is-endless',
+        attr: { title: 'Grows continuously without an expected completion date' },
+      });
+    }
 
     const topActions = top.createDiv({ cls: 'iter-inspector-top-actions' });
     if (tree.indexFile) {

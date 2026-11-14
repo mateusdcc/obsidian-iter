@@ -13,6 +13,7 @@ const {
   isWateredInPeriod,
   computeHabitStreak,
   toDateKey,
+  parseDateKey,
 } = require('./storage');
 
 function compareNames(a, b) {
@@ -228,6 +229,8 @@ function listGarden(app, now = new Date()) {
         module: normalizeModule(fm?.module),
         goal: readString(fm, 'goal', ''),
         style: normalizeStyle(fm?.style),
+        endless: Boolean(fm?.endless),
+        due: fm?.endless ? '' : (typeof fm?.due === 'string' && parseDateKey(fm.due) ? fm.due.trim() : ''),
         targets: parseTargets(fm?.targets),
         subgoals,
         habits,

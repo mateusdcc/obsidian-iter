@@ -211,6 +211,13 @@ class GoalView extends ItemView {
     }
 
     crumbs.createSpan({ text: KIND_LABELS[doc.kind] || 'Goal', cls: 'iter-kind-pill' });
+    if (doc.kind === 'tree' && doc.endless) {
+      crumbs.createSpan({
+        text: 'Never-ending',
+        cls: 'iter-kind-pill is-endless',
+        attr: { title: 'Grows continuously without an expected completion date' },
+      });
+    }
 
     const actions = topBar.createDiv({ cls: 'iter-goal-top-actions' });
 
@@ -273,13 +280,18 @@ class GoalView extends ItemView {
   }
 
   renderOverview(shell, doc) {
-    const overview = shell.createDiv({ cls: 'iter-goal-overview' });
+    const isEndlessTree = doc.kind === 'tree' && doc.endless;
+    const overview = shell.createDiv({
+      cls: `iter-goal-overview${isEndlessTree ? ' is-single' : ''}`,
+    });
 
     const descWrap = overview.createDiv({ cls: 'iter-goal-desc-wrap' });
     descWrap.createEl('label', { text: 'Description', cls: 'iter-micro-label' });
     const descInput = descWrap.createEl('textarea', {
       cls: 'iter-goal-desc-input',
-      placeholder: 'Describe this goal, why it matters, and what success looks like…',
+      placeholder: isEndlessTree
+        ? 'Describe this ongoing tree and what you want to keep building here…'
+        : 'Describe this goal, why it matters, and what success looks like…',
     });
     descInput.rows = 2;
     descInput.value = doc.description;
@@ -291,6 +303,8 @@ class GoalView extends ItemView {
       await updateGoalMeta(this.app, this.file, { description: next });
       this.plugin.scheduleRefresh();
     });
+
+    if (isEndlessTree) return;
 
     const dueWrap = overview.createDiv({ cls: 'iter-goal-due-wrap' });
     dueWrap.createEl('label', { text: 'Expected completion', cls: 'iter-micro-label' });

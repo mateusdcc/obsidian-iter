@@ -99,6 +99,51 @@ class CreateTreeModal extends BaseIterModal {
       parent.createEl('input', { type: 'text', placeholder: 'e.g. Reach 70kg at 12% body fat', cls: 'iter-modal-input' }),
     );
 
+    let endless = false;
+    const completionField = form.createDiv({ cls: 'iter-modal-field' });
+    completionField.createEl('span', { text: 'Expected completion', cls: 'iter-modal-label' });
+    const horizonPills = completionField.createDiv({ cls: 'iter-cadence-pills' });
+    const targetBtn = horizonPills.createEl('button', {
+      text: 'Target date',
+      type: 'button',
+      cls: 'iter-cadence-pill is-active',
+    });
+    const endlessBtn = horizonPills.createEl('button', {
+      text: 'Never-ending',
+      type: 'button',
+      cls: 'iter-cadence-pill',
+    });
+
+    const dueWrap = completionField.createDiv({ cls: 'iter-tree-due-slot' });
+    const dueInput = dueWrap.createEl('input', {
+      type: 'date',
+      cls: 'iter-modal-input',
+    });
+    const endlessHint = completionField.createDiv({
+      text: 'Grows continuously through subgoals and habits without an end date.',
+      cls: 'iter-schedule-summary',
+    });
+
+    const syncHorizon = () => {
+      targetBtn.toggleClass('is-active', !endless);
+      endlessBtn.toggleClass('is-active', endless);
+      targetBtn.setAttribute('aria-pressed', String(!endless));
+      endlessBtn.setAttribute('aria-pressed', String(endless));
+      dueWrap.style.display = endless ? 'none' : '';
+      endlessHint.style.display = endless ? '' : 'none';
+    };
+
+    targetBtn.addEventListener('click', () => {
+      endless = false;
+      syncHorizon();
+    });
+    endlessBtn.addEventListener('click', () => {
+      endless = true;
+      dueInput.value = '';
+      syncHorizon();
+    });
+    syncHorizon();
+
     this.addActions(
       form,
       () => ({
@@ -106,6 +151,8 @@ class CreateTreeModal extends BaseIterModal {
         module: moduleSelect.value,
         style: styleSelect.value,
         goal: goalInput.value,
+        endless,
+        due: endless ? '' : dueInput.value,
       }),
       nameInput,
     );
