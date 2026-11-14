@@ -25,7 +25,7 @@ const CANVAS_W = 2400;
 const CANVAS_H = 1600;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onMissingNote } = {}) {
+function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onWaterHabit, onMissingNote } = {}) {
   const displayType = payload.displayType || 'stat';
   const unit = payload.unit || '';
 
@@ -110,37 +110,69 @@ function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onMiss
   if (displayType === 'note_navigator') {
     const entries = payload.entries || [];
     if (!entries.length) {
-      card.createEl('p', { text: 'No matching notes yet.', cls: 'iter-widget-empty' });
+      card.createEl('p', { text: 'No matching items right now.', cls: 'iter-widget-empty' });
       return;
     }
     const navList = card.createDiv({ cls: 'iter-note-nav-list' });
     for (const entry of entries) {
-      const itemBtn = navList.createEl('button', { cls: 'iter-note-nav-item', type: 'button' });
+      const isHabitEntry = Boolean(entry.habitFile || entry.schedule);
+      const rowWrap = isHabitEntry && onWaterHabit
+        ? navList.createDiv({ cls: `iter-habit-widget-row is-${entry.schedule?.status || 'due'}` })
+        : navList;
+
+      const itemBtn = rowWrap.createEl('button', {
+        cls: `iter-note-nav-item${isHabitEntry ? ' is-habit-entry' : ''}`,
+        type: 'button',
+      });
       const icon = itemBtn.createSpan({ cls: 'iter-note-nav-icon' });
-      setIcon(icon, entry.noteFile ? 'file-text' : 'target');
+      setIcon(icon, isHabitEntry ? 'droplet' : (entry.noteFile ? 'file-text' : 'target'));
       const main = itemBtn.createSpan({ cls: 'iter-note-nav-main' });
       main.createSpan({ text: entry.label, cls: 'iter-note-nav-title' });
-      if (entry.path) {
+      if (isHabitEntry) {
+        const subParts = [];
+        if (entry.treeTitle) subParts.push(entry.treeTitle);
+        if (entry.schedule?.cadenceLabel) subParts.push(entry.schedule.cadenceLabel);
+        if (subParts.length) {
+          main.createSpan({ text: subParts.join(' · '), cls: 'iter-note-nav-path' });
+        }
+      } else if (entry.path) {
         const folder = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : 'Vault root';
         const origin = entry.sourceTitle ? `${entry.sourceTitle} · ${folder}` : folder;
         main.createSpan({ text: origin, cls: 'iter-note-nav-path' });
       }
       if (Array.isArray(entry.propsList) && entry.propsList.length > 0) {
         for (const p of entry.propsList) {
-          const valStr = p.num !== null ? formatNumber(p.num) : String(p.raw);
+          const valStr = p.num !== null && p.num !== undefined ? formatNumber(p.num) : String(p.raw ?? p.value ?? '');
           itemBtn.createSpan({ text: `${p.key}: ${valStr}`, cls: 'iter-note-score-pill' });
         }
-      } else if (entry.value !== null && entry.value !== undefined) {
+      } else if (!isHabitEntry && entry.value !== null && entry.value !== undefined) {
         itemBtn.createSpan({ text: formatNumber(entry.value), cls: 'iter-note-score-pill' });
       }
       if (entry.date) {
         itemBtn.createSpan({ text: entry.date, cls: 'iter-note-date-pill' });
       }
       itemBtn.addEventListener('click', () => {
-        if (entry.noteFile && onOpenFile) onOpenFile(entry.noteFile);
+        if (entry.habitFile && onOpenGoal) onOpenGoal(entry.habitFile);
+        else if (entry.noteFile && onOpenFile) onOpenFile(entry.noteFile);
         else if (entry.sourceFile && onOpenGoal) onOpenGoal(entry.sourceFile);
         else if (onMissingNote && entry.path) onMissingNote(entry.path);
       });
+
+      if (isHabitEntry && entry.habitFile && onWaterHabit) {
+        const watered = Boolean(entry.schedule?.wateredToday || entry.schedule?.wateredInPeriod);
+        const waterBtn = rowWrap.createEl('button', {
+          cls: `iter-habit-water-inline-btn${watered ? ' is-watered' : ''}`,
+          type: 'button',
+          attr: { title: watered ? 'Watered for this cycle' : 'Water habit now' },
+        });
+        const wIcon = waterBtn.createSpan({ cls: 'iter-btn-icon' });
+        setIcon(wIcon, watered ? 'check' : 'droplet');
+        waterBtn.createSpan({ text: watered ? 'Watered' : 'Water' });
+        waterBtn.addEventListener('click', event => {
+          event.stopPropagation?.();
+          onWaterHabit(entry.habitFile);
+        });
+      }
     }
   }
 }
@@ -258,6 +290,7 @@ class WorkflowEditorModal extends Modal {
 
     const tplSelect = toolsRight.createEl('select', { cls: 'iter-flow-tpl-select' });
     tplSelect.createEl('option', { value: '', text: 'Load template…' });
+    tplSelect.createEl('option', { value: 'habits_today', text: 'Habits for Today (appearDate = today)' });
     tplSelect.createEl('option', { value: 'filter_field', text: 'Filter by property (e.g. pages)' });
     tplSelect.createEl('option', { value: 'count_items', text: 'Count entries / notes' });
     tplSelect.createEl('option', { value: 'compare_children', text: 'Compare children (Bar Chart)' });
@@ -334,6 +367,7 @@ class WorkflowEditorModal extends Modal {
     const recipesBar = contentEl.createDiv({ cls: 'iter-flow-recipes-bar' });
     recipesBar.createSpan({ text: 'Quick recipes:', cls: 'iter-flow-recipes-label' });
     const recipes = [
+      { id: 'habits_today', label: 'Habits for Today', title: 'Habits for Today' },
       { id: 'filter_field', label: `Sum "${preferredField}"`, title: `Total ${preferredField}` },
       { id: 'count_items', label: 'Count entries', title: 'Total entries' },
       { id: 'compare_children', label: 'Compare children', title: 'Breakdown by child' },
@@ -1109,6 +1143,9 @@ class WorkflowEditorModal extends Modal {
       typeField.createEl('label', { text: 'Data kinds', cls: 'iter-modal-label' });
       const typeSel = typeField.createEl('select', { cls: 'iter-modal-select' });
       typeSel.createEl('option', { value: 'any', text: 'All data types' });
+      typeSel.createEl('option', { value: 'habits', text: 'Habits — schedule & appearance time' });
+      typeSel.createEl('option', { value: 'habits_today', text: 'Habits appearing today (due today)' });
+      typeSel.createEl('option', { value: 'habits_pending', text: 'Habits needing water today' });
       typeSel.createEl('option', { value: 'numeric', text: 'Numeric (counters & numeric notes)' });
       typeSel.createEl('option', { value: 'note', text: 'Notes (plain & timed notes)' });
       typeSel.createEl('option', { value: 'text', text: 'Text lists' });

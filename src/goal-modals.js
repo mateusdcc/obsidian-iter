@@ -406,6 +406,21 @@ class AddDatasetModal extends Modal {
 
 const TREE_WIDGET_PRESETS = [
   {
+    value: '__rel:habits:today',
+    label: 'Habits appearing today (due today)',
+    initial: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_today', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:habits:pending',
+    label: 'Habits needing water today',
+    initial: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_pending', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:habits:all',
+    label: 'All habits & appearance schedule',
+    initial: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_all', perChildAgg: 'all' },
+  },
+  {
     value: '__rel:all:numeric',
     label: 'All children · Numeric (auto-includes new)',
     initial: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
@@ -459,7 +474,7 @@ class AddWidgetModal extends Modal {
     const headBar = contentEl.createDiv({ cls: 'iter-modal-headbar' });
     headBar.createEl('h2', { text: isEdit ? 'Edit widget' : 'Add widget', cls: 'iter-modal-title' });
 
-    const isTree = this.goalKind === 'tree' && Boolean(this.treePath);
+    const isTree = (this.goalKind === 'tree' || this.goalKind === 'garden') && Boolean(this.treePath);
     const canUseDataWidgets = this.datasets.length > 0 || isTree;
 
     let canvasSwitchBtn = null;
@@ -530,7 +545,7 @@ class AddWidgetModal extends Modal {
     } else if (this.datasets.length) {
       dsSelect.value = this.datasets[0].id;
     } else if (isTree) {
-      dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+      dsSelect.value = '__rel:all:numeric';
     }
 
     const relationSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
@@ -715,15 +730,16 @@ class AddWidgetModal extends Modal {
         }
         modeSelect.value = this.initialWidget?.mode || BAR_MODES[0].id;
 
+        const isHabitSchedulePreset = (dsSelect.value || '').startsWith('__rel:habits:') && dsSelect.value !== '__rel:habits:numeric';
         const tField = barRow.createDiv({ cls: 'iter-modal-field' });
         tField.createEl('label', { text: 'Goal target number', cls: 'iter-modal-label' });
         targetInput = tField.createEl('input', {
           type: 'number',
           step: 'any',
-          placeholder: 'e.g. 100',
+          placeholder: isHabitSchedulePreset ? 'Optional (auto = total due habits)' : 'e.g. 100',
           cls: 'iter-modal-input',
         });
-        targetInput.required = true;
+        targetInput.required = !isHabitSchedulePreset;
         if (this.initialWidget?.target !== null && this.initialWidget?.target !== undefined) {
           targetInput.value = String(this.initialWidget.target);
         }
@@ -738,9 +754,12 @@ class AddWidgetModal extends Modal {
       } else if (wType === 'note_navigator') {
         const currentVal = dsSelect.value || '';
         const currentDs = this.datasets.find(d => d.id === currentVal);
+        const currentIsHabitSchedule = currentVal === '__rel:habits:today'
+          || currentVal === '__rel:habits:pending'
+          || currentVal === '__rel:habits:all';
         const currentIsNote = currentDs
-          ? (currentDs.type === 'note' || currentDs.type === 'note_time' || (currentDs.type === 'rollup' && currentDs.relation?.dataFilter === 'note'))
-          : (currentVal === '__rel:all:note' || currentVal === '__rel:pick'
+          ? (currentDs.type === 'note' || currentDs.type === 'note_time' || (currentDs.type === 'rollup' && (currentDs.relation?.dataFilter === 'note' || String(currentDs.relation?.dataFilter || '').startsWith('habits_'))))
+          : (currentIsHabitSchedule || currentVal === '__rel:all:note' || currentVal === '__rel:pick'
             || (currentVal.startsWith('__child:') && (() => {
               const childItem = this.childDatasets[Number(currentVal.slice('__child:'.length))];
               return childItem && (childItem.dataset.type === 'note' || childItem.dataset.type === 'note_time');
@@ -750,7 +769,7 @@ class AddWidgetModal extends Modal {
             d => d.type === 'note' || d.type === 'note_time' || (d.type === 'rollup' && d.relation?.dataFilter === 'note'),
           );
           if (noteDs) dsSelect.value = noteDs.id;
-          else if (isTree) dsSelect.value = '__rel:all:note';
+          else if (isTree) dsSelect.value = '__rel:habits:today';
         }
       }
 
@@ -822,6 +841,11 @@ class AddWidgetModal extends Modal {
       rebuildMetricSlot();
       if (aggSelect && !aggTouched) {
         aggSelect.value = isRollupSumDefault() ? 'sum' : 'latest';
+      }
+      if (targetInput) {
+        const isHabitPreset = (dsSelect.value || '').startsWith('__rel:habits:') && dsSelect.value !== '__rel:habits:numeric';
+        targetInput.required = !isHabitPreset;
+        targetInput.placeholder = isHabitPreset ? 'Optional (auto = total due habits)' : 'e.g. 100';
       }
     });
     typeSelect.addEventListener('change', rebuildOptions);

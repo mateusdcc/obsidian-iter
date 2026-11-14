@@ -360,9 +360,32 @@ class GoalView extends ItemView {
         }
         await updateHabitSchedule(this.app, this.file, next);
         currentLabel.textContent = formatCadenceLabel(next.frequency, next.days);
+        this.render();
         this.plugin.scheduleRefresh();
       },
     });
+
+    if (doc.habitSchedule) {
+      const hs = doc.habitSchedule;
+      const hiddenMeta = box.createDiv({ cls: 'iter-habit-hidden-meta' });
+      hiddenMeta.createSpan({ text: 'Auto fields:', cls: 'iter-habit-hidden-label' });
+      hiddenMeta.createSpan({
+        text: `appearDate: ${hs.appearDate} (${hs.appearLabel})`,
+        cls: `iter-habit-hidden-pill is-${hs.status}`,
+      });
+      hiddenMeta.createSpan({
+        text: `dueToday: ${hs.dueToday ? 'true' : 'false'}`,
+        cls: 'iter-habit-hidden-pill',
+      });
+      hiddenMeta.createSpan({
+        text: `status: ${hs.status}`,
+        cls: 'iter-habit-hidden-pill',
+      });
+      hiddenMeta.createSpan({
+        text: `streak: ${hs.streak}d`,
+        cls: 'iter-habit-hidden-pill',
+      });
+    }
   }
 
   renderWidgetsSection(shell, doc) {
@@ -396,7 +419,7 @@ class GoalView extends ItemView {
     setIcon(plus, 'plus');
     addBtn.createSpan({ text: 'Add widget' });
     addBtn.addEventListener('click', () => {
-      const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
+      const isTree = (doc.kind === 'tree' || doc.kind === 'garden') && Boolean(doc.treePath);
       if (doc.kind !== 'habit' && !isTree && !doc.datasets.length) {
         new Notice('Add a data list first, or use the Canvas editor.');
         return;
@@ -439,11 +462,13 @@ class GoalView extends ItemView {
       section.createEl('p', {
         text: doc.kind === 'habit'
           ? 'No widgets yet. Add a streak widget or link custom data below.'
-          : doc.kind === 'tree'
-            ? 'No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor.'
-            : doc.datasets.length
-              ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
-              : 'Add custom data below, then pin widgets here to visualize your progress.',
+          : doc.kind === 'garden'
+            ? 'No widgets on your Garden yet. Click "+ Habits for Today" above, "+ Add widget", or open the Canvas editor.'
+            : doc.kind === 'tree'
+              ? 'No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor.'
+              : doc.datasets.length
+                ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
+                : 'Add custom data below, then pin widgets here to visualize your progress.',
         cls: 'iter-section-hint',
       });
       return;
@@ -501,6 +526,11 @@ class GoalView extends ItemView {
     const callbacks = {
       onOpenFile: file => void this.plugin.openFile(file),
       onOpenGoal: file => void this.plugin.openGoal(file),
+      onWaterHabit: async file => {
+        await waterHabit(this.app, file);
+        this.render();
+        this.plugin.scheduleRefresh();
+      },
       onMissingNote: path => new Notice(`Note not found: ${path}`),
     };
 
@@ -581,7 +611,7 @@ class GoalView extends ItemView {
       });
       setIcon(editBtn, 'pencil');
       editBtn.addEventListener('click', () => {
-        const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
+        const isTree = (doc.kind === 'tree' || doc.kind === 'garden') && Boolean(doc.treePath);
         const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
         new AddWidgetModal(this.app, {
           datasets: doc.datasets,
@@ -696,7 +726,7 @@ class GoalView extends ItemView {
 
     if (widget.type === 'note_navigator') {
       const entries = resolveDatasetEntries(this.app, dataset, this.file.path, widget.metricKey);
-      const ordered = dataset.type === 'note_time'
+      const ordered = dataset.type === 'note_time' && !dataset.isHabitSchedule
         ? [...entries].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.index - a.index)
         : entries;
       renderWidgetDisplayBody(card, { displayType: 'note_navigator', entries: ordered }, callbacks);
@@ -1093,7 +1123,26 @@ class GoalView extends ItemView {
   }
 }
 
+function renderDocumentWidgetsSection(shell, { app, plugin, file, doc, onRefresh }) {
+  const host = {
+    app,
+    plugin,
+    file,
+    render: () => {
+      if (typeof onRefresh === 'function') onRefresh();
+    },
+    renderWidgetReorderAndDuplicate(actions, widget, d) {
+      return GoalView.prototype.renderWidgetReorderAndDuplicate.call(this, actions, widget, d);
+    },
+    renderWidgetCard(grid, widget, dataset, d) {
+      return GoalView.prototype.renderWidgetCard.call(this, grid, widget, dataset, d);
+    },
+  };
+  return GoalView.prototype.renderWidgetsSection.call(host, shell, doc);
+}
+
 module.exports = {
   GoalView,
   GOAL_VIEW,
+  renderDocumentWidgetsSection,
 };

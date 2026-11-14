@@ -2823,3 +2823,86 @@ button.iter-panel-due-toggle.is-active {
   color: var(--text-muted);
   margin-right: 2px;
 }
+
+/* Garden Widgets & Hidden Habit Schedule Data */
+.iter-garden-widgets {
+  margin-bottom: 18px;
+}
+
+.iter-garden-widgets .iter-goal-section {
+  background: color-mix(in srgb, var(--background-secondary) 75%, transparent);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 14px 16px;
+}
+
+.iter-habit-widget-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.iter-habit-widget-row .iter-note-nav-item {
+  flex: 1;
+  min-width: 0;
+}
+
+button.iter-habit-water-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-s);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-secondary));
+  color: var(--text-normal);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+button.iter-habit-water-inline-btn:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-secondary));
+}
+
+button.iter-habit-water-inline-btn.is-watered {
+  border-color: var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.iter-habit-hidden-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+
+.iter-habit-hidden-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.iter-habit-hidden-pill {
+  font-size: 11px;
+  font-family: var(--font-monospace);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.iter-habit-hidden-pill.is-due {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--interactive-accent) 50%, var(--background-modifier-border));
+}
+

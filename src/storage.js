@@ -668,6 +668,116 @@ function computeHabitStreakDetails(waterLog, frequency, now = new Date(), days =
   };
 }
 
+function computeHabitScheduleMeta(frequency, days = [], lastWatered = null, waterLog = [], now = new Date()) {
+  const freq = normalizeFrequency(frequency);
+  const cleanDays = freq === 'weekdays' ? normalizeDays(days) : [];
+  const todayKey = toDateKey(now);
+  const dates = mergeWaterDates(waterLog, lastWatered);
+  const wateredToday = dates.includes(todayKey);
+  const wateredInPeriod = isWateredInPeriod(lastWatered, dates, freq, now, cleanDays);
+  const scheduledToday = isScheduledOnDate(freq, cleanDays, todayKey);
+  const streak = computeHabitStreak(dates, freq, now, cleanDays);
+  const cadenceLabel = formatCadenceLabel(freq, cleanDays);
+  const cadenceShort = formatCadenceShort(freq, cleanDays);
+
+  let appearDate = todayKey;
+  let nextAppearDate = todayKey;
+  let daysUntil = 0;
+  let dueToday = false;
+
+  if (freq === 'weekdays') {
+    if (scheduledToday) {
+      dueToday = true;
+      appearDate = todayKey;
+      daysUntil = 0;
+    } else {
+      dueToday = false;
+      for (let offset = 1; offset <= 7; offset += 1) {
+        const cand = shiftDateKey(todayKey, offset);
+        if (cand && isScheduledOnDate('weekdays', cleanDays, cand)) {
+          appearDate = cand;
+          daysUntil = offset;
+          break;
+        }
+      }
+    }
+    for (let offset = 1; offset <= 7; offset += 1) {
+      const cand = shiftDateKey(todayKey, offset);
+      if (cand && isScheduledOnDate('weekdays', cleanDays, cand)) {
+        nextAppearDate = cand;
+        break;
+      }
+    }
+  } else if (freq === 'weekly') {
+    const nextWeekMon = shiftDateKey(weekStartKey(todayKey), 7) || shiftDateKey(todayKey, 7);
+    if (!wateredInPeriod || wateredToday) {
+      dueToday = true;
+      appearDate = todayKey;
+      daysUntil = 0;
+    } else {
+      dueToday = false;
+      appearDate = nextWeekMon;
+      const pToday = parseDateKey(todayKey);
+      const pNext = parseDateKey(appearDate);
+      daysUntil = pToday && pNext ? Math.max(1, Math.round((pNext.getTime() - pToday.getTime()) / 86400000)) : 1;
+    }
+    nextAppearDate = nextWeekMon;
+  } else if (freq === 'monthly') {
+    const nextMonthFirst = `${shiftMonthKey(monthKey(todayKey), 1)}-01`;
+    if (!wateredInPeriod || wateredToday) {
+      dueToday = true;
+      appearDate = todayKey;
+      daysUntil = 0;
+    } else {
+      dueToday = false;
+      appearDate = nextMonthFirst;
+      const pToday = parseDateKey(todayKey);
+      const pNext = parseDateKey(appearDate);
+      daysUntil = pToday && pNext ? Math.max(1, Math.round((pNext.getTime() - pToday.getTime()) / 86400000)) : 1;
+    }
+    nextAppearDate = nextMonthFirst;
+  } else {
+    dueToday = true;
+    appearDate = todayKey;
+    daysUntil = 0;
+    nextAppearDate = shiftDateKey(todayKey, 1) || todayKey;
+  }
+
+  const pendingToday = Boolean(dueToday && !wateredToday && !wateredInPeriod);
+  const status = wateredToday || (dueToday && wateredInPeriod)
+    ? 'watered'
+    : dueToday
+      ? 'due'
+      : 'upcoming';
+
+  let appearLabel = 'Today';
+  if (dueToday) {
+    appearLabel = wateredToday ? 'Today (watered)' : wateredInPeriod ? 'Done this period' : 'Today';
+  } else if (daysUntil === 1) {
+    appearLabel = `Tomorrow (${appearDate})`;
+  } else {
+    appearLabel = `In ${daysUntil}d (${appearDate})`;
+  }
+
+  return {
+    frequency: freq,
+    days: cleanDays,
+    cadenceLabel,
+    cadenceShort,
+    todayKey,
+    appearDate,
+    nextAppearDate: wateredToday || wateredInPeriod ? nextAppearDate : appearDate,
+    daysUntil,
+    dueToday,
+    pendingToday,
+    wateredToday,
+    wateredInPeriod,
+    status,
+    appearLabel,
+    streak,
+  };
+}
+
 async function toggleSubgoal(app, file, nextDone) {
   let result = false;
   await app.fileManager.processFrontMatter(file, frontmatter => {
@@ -737,6 +847,7 @@ module.exports = {
   isWateredInPeriod,
   computeHabitStreak,
   computeHabitStreakDetails,
+  computeHabitScheduleMeta,
   toggleSubgoal,
   waterHabit,
 };

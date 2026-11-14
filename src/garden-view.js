@@ -1,6 +1,8 @@
 const { ItemView, Notice, setIcon } = require('obsidian');
-const { MODULES, ROOT, toggleSubgoal, waterHabit } = require('./storage');
+const { MODULES, ROOT, WE_PATH, toggleSubgoal, waterHabit } = require('./storage');
 const { listGarden } = require('./catalog');
+const { readGoalDocument } = require('./data-model');
+const { renderDocumentWidgetsSection } = require('./goal-view');
 const { renderTreeSvg, renderEmptyPotSvg } = require('./tree-art');
 
 const GARDEN_VIEW = 'iter-garden';
@@ -108,7 +110,7 @@ class GardenView extends ItemView {
       return;
     }
 
-    this.renderTodayQueue(shell, garden);
+    this.renderGardenWidgets(shell);
 
     const grid = shell.createDiv({ cls: 'iter-garden-grid' });
     for (const tree of garden.trees) {
@@ -162,69 +164,21 @@ class GardenView extends ItemView {
     newTreeBtn.addEventListener('click', () => this.plugin.promptCreateTree());
   }
 
-  renderTodayQueue(shell, garden) {
-    const dueHabits = [];
-    for (const tree of garden.trees) {
-      for (const habit of tree.habits) {
-        if (habit.isDueToday || habit.wateredToday) {
-          dueHabits.push({ tree, habit });
-        }
-      }
-    }
-    if (!dueHabits.length) return;
-
-    const doneCount = dueHabits.filter(item => item.habit.wateredInPeriod || item.habit.wateredToday).length;
-    const remaining = dueHabits.filter(item => !item.habit.wateredInPeriod && !item.habit.wateredToday);
-
-    const banner = shell.createDiv({ cls: 'iter-today-queue' });
-    const head = banner.createDiv({ cls: 'iter-today-queue-head' });
-    const titleWrap = head.createDiv({ cls: 'iter-today-queue-title-wrap' });
-    const dropIcon = titleWrap.createSpan({ cls: 'iter-btn-icon' });
-    setIcon(dropIcon, 'droplet');
-    titleWrap.createSpan({ text: 'Today’s watering queue', cls: 'iter-today-queue-title' });
-    titleWrap.createSpan({
-      text: `${doneCount}/${dueHabits.length} watered`,
-      cls: `iter-today-queue-count${remaining.length === 0 ? ' is-complete' : ''}`,
+  renderGardenWidgets(shell) {
+    const weFile = this.app.vault.getAbstractFileByPath(WE_PATH);
+    if (!weFile) return;
+    const weDoc = readGoalDocument(this.app, weFile);
+    const wrap = shell.createDiv({ cls: 'iter-garden-widgets' });
+    renderDocumentWidgetsSection(wrap, {
+      app: this.app,
+      plugin: this.plugin,
+      file: weFile,
+      doc: weDoc,
+      onRefresh: () => {
+        this.render();
+        this.plugin.scheduleRefresh();
+      },
     });
-
-    if (remaining.length > 1) {
-      const waterAllBtn = head.createEl('button', {
-        text: `Water all due (${remaining.length})`,
-        type: 'button',
-        cls: 'iter-ghost-action iter-water-all-btn',
-      });
-      waterAllBtn.addEventListener('click', async () => {
-        for (const item of remaining) {
-          await waterHabit(this.app, item.habit.file);
-        }
-        new Notice(`Watered ${remaining.length} due habits!`);
-        this.plugin.scheduleRefresh();
-      });
-    }
-
-    const pills = banner.createDiv({ cls: 'iter-today-queue-pills' });
-    for (const { tree, habit } of dueHabits) {
-      const done = habit.wateredInPeriod || habit.wateredToday;
-      const pill = pills.createEl('button', {
-        type: 'button',
-        cls: `iter-today-pill${done ? ' is-watered' : ''}`,
-        attr: {
-          'aria-pressed': String(habit.wateredToday),
-          title: `${tree.title} · ${habit.title} (${habit.cadenceLabel})`,
-        },
-      });
-      const icon = pill.createSpan({ cls: 'iter-chip-icon' });
-      setIcon(icon, done ? 'check-circle-2' : 'droplet');
-      pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: 'iter-today-pill-label' });
-      if (habit.streak > 0) {
-        pill.createSpan({ text: `${habit.streak}d`, cls: 'iter-today-pill-streak' });
-      }
-      pill.addEventListener('click', async () => {
-        const watered = await waterHabit(this.app, habit.file);
-        new Notice(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-        this.plugin.scheduleRefresh();
-      });
-    }
   }
 
   renderEmptyState(shell) {

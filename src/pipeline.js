@@ -12,6 +12,7 @@ const {
   toFiniteNumber,
   formatNumber,
   readGoalDocument,
+  discoverHabits,
   discoverChildDatasets,
   datasetMatchesFilter,
   resolveDatasetEntries,
@@ -141,6 +142,14 @@ const PIPELINE_NODE_TYPES = [
 const NODE_DEF_MAP = Object.fromEntries(PIPELINE_NODE_TYPES.map(d => [d.type, d]));
 
 const FILTER_FIELD_PRESETS = [
+  { id: 'appearDate', label: 'Habit appear date (YYYY-MM-DD)' },
+  { id: 'dueToday', label: 'Habit due today (true / false)' },
+  { id: 'pendingToday', label: 'Habit needs water today (true / false)' },
+  { id: 'daysUntil', label: 'Days until habit appears (0 = today)' },
+  { id: 'status', label: 'Habit status (due / watered / upcoming)' },
+  { id: 'cadence', label: 'Habit cadence (Daily, Wed · Thu, ...)' },
+  { id: 'streak', label: 'Habit streak (days)' },
+  { id: 'treeTitle', label: 'Tree name' },
   { id: 'datasetName', label: 'Data list name' },
   { id: 'sourceTitle', label: 'Habit / Subgoal name' },
   { id: 'title', label: 'Entry / Note title' },
@@ -153,6 +162,9 @@ const FILTER_FIELD_PRESETS = [
 ];
 
 const FILTER_OPS = [
+  { id: 'is_today', label: 'is today' },
+  { id: 'is_true', label: 'is true' },
+  { id: 'is_false', label: 'is false' },
   { id: 'contains', label: 'contains' },
   { id: 'not_contains', label: 'does not contain' },
   { id: 'equals', label: 'equals' },
@@ -170,7 +182,16 @@ const FILTER_OPS = [
   { id: 'regex', label: 'matches regex' },
 ];
 
-const OPS_WITHOUT_VALUE = new Set(['exists', 'is_number', 'this_month', 'this_week', 'this_year']);
+const OPS_WITHOUT_VALUE = new Set([
+  'is_today',
+  'is_true',
+  'is_false',
+  'exists',
+  'is_number',
+  'this_month',
+  'this_week',
+  'this_year',
+]);
 
 const MATH_OPS = [
   { id: 'multiply', label: 'Multiply (×)' },
@@ -223,7 +244,7 @@ function createNode(type, partial = {}) {
 }
 
 function normalizePipeline(raw, doc = null) {
-  const defaultScope = doc?.kind === 'tree' ? 'tree_children' : 'this_goal';
+  const defaultScope = (doc?.kind === 'tree' || doc?.kind === 'garden') ? 'tree_children' : 'this_goal';
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.nodes) || !raw.nodes.length) {
     const s = createNode('source', { id: 'n_src', x: 56, y: 120, config: { scope: defaultScope } });
     const o = createNode('output', { id: 'n_out', x: 356, y: 120 });
@@ -358,14 +379,27 @@ function autoLayoutPipeline(pipeline) {
 }
 
 function collectCanvasContext(app, doc) {
+  const isTreeOrGarden = doc?.kind === 'tree' || doc?.kind === 'garden';
   const localDatasets = Array.isArray(doc?.datasets) ? doc.datasets : [];
-  const childDatasets = doc?.kind === 'tree' && doc?.treePath
+  const childDatasets = isTreeOrGarden && doc?.treePath
     ? discoverChildDatasets(app, doc.treePath)
     : [];
+  const habitsInScope = (isTreeOrGarden && doc?.treePath)
+    ? discoverHabits(app, doc.treePath)
+    : (doc?.kind === 'habit' && doc?.file?.path ? discoverHabits(app, doc.file.path) : []);
 
   const fieldSet = new Set();
   const datasetNameSet = new Set();
   const childTitleSet = new Set();
+
+  if (habitsInScope.length > 0) {
+    for (const hKey of ['appearDate', 'dueToday', 'pendingToday', 'daysUntil', 'status', 'cadence', 'streak', 'treeTitle']) {
+      fieldSet.add(hKey);
+    }
+    for (const h of habitsInScope) {
+      if (h.label) childTitleSet.add(h.label);
+    }
+  }
 
   const inspectDatasets = (list, filePath) => {
     for (const ds of list) {
@@ -394,6 +428,7 @@ function collectCanvasContext(app, doc) {
   return {
     localDatasets,
     childDatasets,
+    habitsInScope,
     fieldNames: [...fieldSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
     datasetNames: [...datasetNameSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
     childTitles: [...childTitleSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
@@ -419,6 +454,15 @@ function readItemField(item, field) {
   if (field === 'title' || field === 'label') return item.label;
   if (field === 'unit') return item.unit;
   if (field === 'date') return item.date;
+  if (field === 'appearDate') return item.schedule?.appearDate ?? lookupFieldValue(item.fields, 'appearDate') ?? item.date;
+  if (field === 'nextAppearDate') return item.schedule?.nextAppearDate ?? lookupFieldValue(item.fields, 'nextAppearDate');
+  if (field === 'dueToday') return item.schedule?.dueToday ?? lookupFieldValue(item.fields, 'dueToday');
+  if (field === 'pendingToday') return item.schedule?.pendingToday ?? lookupFieldValue(item.fields, 'pendingToday');
+  if (field === 'daysUntil') return item.schedule?.daysUntil ?? lookupFieldValue(item.fields, 'daysUntil');
+  if (field === 'status') return item.schedule?.status ?? lookupFieldValue(item.fields, 'status');
+  if (field === 'cadence') return item.schedule?.cadenceLabel ?? lookupFieldValue(item.fields, 'cadence');
+  if (field === 'streak') return item.schedule?.streak ?? lookupFieldValue(item.fields, 'streak');
+  if (field === 'treeTitle' || field === 'tree') return item.treeTitle ?? lookupFieldValue(item.fields, 'treeTitle');
   if (field === 'value') return item.value;
   if (field === 'path') return item.path;
   if (field.startsWith('prop:')) {
@@ -435,6 +479,18 @@ function ruleMatchesItem(item, rule, now = new Date()) {
   const op = rule.op || 'contains';
   const targetStr = rule.value !== undefined && rule.value !== null ? String(rule.value).trim() : '';
 
+  if (op === 'is_today') {
+    if (val === true) return true;
+    if (val === false) return false;
+    const rawDate = typeof val === 'string' && val.trim() ? val.trim() : (item.date || '');
+    return Boolean(rawDate && rawDate === toDateKey(now));
+  }
+  if (op === 'is_true') {
+    return val === true || String(val).trim().toLowerCase() === 'true' || val === 1;
+  }
+  if (op === 'is_false') {
+    return val === false || String(val).trim().toLowerCase() === 'false' || val === 0 || val === null || val === undefined;
+  }
   if (op === 'exists') {
     return val !== undefined && val !== null && String(val).trim() !== '';
   }
@@ -527,15 +583,46 @@ function collectSourceDatasetItems(app, ds, ownerFile, ownerTitle, ownerKind, ou
   }
 }
 
-function evalSourceNode(app, node, doc) {
+function evalSourceNode(app, node, doc, now = new Date(), autoIncludeHabits = false) {
   const cfg = node.config || {};
-  const scope = cfg.scope || (doc?.kind === 'tree' ? 'tree_children' : 'this_goal');
+  const isTreeOrGarden = doc?.kind === 'tree' || doc?.kind === 'garden';
+  const scope = cfg.scope || (isTreeOrGarden ? 'tree_children' : 'this_goal');
   const childKinds = cfg.childKinds || 'all';
   const dsFilter = cfg.datasetFilter || 'any';
   const nameNeedle = typeof cfg.nameMatch === 'string' ? cfg.nameMatch.trim().toLowerCase() : '';
   const targetDsId = typeof cfg.datasetId === 'string' ? cfg.datasetId.trim() : '';
 
   const items = [];
+  const isExplicitHabitFilter =
+    dsFilter === 'habits' ||
+    dsFilter === 'habits_today' ||
+    dsFilter === 'habits_pending' ||
+    dsFilter === 'habits_all';
+
+  if (isExplicitHabitFilter || (!targetDsId && dsFilter === 'any' && autoIncludeHabits && childKinds !== 'subgoals')) {
+    const habitScopePath = scope === 'this_goal' && doc?.kind === 'habit' && doc.file?.path
+      ? doc.file.path
+      : (doc?.treePath || ROOT);
+    const habitItems = discoverHabits(app, habitScopePath, now);
+    for (const h of habitItems) {
+      if (dsFilter === 'habits_today' && !h.schedule.dueToday) continue;
+      if (dsFilter === 'habits_pending' && !h.schedule.pendingToday) continue;
+      if (nameNeedle) {
+        const hitName = h.label.toLowerCase().includes(nameNeedle);
+        const hitTree = (h.treeTitle || '').toLowerCase().includes(nameNeedle);
+        const hitCadence = (h.schedule.cadenceLabel || '').toLowerCase().includes(nameNeedle);
+        if (!hitName && !hitTree && !hitCadence) continue;
+      }
+      items.push({
+        ...h,
+        id: `habit::${h.path}`,
+        index: items.length,
+      });
+    }
+    if (isExplicitHabitFilter) {
+      return items;
+    }
+  }
 
   if ((scope === 'this_goal' || scope === 'both') && doc) {
     for (const ds of doc.datasets || []) {
@@ -862,17 +949,24 @@ function buildOutputPayload(items, cfg = {}) {
   };
 
   const targetNum = toFiniteNumber(cfg.target);
-  const current = statValue ?? 0;
-  const ratio = targetNum && targetNum > 0 ? current / targetNum : 0;
-  const rawPercent = targetNum && targetNum > 0 ? Math.round(ratio * 100) : 0;
+  const isAllHabitSchedule = items.length > 0 && items.every(i => i.datasetType === 'habit_schedule');
+  let barCurrent = statValue;
+  let barTarget = targetNum;
+  if (isAllHabitSchedule && (barTarget === null || barTarget <= 0)) {
+    barTarget = items.length;
+    barCurrent = items.filter(i => Boolean(i.schedule?.wateredToday || i.schedule?.wateredInPeriod)).length;
+  }
+  const current = barCurrent ?? 0;
+  const ratio = barTarget && barTarget > 0 ? current / barTarget : 0;
+  const rawPercent = barTarget && barTarget > 0 ? Math.round(ratio * 100) : 0;
   const bar = {
-    current: statValue,
-    currentDisplay: statValue === null ? '—' : formatNumber(statValue),
-    target: targetNum,
-    targetDisplay: targetNum === null ? '—' : formatNumber(targetNum),
+    current: barCurrent,
+    currentDisplay: barCurrent === null ? '—' : formatNumber(barCurrent),
+    target: barTarget,
+    targetDisplay: barTarget === null ? '—' : formatNumber(barTarget),
     rawPercent,
     fillPercent: Math.max(0, Math.min(100, rawPercent)),
-    unit: mode === 'count' ? '' : unit,
+    unit: isAllHabitSchedule ? (unit || 'habits') : (mode === 'count' ? '' : unit),
   };
 
   const chartPoints = numericPoints.some(p => Boolean(p.date))
@@ -883,7 +977,7 @@ function buildOutputPayload(items, cfg = {}) {
     displayType,
     agg,
     mode,
-    target: targetNum,
+    target: barTarget,
     variant: cfg.variant === 'bar' ? 'bar' : 'line',
     unit,
     stat,
@@ -893,8 +987,40 @@ function buildOutputPayload(items, cfg = {}) {
   };
 }
 
+const HABIT_SCHEDULE_FIELDS = new Set([
+  'appeardate',
+  'nextappeardate',
+  'duetoday',
+  'pendingtoday',
+  'wateredtoday',
+  'daysuntil',
+  'status',
+  'cadence',
+  'streak',
+  'appearlabel',
+]);
+
+function pipelineReferencesHabitFields(pipeline) {
+  for (const node of pipeline.nodes || []) {
+    if (node.type === 'filter') {
+      for (const r of node.config?.rules || []) {
+        const f = String(r.field || '').trim().toLowerCase();
+        if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+      }
+    } else if (node.type === 'extract') {
+      const f = String(node.config?.field || '').trim().toLowerCase();
+      if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+    } else if (node.type === 'group') {
+      const f = String(node.config?.propKey || '').trim().toLowerCase();
+      if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+    }
+  }
+  return false;
+}
+
 function evaluatePipeline(app, rawPipeline, doc, now = new Date()) {
   const pipeline = normalizePipeline(rawPipeline, doc);
+  const autoIncludeHabits = pipelineReferencesHabitFields(pipeline);
   const byId = new Map(pipeline.nodes.map(n => [n.id, n]));
   const inEdges = new Map(pipeline.nodes.map(n => [n.id, []]));
   const outEdges = new Map(pipeline.nodes.map(n => [n.id, []]));
@@ -940,7 +1066,7 @@ function evaluatePipeline(app, rawPipeline, doc, now = new Date()) {
 
     let outItems = [];
     if (node.type === 'source') {
-      outItems = evalSourceNode(app, node, doc);
+      outItems = evalSourceNode(app, node, doc, now, autoIncludeHabits);
     } else if (node.type === 'water_source') {
       outItems = evalWaterSourceNode(app, node, doc);
     } else if (node.type === 'filter') {
@@ -1036,13 +1162,45 @@ function formatPipelineNodeSummary(node) {
 }
 
 function buildPipelineTemplate(templateId, doc, context = null) {
-  const isTree = doc?.kind === 'tree';
+  const isTree = doc?.kind === 'tree' || doc?.kind === 'garden';
   const defaultScope = isTree ? 'tree_children' : 'this_goal';
   const fields = context?.fieldNames || [];
   const preferredField = fields.find(k => k.toLowerCase().includes('page'))
     || fields.find(k => k.toLowerCase().includes('chapter'))
     || fields[0]
     || 'pages';
+
+  if (templateId === 'habits_today') {
+    const src = createNode('source', {
+      id: 'n_src',
+      label: 'Habits Schedule',
+      config: { scope: defaultScope, childKinds: 'habits', datasetFilter: 'habits' },
+    });
+    const flt = createNode('filter', {
+      id: 'n_flt',
+      label: 'Appears Today',
+      config: {
+        match: 'all',
+        rules: [{ field: 'appearDate', op: 'is_today', value: '' }],
+      },
+    });
+    const out = createNode('output', {
+      id: 'n_out',
+      label: 'Habits for Today',
+      config: { displayType: 'note_navigator', unit: 'habits' },
+    });
+    return autoLayoutPipeline({
+      version: 1,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      nodes: [src, flt, out],
+      edges: [
+        { id: 'e_1', from: src.id, to: flt.id },
+        { id: 'e_2', from: flt.id, to: out.id },
+      ],
+    });
+  }
 
   if (templateId === 'filter_field') {
     const src = createNode('source', {
@@ -1305,14 +1463,17 @@ function buildPipelineTemplate(templateId, doc, context = null) {
 }
 
 function buildPipelineFromSimpleConfig(config = {}, doc = null) {
-  const scope = config.relation ? 'tree_children' : (doc?.kind === 'tree' && !config.datasetId ? 'tree_children' : 'this_goal');
+  const isTreeOrGarden = doc?.kind === 'tree' || doc?.kind === 'garden';
+  const scope = config.relation ? 'tree_children' : (isTreeOrGarden && !config.datasetId ? 'tree_children' : 'this_goal');
   const pickedRefDsId = config.relation?.mode === 'pick' && config.relation.refs?.length === 1
     ? config.relation.refs[0].datasetId
     : '';
+  const rawDataFilter = config.relation?.dataFilter || 'any';
+  const isHabitsTodayFilter = rawDataFilter === 'habits_today' || rawDataFilter === 'habits_pending';
   const srcConfig = {
     scope,
-    childKinds: config.relation?.childKinds || 'all',
-    datasetFilter: config.relation?.dataFilter || 'any',
+    childKinds: config.relation?.childKinds || (rawDataFilter.startsWith('habits') ? 'habits' : 'all'),
+    datasetFilter: isHabitsTodayFilter ? 'habits' : (rawDataFilter === 'habits_all' ? 'habits' : rawDataFilter),
     datasetId: config.datasetId || pickedRefDsId || '',
     nameMatch: config.relation?.nameMatch || '',
   };
@@ -1320,6 +1481,24 @@ function buildPipelineFromSimpleConfig(config = {}, doc = null) {
   const nodes = [createNode('source', { id: 'n_src', config: srcConfig })];
   const edges = [];
   let tail = nodes[0];
+
+  if (isHabitsTodayFilter) {
+    const flt = createNode('filter', {
+      id: 'n_flt',
+      label: rawDataFilter === 'habits_pending' ? 'Needs Water Today' : 'Appears Today',
+      config: {
+        match: 'all',
+        rules: [
+          rawDataFilter === 'habits_pending'
+            ? { field: 'pendingToday', op: 'is_true', value: '' }
+            : { field: 'appearDate', op: 'is_today', value: '' },
+        ],
+      },
+    });
+    nodes.push(flt);
+    edges.push({ id: generateId('e'), from: tail.id, to: flt.id });
+    tail = flt;
+  }
 
   if (config.metricKey) {
     const ext = createNode('extract', {

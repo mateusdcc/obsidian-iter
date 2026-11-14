@@ -1,11 +1,13 @@
 const {
   ROOT,
+  WE_PATH,
   isFolder,
   parseDateKey,
   toDateKey,
   normalizeFrequency,
   normalizeDays,
   mergeWaterDates,
+  computeHabitScheduleMeta,
 } = require('./storage');
 
 const DATASET_TYPES = [
@@ -27,6 +29,9 @@ const RELATION_DATA_FILTERS = [
   { id: 'note', label: 'Notes' },
   { id: 'text', label: 'Text lists' },
   { id: 'any', label: 'All data types' },
+  { id: 'habits_today', label: 'Habits appearing today (due today)' },
+  { id: 'habits_pending', label: 'Habits needing water today' },
+  { id: 'habits_all', label: 'All habits & appearance schedule' },
 ];
 
 const RELATION_PER_CHILD = [
@@ -305,10 +310,12 @@ function normalizeWidget(raw) {
 }
 
 function resolveGoalKind(file, fm) {
+  if (file?.path === WE_PATH) return 'garden';
   if (file?.name === '_tree.md') return 'tree';
   if (file?.path?.includes('/subgoals/')) return 'subgoal';
   if (file?.path?.includes('/habits/')) return 'habit';
   const type = typeof fm?.type === 'string' ? fm.type.trim() : '';
+  if (type === 'iter-index' || type === 'garden') return 'garden';
   if (type === 'tree' || type === 'subgoal' || type === 'habit') return type;
   return 'goal';
 }
@@ -321,11 +328,11 @@ function resolveParentTreePath(filePath) {
   return `${ROOT}/${treeName}`;
 }
 
-function readGoalDocument(app, file) {
+function readGoalDocument(app, file, now = new Date()) {
   const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
   const kind = resolveGoalKind(file, fm);
-  const treePath = resolveParentTreePath(file?.path);
-  const parentTreeFile = treePath ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+  const treePath = kind === 'garden' ? ROOT : resolveParentTreePath(file?.path);
+  const parentTreeFile = treePath && treePath !== ROOT ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
   const title = typeof fm.title === 'string' && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
   const description = typeof fm.description === 'string' && fm.description.trim()
     ? fm.description.trim()
@@ -334,6 +341,13 @@ function readGoalDocument(app, file) {
   const target = typeof fm.target === 'string' ? fm.target.trim() : '';
   const datasets = Array.isArray(fm.datasets) ? fm.datasets.map(normalizeDataset).filter(Boolean) : [];
   const widgets = Array.isArray(fm.widgets) ? fm.widgets.map(normalizeWidget).filter(Boolean) : [];
+  const frequency = normalizeFrequency(fm.frequency);
+  const days = normalizeDays(fm.days);
+  const waterLog = mergeWaterDates(fm.water_log);
+  const lastWatered = typeof fm.last_watered === 'string' && fm.last_watered.trim() ? fm.last_watered.trim() : null;
+  const habitSchedule = kind === 'habit'
+    ? computeHabitScheduleMeta(frequency, days, lastWatered, waterLog, now)
+    : null;
 
   return {
     file,
@@ -346,10 +360,11 @@ function readGoalDocument(app, file) {
     endless: kind === 'tree' && Boolean(fm.endless),
     target,
     done: Boolean(fm.done),
-    frequency: normalizeFrequency(fm.frequency),
-    days: normalizeDays(fm.days),
-    waterLog: mergeWaterDates(fm.water_log),
-    lastWatered: typeof fm.last_watered === 'string' && fm.last_watered.trim() ? fm.last_watered.trim() : null,
+    frequency,
+    days,
+    waterLog,
+    lastWatered,
+    habitSchedule,
     module: typeof fm.module === 'string' ? fm.module : 'general',
     datasets,
     widgets,
@@ -578,10 +593,27 @@ function computeStat(app, dataset, agg, sourcePath = '', metricOverride = '') {
 }
 
 function computeGoalBar(app, dataset, mode, target, sourcePath = '', metricOverride = '') {
+  const numericTarget = toFiniteNumber(target);
+  if (dataset?.isHabitSchedule && (numericTarget === null || numericTarget <= 0)) {
+    const entries = resolveDatasetEntries(app, dataset, sourcePath, metricOverride);
+    const total = entries.length;
+    const wateredCount = entries.filter(e => Boolean(e.schedule?.wateredToday || e.schedule?.wateredInPeriod)).length;
+    const ratio = total > 0 ? wateredCount / total : 0;
+    const rawPercent = total > 0 ? Math.round(ratio * 100) : 0;
+    const fillPercent = Math.max(0, Math.min(100, rawPercent));
+    return {
+      current: wateredCount,
+      currentDisplay: formatNumber(wateredCount),
+      target: total,
+      targetDisplay: formatNumber(total),
+      rawPercent,
+      fillPercent,
+      unit: dataset.unit || 'habits',
+    };
+  }
   const normalizedMode = normalizeBarMode(mode);
   const stat = computeStat(app, dataset, normalizedMode, sourcePath, metricOverride);
   const current = stat.value ?? 0;
-  const numericTarget = toFiniteNumber(target);
   const ratio = numericTarget && numericTarget > 0 ? current / numericTarget : 0;
   const rawPercent = numericTarget && numericTarget > 0 ? Math.round(ratio * 100) : 0;
   const fillPercent = Math.max(0, Math.min(100, rawPercent));
@@ -641,6 +673,96 @@ function collectTreeMarkdownFiles(folder, acc = []) {
     }
   }
   return acc;
+}
+
+function discoverHabits(app, scopePath = ROOT, now = new Date()) {
+  if (!scopePath || typeof scopePath !== 'string') return [];
+  const target = app.vault.getAbstractFileByPath(scopePath);
+  if (!target) return [];
+  const files = isFolder(target)
+    ? collectTreeMarkdownFiles(target, []).filter(f => f.name !== '_tree.md')
+    : [target];
+
+  const showTreeBadge = scopePath === ROOT;
+  const results = [];
+
+  for (const file of files) {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+    if (resolveGoalKind(file, fm) !== 'habit') continue;
+    const habitTitle = typeof fm.title === 'string' && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
+    const treePath = resolveParentTreePath(file.path) || '';
+    const treeFile = treePath ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+    const treeFm = treeFile ? (app.metadataCache.getFileCache(treeFile)?.frontmatter ?? {}) : {};
+    const treeTitle = typeof treeFm.title === 'string' && treeFm.title.trim()
+      ? treeFm.title.trim()
+      : (treePath ? treePath.split('/').pop() : '');
+
+    const frequency = normalizeFrequency(fm.frequency);
+    const days = normalizeDays(fm.days);
+    const waterLog = mergeWaterDates(fm.water_log);
+    const lastWatered = typeof fm.last_watered === 'string' && fm.last_watered.trim() ? fm.last_watered.trim() : null;
+    const schedule = computeHabitScheduleMeta(frequency, days, lastWatered, waterLog, now);
+
+    const propsList = [
+      ...(showTreeBadge && treeTitle ? [{ key: 'tree', value: treeTitle }] : []),
+      { key: 'appear', value: schedule.appearLabel },
+      { key: 'cadence', value: schedule.cadenceShort },
+      ...(schedule.streak > 0 ? [{ key: 'streak', value: `${schedule.streak}d` }] : []),
+    ];
+
+    const fields = {
+      title: habitTitle,
+      tree: treeTitle,
+      treeTitle,
+      date: schedule.appearDate,
+      appearDate: schedule.appearDate,
+      nextAppearDate: schedule.nextAppearDate,
+      appearLabel: schedule.appearLabel,
+      daysUntil: schedule.daysUntil,
+      dueToday: schedule.dueToday,
+      pendingToday: schedule.pendingToday,
+      wateredToday: schedule.wateredToday,
+      wateredInPeriod: schedule.wateredInPeriod,
+      status: schedule.status,
+      cadence: schedule.cadenceLabel,
+      frequency: schedule.frequency,
+      streak: schedule.streak,
+      value: 1,
+    };
+
+    results.push({
+      index: 0,
+      date: schedule.appearDate,
+      value: 1,
+      unit: 'habits',
+      label: habitTitle,
+      path: file.path,
+      noteFile: file,
+      habitFile: file,
+      sourceFile: file,
+      sourceTitle: habitTitle,
+      treeTitle,
+      treePath,
+      childKind: 'habit',
+      sourceKind: 'habit',
+      datasetId: '__habit_schedule',
+      datasetName: 'Habit schedule',
+      datasetType: 'habit_schedule',
+      schedule,
+      fields,
+      propsList,
+    });
+  }
+
+  results.sort((a, b) =>
+    a.schedule.daysUntil - b.schedule.daysUntil ||
+    (a.schedule.pendingToday === b.schedule.pendingToday ? 0 : (a.schedule.pendingToday ? -1 : 1)) ||
+    a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true }),
+  );
+  results.forEach((item, idx) => {
+    item.index = idx;
+  });
+  return results;
 }
 
 function discoverChildDatasets(app, treePath) {
@@ -753,7 +875,7 @@ function resolvePickedRefs(app, refs, childItems, ownerFilePath, excludedDataset
   return matched;
 }
 
-function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = '', metricOverride = '', visited = new Set()) {
+function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = '', metricOverride = '', visited = new Set(), now = new Date()) {
   const relation = normalizeRelation(spec?.relation);
   const explicitUnit = typeof spec?.unit === 'string' ? spec.unit.trim() : '';
   const effectiveMetric = (metricOverride || spec?.metricKey || '').trim();
@@ -771,7 +893,66 @@ function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = 
   };
   if (!relation) return emptyResult;
 
-  const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || '';
+  const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || ROOT;
+
+  if (
+    relation.dataFilter === 'habits_today' ||
+    relation.dataFilter === 'habits_pending' ||
+    relation.dataFilter === 'habits_all'
+  ) {
+    const allHabits = discoverHabits(app, targetTreePath || ROOT, now);
+    const queryLower = (relation.nameMatch || '').toLowerCase();
+    const matchedHabits = allHabits.filter(h => {
+      if (relation.dataFilter === 'habits_today' && !h.schedule.dueToday) return false;
+      if (relation.dataFilter === 'habits_pending' && !h.schedule.pendingToday) return false;
+      if (queryLower) {
+        const hitName = h.label.toLowerCase().includes(queryLower);
+        const hitTree = (h.treeTitle || '').toLowerCase().includes(queryLower);
+        const hitCadence = (h.schedule.cadenceLabel || '').toLowerCase().includes(queryLower);
+        if (!hitName && !hitTree && !hitCadence) return false;
+      }
+      return true;
+    });
+
+    const resolvedEntries = matchedHabits.map((h, idx) => {
+      const val = effectiveMetric ? toFiniteNumber(h.fields?.[effectiveMetric]) : 1;
+      return {
+        ...h,
+        index: idx,
+        value: val !== null && Number.isFinite(val) ? val : 1,
+      };
+    });
+
+    const sources = matchedHabits.map(h => ({
+      file: h.habitFile,
+      filePath: h.path,
+      childKind: 'habit',
+      childTitle: h.label,
+      datasetId: '__habit_schedule',
+      datasetName: h.schedule.appearLabel,
+      datasetType: 'habit_schedule',
+      unit: '',
+      entryCount: 1,
+      stat: { value: 1, display: h.schedule.appearLabel, unit: '', count: 1 },
+    }));
+
+    const inferredUnit = explicitUnit || (effectiveMetric === 'streak' || effectiveMetric === 'daysUntil' ? 'days' : 'habits');
+    return {
+      id: spec?.id || '',
+      name: spec?.name || describeRelation(relation, sources),
+      type: 'note_time',
+      unit: inferredUnit,
+      metricKey: effectiveMetric || 'value',
+      metricKeys: ['streak', 'daysUntil'],
+      isVirtual: true,
+      isHabitSchedule: true,
+      relation,
+      sources,
+      resolvedEntries,
+      entries: resolvedEntries,
+    };
+  }
+
   const childItems = targetTreePath ? discoverChildDatasets(app, targetTreePath) : [];
 
   let matched = [];
@@ -955,6 +1136,9 @@ function describeRelation(relation, sources = null) {
     note: 'Notes',
     text: 'Text',
     any: 'All data',
+    habits_today: 'Habits appearing today',
+    habits_pending: 'Habits needing water today',
+    habits_all: 'All habits & schedule',
   };
   const parts = [kindLabel, relation.nameMatch ? `"${relation.nameMatch}"` : (filterMap[relation.dataFilter] || 'Data')];
   if (relation.perChildAgg !== 'all') {
@@ -1265,16 +1449,52 @@ function buildSmartWidgetSuggestions(app, doc) {
     }
   }
 
-  if (doc.kind === 'tree' && doc.treePath) {
+  if ((doc.kind === 'tree' || doc.kind === 'garden') && doc.treePath) {
+    const scopeLabel = doc.kind === 'garden' ? 'Garden' : 'Tree';
+    const habitsInScope = discoverHabits(app, doc.treePath);
+    if (habitsInScope.length > 0) {
+      const hasHabitsTodayNav = existing.some(
+        w => (w.type === 'note_navigator' && (w.relation?.dataFilter === 'habits_today' || w.relation?.dataFilter === 'habits_pending')) ||
+          (w.title || '').toLowerCase() === 'habits for today' ||
+          (w.type === 'pipeline' && JSON.stringify(w.pipeline || {}).includes('habits_today')),
+      );
+      if (!hasHabitsTodayNav) {
+        suggestions.unshift({
+          label: '+ Habits for Today',
+          icon: 'droplet',
+          config: {
+            title: 'Habits for Today',
+            type: 'note_navigator',
+            relation: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_today', perChildAgg: 'all' },
+          },
+        });
+      }
+      const hasHabitsTodayBar = existing.some(
+        w => w.type === 'goal_bar' && (w.relation?.dataFilter === 'habits_today' || w.relation?.dataFilter === 'habits_pending'),
+      );
+      if (!hasHabitsTodayBar) {
+        suggestions.push({
+          label: "+ Today's Habits Progress",
+          icon: 'check-circle-2',
+          config: {
+            title: "Today's Habits Progress",
+            type: 'goal_bar',
+            mode: 'count',
+            relation: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_today', perChildAgg: 'all' },
+          },
+        });
+      }
+    }
+
     const childDs = discoverChildDatasets(app, doc.treePath);
     if (childDs.length > 0) {
-      const hasTreeTotal = existing.some(w => w.type === 'stat' && w.relation && !w.metricKey);
+      const hasTreeTotal = existing.some(w => w.type === 'stat' && w.relation && !w.metricKey && w.relation.dataFilter === 'numeric');
       if (!hasTreeTotal) {
         suggestions.push({
-          label: '+ Sum All Child Counters',
+          label: `+ Sum All ${scopeLabel === 'Garden' ? 'Garden' : 'Child'} Counters`,
           icon: 'git-merge',
           config: {
-            title: 'Tree Total',
+            title: `${scopeLabel} Total`,
             type: 'stat',
             agg: 'sum',
             relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
@@ -1294,7 +1514,7 @@ function buildSmartWidgetSuggestions(app, doc) {
         );
         if (!alreadyHasProp) {
           suggestions.push({
-            label: `+ Tree "${propKey}" Sum`,
+            label: `+ ${scopeLabel} "${propKey}" Sum`,
             icon: 'sparkles',
             config: {
               title: `Total ${propKey}`,
@@ -1307,13 +1527,13 @@ function buildSmartWidgetSuggestions(app, doc) {
         }
       }
       const hasNoteChildren = childDs.some(c => c.dataset.type === 'note' || c.dataset.type === 'note_time');
-      const hasTreeNav = existing.some(w => w.type === 'note_navigator' && w.relation);
+      const hasTreeNav = existing.some(w => w.type === 'note_navigator' && w.relation?.dataFilter === 'note');
       if (hasNoteChildren && !hasTreeNav) {
         suggestions.push({
-          label: '+ All Tree Notes Navigator',
+          label: `+ All ${scopeLabel} Notes Navigator`,
           icon: 'book-open',
           config: {
-            title: 'All Tree Notes',
+            title: `All ${scopeLabel} Notes`,
             type: 'note_navigator',
             relation: { mode: 'query', childKinds: 'all', dataFilter: 'note', perChildAgg: 'all' },
           },
@@ -1345,6 +1565,7 @@ module.exports = {
   normalizeRelation,
   normalizePipelineRef,
   readGoalDocument,
+  discoverHabits,
   discoverChildDatasets,
   datasetMatchesFilter,
   resolveDatasetEntries,

@@ -928,6 +928,36 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     await fire(jsonBtn, 'click');
     const jsonArea = app.lastModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-json-textarea'))[0];
     assert.ok(jsonArea.value.includes('"nodes"'));
+
+    // j) GardenView supports creating widgets on the Garden ("Habits for Today") and watering habits inline
+    const gardenLeaf = { app, setViewState: async () => {} };
+    const gardenView = new GardenView(gardenLeaf, {
+      openGoal: async () => {},
+      openFile: async () => {},
+      promptCreateTree: () => {},
+      scheduleRefresh: () => {},
+    });
+    gardenView.contentEl = createMockElement('div');
+    gardenView.render();
+
+    // GardenView renders Widgets section with "+ Habits for Today" 1-click suggestion
+    const gardenSugChips = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-smart-suggestion-chip'));
+    const habitsTodayChip = gardenSugChips.find(el => el.findAll(s => s.textContent === '+ Habits for Today').length > 0);
+    assert.ok(habitsTodayChip, 'GardenView should offer "+ Habits for Today" 1-click widget suggestion');
+    await fire(habitsTodayChip, 'click');
+
+    // Verify "Habits for Today" widget card is rendered on the Garden with inline Water button
+    assert.ok(
+      gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-widget-title') && el.textContent === 'Habits for Today').length === 1,
+      'GardenView should render the "Habits for Today" widget card',
+    );
+    const inlineWaterBtns = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-habit-water-inline-btn'));
+    assert.ok(inlineWaterBtns.length >= 1, 'Habits for Today widget should render inline Water buttons');
+    await fire(inlineWaterBtns[0], 'click');
+    const wateredBtnsAfter = gardenView.contentEl.findAll(
+      el => el.className.split(/\s+/).includes('iter-habit-water-inline-btn') && el.className.split(/\s+/).includes('is-watered'),
+    );
+    assert.ok(wateredBtnsAfter.length >= 1, 'Clicking inline Water button should water the habit and update widget row');
   } finally {
     global.document = prevDocument;
   }

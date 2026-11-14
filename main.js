@@ -602,6 +602,106 @@ var require_storage = __commonJS({
         recentSlots: recentScheduledSlots(dates, freq, cleanDays, todayKey, 6)
       };
     }
+    function computeHabitScheduleMeta(frequency, days = [], lastWatered = null, waterLog = [], now = /* @__PURE__ */ new Date()) {
+      const freq = normalizeFrequency(frequency);
+      const cleanDays = freq === "weekdays" ? normalizeDays(days) : [];
+      const todayKey = toDateKey(now);
+      const dates = mergeWaterDates(waterLog, lastWatered);
+      const wateredToday = dates.includes(todayKey);
+      const wateredInPeriod = isWateredInPeriod(lastWatered, dates, freq, now, cleanDays);
+      const scheduledToday = isScheduledOnDate(freq, cleanDays, todayKey);
+      const streak = computeHabitStreak(dates, freq, now, cleanDays);
+      const cadenceLabel = formatCadenceLabel(freq, cleanDays);
+      const cadenceShort = formatCadenceShort(freq, cleanDays);
+      let appearDate = todayKey;
+      let nextAppearDate = todayKey;
+      let daysUntil = 0;
+      let dueToday = false;
+      if (freq === "weekdays") {
+        if (scheduledToday) {
+          dueToday = true;
+          appearDate = todayKey;
+          daysUntil = 0;
+        } else {
+          dueToday = false;
+          for (let offset = 1; offset <= 7; offset += 1) {
+            const cand = shiftDateKey(todayKey, offset);
+            if (cand && isScheduledOnDate("weekdays", cleanDays, cand)) {
+              appearDate = cand;
+              daysUntil = offset;
+              break;
+            }
+          }
+        }
+        for (let offset = 1; offset <= 7; offset += 1) {
+          const cand = shiftDateKey(todayKey, offset);
+          if (cand && isScheduledOnDate("weekdays", cleanDays, cand)) {
+            nextAppearDate = cand;
+            break;
+          }
+        }
+      } else if (freq === "weekly") {
+        const nextWeekMon = shiftDateKey(weekStartKey(todayKey), 7) || shiftDateKey(todayKey, 7);
+        if (!wateredInPeriod || wateredToday) {
+          dueToday = true;
+          appearDate = todayKey;
+          daysUntil = 0;
+        } else {
+          dueToday = false;
+          appearDate = nextWeekMon;
+          const pToday = parseDateKey(todayKey);
+          const pNext = parseDateKey(appearDate);
+          daysUntil = pToday && pNext ? Math.max(1, Math.round((pNext.getTime() - pToday.getTime()) / 864e5)) : 1;
+        }
+        nextAppearDate = nextWeekMon;
+      } else if (freq === "monthly") {
+        const nextMonthFirst = `${shiftMonthKey(monthKey(todayKey), 1)}-01`;
+        if (!wateredInPeriod || wateredToday) {
+          dueToday = true;
+          appearDate = todayKey;
+          daysUntil = 0;
+        } else {
+          dueToday = false;
+          appearDate = nextMonthFirst;
+          const pToday = parseDateKey(todayKey);
+          const pNext = parseDateKey(appearDate);
+          daysUntil = pToday && pNext ? Math.max(1, Math.round((pNext.getTime() - pToday.getTime()) / 864e5)) : 1;
+        }
+        nextAppearDate = nextMonthFirst;
+      } else {
+        dueToday = true;
+        appearDate = todayKey;
+        daysUntil = 0;
+        nextAppearDate = shiftDateKey(todayKey, 1) || todayKey;
+      }
+      const pendingToday = Boolean(dueToday && !wateredToday && !wateredInPeriod);
+      const status = wateredToday || dueToday && wateredInPeriod ? "watered" : dueToday ? "due" : "upcoming";
+      let appearLabel = "Today";
+      if (dueToday) {
+        appearLabel = wateredToday ? "Today (watered)" : wateredInPeriod ? "Done this period" : "Today";
+      } else if (daysUntil === 1) {
+        appearLabel = `Tomorrow (${appearDate})`;
+      } else {
+        appearLabel = `In ${daysUntil}d (${appearDate})`;
+      }
+      return {
+        frequency: freq,
+        days: cleanDays,
+        cadenceLabel,
+        cadenceShort,
+        todayKey,
+        appearDate,
+        nextAppearDate: wateredToday || wateredInPeriod ? nextAppearDate : appearDate,
+        daysUntil,
+        dueToday,
+        pendingToday,
+        wateredToday,
+        wateredInPeriod,
+        status,
+        appearLabel,
+        streak
+      };
+    }
     async function toggleSubgoal(app, file, nextDone) {
       let result = false;
       await app.fileManager.processFrontMatter(file, (frontmatter) => {
@@ -669,6 +769,7 @@ var require_storage = __commonJS({
       isWateredInPeriod,
       computeHabitStreak,
       computeHabitStreakDetails,
+      computeHabitScheduleMeta,
       toggleSubgoal,
       waterHabit: waterHabit2
     };
@@ -680,12 +781,14 @@ var require_data_model = __commonJS({
   "src/data-model.js"(exports2, module2) {
     var {
       ROOT,
+      WE_PATH,
       isFolder,
       parseDateKey,
       toDateKey,
       normalizeFrequency,
       normalizeDays,
-      mergeWaterDates
+      mergeWaterDates,
+      computeHabitScheduleMeta
     } = require_storage();
     var DATASET_TYPES = [
       { id: "number_time", label: "Number & Time" },
@@ -703,7 +806,10 @@ var require_data_model = __commonJS({
       { id: "numeric", label: "Numeric (numbers & scored notes)" },
       { id: "note", label: "Notes" },
       { id: "text", label: "Text lists" },
-      { id: "any", label: "All data types" }
+      { id: "any", label: "All data types" },
+      { id: "habits_today", label: "Habits appearing today (due today)" },
+      { id: "habits_pending", label: "Habits needing water today" },
+      { id: "habits_all", label: "All habits & appearance schedule" }
     ];
     var RELATION_PER_CHILD = [
       { id: "all", label: "All entries combined" },
@@ -944,10 +1050,12 @@ var require_data_model = __commonJS({
       };
     }
     function resolveGoalKind(file, fm) {
+      if (file?.path === WE_PATH) return "garden";
       if (file?.name === "_tree.md") return "tree";
       if (file?.path?.includes("/subgoals/")) return "subgoal";
       if (file?.path?.includes("/habits/")) return "habit";
       const type = typeof fm?.type === "string" ? fm.type.trim() : "";
+      if (type === "iter-index" || type === "garden") return "garden";
       if (type === "tree" || type === "subgoal" || type === "habit") return type;
       return "goal";
     }
@@ -958,17 +1066,22 @@ var require_data_model = __commonJS({
       if (!treeName || treeName.startsWith("_")) return null;
       return `${ROOT}/${treeName}`;
     }
-    function readGoalDocument2(app, file) {
+    function readGoalDocument2(app, file, now = /* @__PURE__ */ new Date()) {
       const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
       const kind = resolveGoalKind(file, fm);
-      const treePath = resolveParentTreePath(file?.path);
-      const parentTreeFile = treePath ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+      const treePath = kind === "garden" ? ROOT : resolveParentTreePath(file?.path);
+      const parentTreeFile = treePath && treePath !== ROOT ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
       const title = typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
       const description = typeof fm.description === "string" && fm.description.trim() ? fm.description.trim() : typeof fm.goal === "string" ? fm.goal.trim() : "";
       const due = typeof fm.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "";
       const target = typeof fm.target === "string" ? fm.target.trim() : "";
       const datasets = Array.isArray(fm.datasets) ? fm.datasets.map(normalizeDataset).filter(Boolean) : [];
       const widgets = Array.isArray(fm.widgets) ? fm.widgets.map(normalizeWidget).filter(Boolean) : [];
+      const frequency = normalizeFrequency(fm.frequency);
+      const days = normalizeDays(fm.days);
+      const waterLog = mergeWaterDates(fm.water_log);
+      const lastWatered = typeof fm.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : null;
+      const habitSchedule = kind === "habit" ? computeHabitScheduleMeta(frequency, days, lastWatered, waterLog, now) : null;
       return {
         file,
         kind,
@@ -980,10 +1093,11 @@ var require_data_model = __commonJS({
         endless: kind === "tree" && Boolean(fm.endless),
         target,
         done: Boolean(fm.done),
-        frequency: normalizeFrequency(fm.frequency),
-        days: normalizeDays(fm.days),
-        waterLog: mergeWaterDates(fm.water_log),
-        lastWatered: typeof fm.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : null,
+        frequency,
+        days,
+        waterLog,
+        lastWatered,
+        habitSchedule,
         module: typeof fm.module === "string" ? fm.module : "general",
         datasets,
         widgets
@@ -1188,10 +1302,27 @@ var require_data_model = __commonJS({
       };
     }
     function computeGoalBar(app, dataset, mode, target, sourcePath = "", metricOverride = "") {
+      const numericTarget = toFiniteNumber(target);
+      if (dataset?.isHabitSchedule && (numericTarget === null || numericTarget <= 0)) {
+        const entries = resolveDatasetEntries(app, dataset, sourcePath, metricOverride);
+        const total = entries.length;
+        const wateredCount = entries.filter((e) => Boolean(e.schedule?.wateredToday || e.schedule?.wateredInPeriod)).length;
+        const ratio2 = total > 0 ? wateredCount / total : 0;
+        const rawPercent2 = total > 0 ? Math.round(ratio2 * 100) : 0;
+        const fillPercent2 = Math.max(0, Math.min(100, rawPercent2));
+        return {
+          current: wateredCount,
+          currentDisplay: formatNumber(wateredCount),
+          target: total,
+          targetDisplay: formatNumber(total),
+          rawPercent: rawPercent2,
+          fillPercent: fillPercent2,
+          unit: dataset.unit || "habits"
+        };
+      }
       const normalizedMode = normalizeBarMode(mode);
       const stat = computeStat(app, dataset, normalizedMode, sourcePath, metricOverride);
       const current = stat.value ?? 0;
-      const numericTarget = toFiniteNumber(target);
       const ratio = numericTarget && numericTarget > 0 ? current / numericTarget : 0;
       const rawPercent = numericTarget && numericTarget > 0 ? Math.round(ratio * 100) : 0;
       const fillPercent = Math.max(0, Math.min(100, rawPercent));
@@ -1246,6 +1377,82 @@ var require_data_model = __commonJS({
         }
       }
       return acc;
+    }
+    function discoverHabits(app, scopePath = ROOT, now = /* @__PURE__ */ new Date()) {
+      if (!scopePath || typeof scopePath !== "string") return [];
+      const target = app.vault.getAbstractFileByPath(scopePath);
+      if (!target) return [];
+      const files = isFolder(target) ? collectTreeMarkdownFiles(target, []).filter((f) => f.name !== "_tree.md") : [target];
+      const showTreeBadge = scopePath === ROOT;
+      const results = [];
+      for (const file of files) {
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+        if (resolveGoalKind(file, fm) !== "habit") continue;
+        const habitTitle = typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
+        const treePath = resolveParentTreePath(file.path) || "";
+        const treeFile = treePath ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+        const treeFm = treeFile ? app.metadataCache.getFileCache(treeFile)?.frontmatter ?? {} : {};
+        const treeTitle = typeof treeFm.title === "string" && treeFm.title.trim() ? treeFm.title.trim() : treePath ? treePath.split("/").pop() : "";
+        const frequency = normalizeFrequency(fm.frequency);
+        const days = normalizeDays(fm.days);
+        const waterLog = mergeWaterDates(fm.water_log);
+        const lastWatered = typeof fm.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : null;
+        const schedule = computeHabitScheduleMeta(frequency, days, lastWatered, waterLog, now);
+        const propsList = [
+          ...showTreeBadge && treeTitle ? [{ key: "tree", value: treeTitle }] : [],
+          { key: "appear", value: schedule.appearLabel },
+          { key: "cadence", value: schedule.cadenceShort },
+          ...schedule.streak > 0 ? [{ key: "streak", value: `${schedule.streak}d` }] : []
+        ];
+        const fields = {
+          title: habitTitle,
+          tree: treeTitle,
+          treeTitle,
+          date: schedule.appearDate,
+          appearDate: schedule.appearDate,
+          nextAppearDate: schedule.nextAppearDate,
+          appearLabel: schedule.appearLabel,
+          daysUntil: schedule.daysUntil,
+          dueToday: schedule.dueToday,
+          pendingToday: schedule.pendingToday,
+          wateredToday: schedule.wateredToday,
+          wateredInPeriod: schedule.wateredInPeriod,
+          status: schedule.status,
+          cadence: schedule.cadenceLabel,
+          frequency: schedule.frequency,
+          streak: schedule.streak,
+          value: 1
+        };
+        results.push({
+          index: 0,
+          date: schedule.appearDate,
+          value: 1,
+          unit: "habits",
+          label: habitTitle,
+          path: file.path,
+          noteFile: file,
+          habitFile: file,
+          sourceFile: file,
+          sourceTitle: habitTitle,
+          treeTitle,
+          treePath,
+          childKind: "habit",
+          sourceKind: "habit",
+          datasetId: "__habit_schedule",
+          datasetName: "Habit schedule",
+          datasetType: "habit_schedule",
+          schedule,
+          fields,
+          propsList
+        });
+      }
+      results.sort(
+        (a, b) => a.schedule.daysUntil - b.schedule.daysUntil || (a.schedule.pendingToday === b.schedule.pendingToday ? 0 : a.schedule.pendingToday ? -1 : 1) || a.label.localeCompare(b.label, void 0, { sensitivity: "base", numeric: true })
+      );
+      results.forEach((item, idx) => {
+        item.index = idx;
+      });
+      return results;
     }
     function discoverChildDatasets(app, treePath) {
       if (!treePath || typeof treePath !== "string") return [];
@@ -1350,7 +1557,7 @@ var require_data_model = __commonJS({
       }
       return matched;
     }
-    function resolveVirtualDataset(app, spec, ownerFilePath = "", defaultTreePath = "", metricOverride = "", visited = /* @__PURE__ */ new Set()) {
+    function resolveVirtualDataset(app, spec, ownerFilePath = "", defaultTreePath = "", metricOverride = "", visited = /* @__PURE__ */ new Set(), now = /* @__PURE__ */ new Date()) {
       const relation = normalizeRelation(spec?.relation);
       const explicitUnit = typeof spec?.unit === "string" ? spec.unit.trim() : "";
       const effectiveMetric = (metricOverride || spec?.metricKey || "").trim();
@@ -1367,7 +1574,57 @@ var require_data_model = __commonJS({
         entries: []
       };
       if (!relation) return emptyResult;
-      const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || "";
+      const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || ROOT;
+      if (relation.dataFilter === "habits_today" || relation.dataFilter === "habits_pending" || relation.dataFilter === "habits_all") {
+        const allHabits = discoverHabits(app, targetTreePath || ROOT, now);
+        const queryLower = (relation.nameMatch || "").toLowerCase();
+        const matchedHabits = allHabits.filter((h) => {
+          if (relation.dataFilter === "habits_today" && !h.schedule.dueToday) return false;
+          if (relation.dataFilter === "habits_pending" && !h.schedule.pendingToday) return false;
+          if (queryLower) {
+            const hitName = h.label.toLowerCase().includes(queryLower);
+            const hitTree = (h.treeTitle || "").toLowerCase().includes(queryLower);
+            const hitCadence = (h.schedule.cadenceLabel || "").toLowerCase().includes(queryLower);
+            if (!hitName && !hitTree && !hitCadence) return false;
+          }
+          return true;
+        });
+        const resolvedEntries2 = matchedHabits.map((h, idx) => {
+          const val = effectiveMetric ? toFiniteNumber(h.fields?.[effectiveMetric]) : 1;
+          return {
+            ...h,
+            index: idx,
+            value: val !== null && Number.isFinite(val) ? val : 1
+          };
+        });
+        const sources2 = matchedHabits.map((h) => ({
+          file: h.habitFile,
+          filePath: h.path,
+          childKind: "habit",
+          childTitle: h.label,
+          datasetId: "__habit_schedule",
+          datasetName: h.schedule.appearLabel,
+          datasetType: "habit_schedule",
+          unit: "",
+          entryCount: 1,
+          stat: { value: 1, display: h.schedule.appearLabel, unit: "", count: 1 }
+        }));
+        const inferredUnit = explicitUnit || (effectiveMetric === "streak" || effectiveMetric === "daysUntil" ? "days" : "habits");
+        return {
+          id: spec?.id || "",
+          name: spec?.name || describeRelation(relation, sources2),
+          type: "note_time",
+          unit: inferredUnit,
+          metricKey: effectiveMetric || "value",
+          metricKeys: ["streak", "daysUntil"],
+          isVirtual: true,
+          isHabitSchedule: true,
+          relation,
+          sources: sources2,
+          resolvedEntries: resolvedEntries2,
+          entries: resolvedEntries2
+        };
+      }
       const childItems = targetTreePath ? discoverChildDatasets(app, targetTreePath) : [];
       let matched = [];
       if (relation.mode === "pick") {
@@ -1529,7 +1786,10 @@ var require_data_model = __commonJS({
         numeric: "Numeric",
         note: "Notes",
         text: "Text",
-        any: "All data"
+        any: "All data",
+        habits_today: "Habits appearing today",
+        habits_pending: "Habits needing water today",
+        habits_all: "All habits & schedule"
       };
       const parts = [kindLabel, relation.nameMatch ? `"${relation.nameMatch}"` : filterMap[relation.dataFilter] || "Data"];
       if (relation.perChildAgg !== "all") {
@@ -1814,16 +2074,49 @@ var require_data_model = __commonJS({
           }
         }
       }
-      if (doc.kind === "tree" && doc.treePath) {
+      if ((doc.kind === "tree" || doc.kind === "garden") && doc.treePath) {
+        const scopeLabel = doc.kind === "garden" ? "Garden" : "Tree";
+        const habitsInScope = discoverHabits(app, doc.treePath);
+        if (habitsInScope.length > 0) {
+          const hasHabitsTodayNav = existing.some(
+            (w) => w.type === "note_navigator" && (w.relation?.dataFilter === "habits_today" || w.relation?.dataFilter === "habits_pending") || (w.title || "").toLowerCase() === "habits for today" || w.type === "pipeline" && JSON.stringify(w.pipeline || {}).includes("habits_today")
+          );
+          if (!hasHabitsTodayNav) {
+            suggestions.unshift({
+              label: "+ Habits for Today",
+              icon: "droplet",
+              config: {
+                title: "Habits for Today",
+                type: "note_navigator",
+                relation: { mode: "query", childKinds: "habits", dataFilter: "habits_today", perChildAgg: "all" }
+              }
+            });
+          }
+          const hasHabitsTodayBar = existing.some(
+            (w) => w.type === "goal_bar" && (w.relation?.dataFilter === "habits_today" || w.relation?.dataFilter === "habits_pending")
+          );
+          if (!hasHabitsTodayBar) {
+            suggestions.push({
+              label: "+ Today's Habits Progress",
+              icon: "check-circle-2",
+              config: {
+                title: "Today's Habits Progress",
+                type: "goal_bar",
+                mode: "count",
+                relation: { mode: "query", childKinds: "habits", dataFilter: "habits_today", perChildAgg: "all" }
+              }
+            });
+          }
+        }
         const childDs = discoverChildDatasets(app, doc.treePath);
         if (childDs.length > 0) {
-          const hasTreeTotal = existing.some((w) => w.type === "stat" && w.relation && !w.metricKey);
+          const hasTreeTotal = existing.some((w) => w.type === "stat" && w.relation && !w.metricKey && w.relation.dataFilter === "numeric");
           if (!hasTreeTotal) {
             suggestions.push({
-              label: "+ Sum All Child Counters",
+              label: `+ Sum All ${scopeLabel === "Garden" ? "Garden" : "Child"} Counters`,
               icon: "git-merge",
               config: {
-                title: "Tree Total",
+                title: `${scopeLabel} Total`,
                 type: "stat",
                 agg: "sum",
                 relation: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
@@ -1842,7 +2135,7 @@ var require_data_model = __commonJS({
             );
             if (!alreadyHasProp) {
               suggestions.push({
-                label: `+ Tree "${propKey}" Sum`,
+                label: `+ ${scopeLabel} "${propKey}" Sum`,
                 icon: "sparkles",
                 config: {
                   title: `Total ${propKey}`,
@@ -1855,13 +2148,13 @@ var require_data_model = __commonJS({
             }
           }
           const hasNoteChildren = childDs.some((c) => c.dataset.type === "note" || c.dataset.type === "note_time");
-          const hasTreeNav = existing.some((w) => w.type === "note_navigator" && w.relation);
+          const hasTreeNav = existing.some((w) => w.type === "note_navigator" && w.relation?.dataFilter === "note");
           if (hasNoteChildren && !hasTreeNav) {
             suggestions.push({
-              label: "+ All Tree Notes Navigator",
+              label: `+ All ${scopeLabel} Notes Navigator`,
               icon: "book-open",
               config: {
-                title: "All Tree Notes",
+                title: `All ${scopeLabel} Notes`,
                 type: "note_navigator",
                 relation: { mode: "query", childKinds: "all", dataFilter: "note", perChildAgg: "all" }
               }
@@ -1891,6 +2184,7 @@ var require_data_model = __commonJS({
       normalizeRelation,
       normalizePipelineRef,
       readGoalDocument: readGoalDocument2,
+      discoverHabits,
       discoverChildDatasets,
       datasetMatchesFilter,
       resolveDatasetEntries,
@@ -2092,6 +2386,7 @@ var require_pipeline = __commonJS({
       toFiniteNumber,
       formatNumber,
       readGoalDocument: readGoalDocument2,
+      discoverHabits,
       discoverChildDatasets,
       datasetMatchesFilter,
       resolveDatasetEntries
@@ -2218,6 +2513,14 @@ var require_pipeline = __commonJS({
     ];
     var NODE_DEF_MAP = Object.fromEntries(PIPELINE_NODE_TYPES.map((d) => [d.type, d]));
     var FILTER_FIELD_PRESETS = [
+      { id: "appearDate", label: "Habit appear date (YYYY-MM-DD)" },
+      { id: "dueToday", label: "Habit due today (true / false)" },
+      { id: "pendingToday", label: "Habit needs water today (true / false)" },
+      { id: "daysUntil", label: "Days until habit appears (0 = today)" },
+      { id: "status", label: "Habit status (due / watered / upcoming)" },
+      { id: "cadence", label: "Habit cadence (Daily, Wed \xB7 Thu, ...)" },
+      { id: "streak", label: "Habit streak (days)" },
+      { id: "treeTitle", label: "Tree name" },
       { id: "datasetName", label: "Data list name" },
       { id: "sourceTitle", label: "Habit / Subgoal name" },
       { id: "title", label: "Entry / Note title" },
@@ -2229,6 +2532,9 @@ var require_pipeline = __commonJS({
       { id: "path", label: "Note path" }
     ];
     var FILTER_OPS = [
+      { id: "is_today", label: "is today" },
+      { id: "is_true", label: "is true" },
+      { id: "is_false", label: "is false" },
       { id: "contains", label: "contains" },
       { id: "not_contains", label: "does not contain" },
       { id: "equals", label: "equals" },
@@ -2245,7 +2551,16 @@ var require_pipeline = __commonJS({
       { id: "within_days", label: "in last N days" },
       { id: "regex", label: "matches regex" }
     ];
-    var OPS_WITHOUT_VALUE = /* @__PURE__ */ new Set(["exists", "is_number", "this_month", "this_week", "this_year"]);
+    var OPS_WITHOUT_VALUE = /* @__PURE__ */ new Set([
+      "is_today",
+      "is_true",
+      "is_false",
+      "exists",
+      "is_number",
+      "this_month",
+      "this_week",
+      "this_year"
+    ]);
     var MATH_OPS = [
       { id: "multiply", label: "Multiply (\xD7)" },
       { id: "divide", label: "Divide (\xF7)" },
@@ -2292,7 +2607,7 @@ var require_pipeline = __commonJS({
       };
     }
     function normalizePipeline(raw, doc = null) {
-      const defaultScope = doc?.kind === "tree" ? "tree_children" : "this_goal";
+      const defaultScope = doc?.kind === "tree" || doc?.kind === "garden" ? "tree_children" : "this_goal";
       if (!raw || typeof raw !== "object" || !Array.isArray(raw.nodes) || !raw.nodes.length) {
         const s = createNode("source", { id: "n_src", x: 56, y: 120, config: { scope: defaultScope } });
         const o = createNode("output", { id: "n_out", x: 356, y: 120 });
@@ -2412,11 +2727,21 @@ var require_pipeline = __commonJS({
       };
     }
     function collectCanvasContext(app, doc) {
+      const isTreeOrGarden = doc?.kind === "tree" || doc?.kind === "garden";
       const localDatasets = Array.isArray(doc?.datasets) ? doc.datasets : [];
-      const childDatasets = doc?.kind === "tree" && doc?.treePath ? discoverChildDatasets(app, doc.treePath) : [];
+      const childDatasets = isTreeOrGarden && doc?.treePath ? discoverChildDatasets(app, doc.treePath) : [];
+      const habitsInScope = isTreeOrGarden && doc?.treePath ? discoverHabits(app, doc.treePath) : doc?.kind === "habit" && doc?.file?.path ? discoverHabits(app, doc.file.path) : [];
       const fieldSet = /* @__PURE__ */ new Set();
       const datasetNameSet = /* @__PURE__ */ new Set();
       const childTitleSet = /* @__PURE__ */ new Set();
+      if (habitsInScope.length > 0) {
+        for (const hKey of ["appearDate", "dueToday", "pendingToday", "daysUntil", "status", "cadence", "streak", "treeTitle"]) {
+          fieldSet.add(hKey);
+        }
+        for (const h of habitsInScope) {
+          if (h.label) childTitleSet.add(h.label);
+        }
+      }
       const inspectDatasets = (list, filePath) => {
         for (const ds of list) {
           if (!ds) continue;
@@ -2442,6 +2767,7 @@ var require_pipeline = __commonJS({
       return {
         localDatasets,
         childDatasets,
+        habitsInScope,
         fieldNames: [...fieldSet].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" })),
         datasetNames: [...datasetNameSet].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" })),
         childTitles: [...childTitleSet].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }))
@@ -2465,6 +2791,15 @@ var require_pipeline = __commonJS({
       if (field === "title" || field === "label") return item.label;
       if (field === "unit") return item.unit;
       if (field === "date") return item.date;
+      if (field === "appearDate") return item.schedule?.appearDate ?? lookupFieldValue(item.fields, "appearDate") ?? item.date;
+      if (field === "nextAppearDate") return item.schedule?.nextAppearDate ?? lookupFieldValue(item.fields, "nextAppearDate");
+      if (field === "dueToday") return item.schedule?.dueToday ?? lookupFieldValue(item.fields, "dueToday");
+      if (field === "pendingToday") return item.schedule?.pendingToday ?? lookupFieldValue(item.fields, "pendingToday");
+      if (field === "daysUntil") return item.schedule?.daysUntil ?? lookupFieldValue(item.fields, "daysUntil");
+      if (field === "status") return item.schedule?.status ?? lookupFieldValue(item.fields, "status");
+      if (field === "cadence") return item.schedule?.cadenceLabel ?? lookupFieldValue(item.fields, "cadence");
+      if (field === "streak") return item.schedule?.streak ?? lookupFieldValue(item.fields, "streak");
+      if (field === "treeTitle" || field === "tree") return item.treeTitle ?? lookupFieldValue(item.fields, "treeTitle");
       if (field === "value") return item.value;
       if (field === "path") return item.path;
       if (field.startsWith("prop:")) {
@@ -2479,6 +2814,18 @@ var require_pipeline = __commonJS({
       const val = readItemField(item, rawField);
       const op = rule.op || "contains";
       const targetStr = rule.value !== void 0 && rule.value !== null ? String(rule.value).trim() : "";
+      if (op === "is_today") {
+        if (val === true) return true;
+        if (val === false) return false;
+        const rawDate = typeof val === "string" && val.trim() ? val.trim() : item.date || "";
+        return Boolean(rawDate && rawDate === toDateKey(now));
+      }
+      if (op === "is_true") {
+        return val === true || String(val).trim().toLowerCase() === "true" || val === 1;
+      }
+      if (op === "is_false") {
+        return val === false || String(val).trim().toLowerCase() === "false" || val === 0 || val === null || val === void 0;
+      }
       if (op === "exists") {
         return val !== void 0 && val !== null && String(val).trim() !== "";
       }
@@ -2566,14 +2913,38 @@ var require_pipeline = __commonJS({
         });
       }
     }
-    function evalSourceNode(app, node, doc) {
+    function evalSourceNode(app, node, doc, now = /* @__PURE__ */ new Date(), autoIncludeHabits = false) {
       const cfg = node.config || {};
-      const scope = cfg.scope || (doc?.kind === "tree" ? "tree_children" : "this_goal");
+      const isTreeOrGarden = doc?.kind === "tree" || doc?.kind === "garden";
+      const scope = cfg.scope || (isTreeOrGarden ? "tree_children" : "this_goal");
       const childKinds = cfg.childKinds || "all";
       const dsFilter = cfg.datasetFilter || "any";
       const nameNeedle = typeof cfg.nameMatch === "string" ? cfg.nameMatch.trim().toLowerCase() : "";
       const targetDsId = typeof cfg.datasetId === "string" ? cfg.datasetId.trim() : "";
       const items = [];
+      const isExplicitHabitFilter = dsFilter === "habits" || dsFilter === "habits_today" || dsFilter === "habits_pending" || dsFilter === "habits_all";
+      if (isExplicitHabitFilter || !targetDsId && dsFilter === "any" && autoIncludeHabits && childKinds !== "subgoals") {
+        const habitScopePath = scope === "this_goal" && doc?.kind === "habit" && doc.file?.path ? doc.file.path : doc?.treePath || ROOT;
+        const habitItems = discoverHabits(app, habitScopePath, now);
+        for (const h of habitItems) {
+          if (dsFilter === "habits_today" && !h.schedule.dueToday) continue;
+          if (dsFilter === "habits_pending" && !h.schedule.pendingToday) continue;
+          if (nameNeedle) {
+            const hitName = h.label.toLowerCase().includes(nameNeedle);
+            const hitTree = (h.treeTitle || "").toLowerCase().includes(nameNeedle);
+            const hitCadence = (h.schedule.cadenceLabel || "").toLowerCase().includes(nameNeedle);
+            if (!hitName && !hitTree && !hitCadence) continue;
+          }
+          items.push({
+            ...h,
+            id: `habit::${h.path}`,
+            index: items.length
+          });
+        }
+        if (isExplicitHabitFilter) {
+          return items;
+        }
+      }
       if ((scope === "this_goal" || scope === "both") && doc) {
         for (const ds of doc.datasets || []) {
           if (targetDsId && ds.id !== targetDsId) continue;
@@ -2857,24 +3228,31 @@ var require_pipeline = __commonJS({
         count: statCount
       };
       const targetNum = toFiniteNumber(cfg.target);
-      const current = statValue ?? 0;
-      const ratio = targetNum && targetNum > 0 ? current / targetNum : 0;
-      const rawPercent = targetNum && targetNum > 0 ? Math.round(ratio * 100) : 0;
+      const isAllHabitSchedule = items.length > 0 && items.every((i) => i.datasetType === "habit_schedule");
+      let barCurrent = statValue;
+      let barTarget = targetNum;
+      if (isAllHabitSchedule && (barTarget === null || barTarget <= 0)) {
+        barTarget = items.length;
+        barCurrent = items.filter((i) => Boolean(i.schedule?.wateredToday || i.schedule?.wateredInPeriod)).length;
+      }
+      const current = barCurrent ?? 0;
+      const ratio = barTarget && barTarget > 0 ? current / barTarget : 0;
+      const rawPercent = barTarget && barTarget > 0 ? Math.round(ratio * 100) : 0;
       const bar = {
-        current: statValue,
-        currentDisplay: statValue === null ? "\u2014" : formatNumber(statValue),
-        target: targetNum,
-        targetDisplay: targetNum === null ? "\u2014" : formatNumber(targetNum),
+        current: barCurrent,
+        currentDisplay: barCurrent === null ? "\u2014" : formatNumber(barCurrent),
+        target: barTarget,
+        targetDisplay: barTarget === null ? "\u2014" : formatNumber(barTarget),
         rawPercent,
         fillPercent: Math.max(0, Math.min(100, rawPercent)),
-        unit: mode === "count" ? "" : unit
+        unit: isAllHabitSchedule ? unit || "habits" : mode === "count" ? "" : unit
       };
       const chartPoints = numericPoints.some((p) => Boolean(p.date)) ? [...numericPoints].sort((a, b) => (a.date || "").localeCompare(b.date || "") || a.index - b.index) : numericPoints;
       return {
         displayType,
         agg,
         mode,
-        target: targetNum,
+        target: barTarget,
         variant: cfg.variant === "bar" ? "bar" : "line",
         unit,
         stat,
@@ -2883,8 +3261,38 @@ var require_pipeline = __commonJS({
         entries: items
       };
     }
+    var HABIT_SCHEDULE_FIELDS = /* @__PURE__ */ new Set([
+      "appeardate",
+      "nextappeardate",
+      "duetoday",
+      "pendingtoday",
+      "wateredtoday",
+      "daysuntil",
+      "status",
+      "cadence",
+      "streak",
+      "appearlabel"
+    ]);
+    function pipelineReferencesHabitFields(pipeline) {
+      for (const node of pipeline.nodes || []) {
+        if (node.type === "filter") {
+          for (const r of node.config?.rules || []) {
+            const f = String(r.field || "").trim().toLowerCase();
+            if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+          }
+        } else if (node.type === "extract") {
+          const f = String(node.config?.field || "").trim().toLowerCase();
+          if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+        } else if (node.type === "group") {
+          const f = String(node.config?.propKey || "").trim().toLowerCase();
+          if (HABIT_SCHEDULE_FIELDS.has(f)) return true;
+        }
+      }
+      return false;
+    }
     function evaluatePipeline(app, rawPipeline, doc, now = /* @__PURE__ */ new Date()) {
       const pipeline = normalizePipeline(rawPipeline, doc);
+      const autoIncludeHabits = pipelineReferencesHabitFields(pipeline);
       const byId = new Map(pipeline.nodes.map((n) => [n.id, n]));
       const inEdges = new Map(pipeline.nodes.map((n) => [n.id, []]));
       const outEdges = new Map(pipeline.nodes.map((n) => [n.id, []]));
@@ -2923,7 +3331,7 @@ var require_pipeline = __commonJS({
         const flatIn = branches.flat().map((item, idx) => ({ ...item, index: idx }));
         let outItems = [];
         if (node.type === "source") {
-          outItems = evalSourceNode(app, node, doc);
+          outItems = evalSourceNode(app, node, doc, now, autoIncludeHabits);
         } else if (node.type === "water_source") {
           outItems = evalWaterSourceNode(app, node, doc);
         } else if (node.type === "filter") {
@@ -3010,10 +3418,41 @@ var require_pipeline = __commonJS({
       return "";
     }
     function buildPipelineTemplate(templateId, doc, context = null) {
-      const isTree = doc?.kind === "tree";
+      const isTree = doc?.kind === "tree" || doc?.kind === "garden";
       const defaultScope = isTree ? "tree_children" : "this_goal";
       const fields = context?.fieldNames || [];
       const preferredField = fields.find((k) => k.toLowerCase().includes("page")) || fields.find((k) => k.toLowerCase().includes("chapter")) || fields[0] || "pages";
+      if (templateId === "habits_today") {
+        const src = createNode("source", {
+          id: "n_src",
+          label: "Habits Schedule",
+          config: { scope: defaultScope, childKinds: "habits", datasetFilter: "habits" }
+        });
+        const flt = createNode("filter", {
+          id: "n_flt",
+          label: "Appears Today",
+          config: {
+            match: "all",
+            rules: [{ field: "appearDate", op: "is_today", value: "" }]
+          }
+        });
+        const out = createNode("output", {
+          id: "n_out",
+          label: "Habits for Today",
+          config: { displayType: "note_navigator", unit: "habits" }
+        });
+        return autoLayoutPipeline({
+          version: 1,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          nodes: [src, flt, out],
+          edges: [
+            { id: "e_1", from: src.id, to: flt.id },
+            { id: "e_2", from: flt.id, to: out.id }
+          ]
+        });
+      }
       if (templateId === "filter_field") {
         const src = createNode("source", {
           id: "n_src",
@@ -3264,18 +3703,36 @@ var require_pipeline = __commonJS({
       return normalizePipeline(null, doc);
     }
     function buildPipelineFromSimpleConfig(config = {}, doc = null) {
-      const scope = config.relation ? "tree_children" : doc?.kind === "tree" && !config.datasetId ? "tree_children" : "this_goal";
+      const isTreeOrGarden = doc?.kind === "tree" || doc?.kind === "garden";
+      const scope = config.relation ? "tree_children" : isTreeOrGarden && !config.datasetId ? "tree_children" : "this_goal";
       const pickedRefDsId = config.relation?.mode === "pick" && config.relation.refs?.length === 1 ? config.relation.refs[0].datasetId : "";
+      const rawDataFilter = config.relation?.dataFilter || "any";
+      const isHabitsTodayFilter = rawDataFilter === "habits_today" || rawDataFilter === "habits_pending";
       const srcConfig = {
         scope,
-        childKinds: config.relation?.childKinds || "all",
-        datasetFilter: config.relation?.dataFilter || "any",
+        childKinds: config.relation?.childKinds || (rawDataFilter.startsWith("habits") ? "habits" : "all"),
+        datasetFilter: isHabitsTodayFilter ? "habits" : rawDataFilter === "habits_all" ? "habits" : rawDataFilter,
         datasetId: config.datasetId || pickedRefDsId || "",
         nameMatch: config.relation?.nameMatch || ""
       };
       const nodes = [createNode("source", { id: "n_src", config: srcConfig })];
       const edges = [];
       let tail = nodes[0];
+      if (isHabitsTodayFilter) {
+        const flt = createNode("filter", {
+          id: "n_flt",
+          label: rawDataFilter === "habits_pending" ? "Needs Water Today" : "Appears Today",
+          config: {
+            match: "all",
+            rules: [
+              rawDataFilter === "habits_pending" ? { field: "pendingToday", op: "is_true", value: "" } : { field: "appearDate", op: "is_today", value: "" }
+            ]
+          }
+        });
+        nodes.push(flt);
+        edges.push({ id: generateId("e"), from: tail.id, to: flt.id });
+        tail = flt;
+      }
       if (config.metricKey) {
         const ext = createNode("extract", {
           id: "n_ext",
@@ -3371,7 +3828,7 @@ var require_canvas_editor = __commonJS({
     var CANVAS_W = 2400;
     var CANVAS_H = 1600;
     var SVG_NS = "http://www.w3.org/2000/svg";
-    function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onMissingNote } = {}) {
+    function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onWaterHabit, onMissingNote } = {}) {
       const displayType = payload.displayType || "stat";
       const unit = payload.unit || "";
       if (displayType === "stat") {
@@ -3449,37 +3906,65 @@ var require_canvas_editor = __commonJS({
       if (displayType === "note_navigator") {
         const entries = payload.entries || [];
         if (!entries.length) {
-          card.createEl("p", { text: "No matching notes yet.", cls: "iter-widget-empty" });
+          card.createEl("p", { text: "No matching items right now.", cls: "iter-widget-empty" });
           return;
         }
         const navList = card.createDiv({ cls: "iter-note-nav-list" });
         for (const entry of entries) {
-          const itemBtn = navList.createEl("button", { cls: "iter-note-nav-item", type: "button" });
+          const isHabitEntry = Boolean(entry.habitFile || entry.schedule);
+          const rowWrap = isHabitEntry && onWaterHabit ? navList.createDiv({ cls: `iter-habit-widget-row is-${entry.schedule?.status || "due"}` }) : navList;
+          const itemBtn = rowWrap.createEl("button", {
+            cls: `iter-note-nav-item${isHabitEntry ? " is-habit-entry" : ""}`,
+            type: "button"
+          });
           const icon = itemBtn.createSpan({ cls: "iter-note-nav-icon" });
-          setIcon(icon, entry.noteFile ? "file-text" : "target");
+          setIcon(icon, isHabitEntry ? "droplet" : entry.noteFile ? "file-text" : "target");
           const main = itemBtn.createSpan({ cls: "iter-note-nav-main" });
           main.createSpan({ text: entry.label, cls: "iter-note-nav-title" });
-          if (entry.path) {
+          if (isHabitEntry) {
+            const subParts = [];
+            if (entry.treeTitle) subParts.push(entry.treeTitle);
+            if (entry.schedule?.cadenceLabel) subParts.push(entry.schedule.cadenceLabel);
+            if (subParts.length) {
+              main.createSpan({ text: subParts.join(" \xB7 "), cls: "iter-note-nav-path" });
+            }
+          } else if (entry.path) {
             const folder = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "Vault root";
             const origin = entry.sourceTitle ? `${entry.sourceTitle} \xB7 ${folder}` : folder;
             main.createSpan({ text: origin, cls: "iter-note-nav-path" });
           }
           if (Array.isArray(entry.propsList) && entry.propsList.length > 0) {
             for (const p of entry.propsList) {
-              const valStr = p.num !== null ? formatNumber(p.num) : String(p.raw);
+              const valStr = p.num !== null && p.num !== void 0 ? formatNumber(p.num) : String(p.raw ?? p.value ?? "");
               itemBtn.createSpan({ text: `${p.key}: ${valStr}`, cls: "iter-note-score-pill" });
             }
-          } else if (entry.value !== null && entry.value !== void 0) {
+          } else if (!isHabitEntry && entry.value !== null && entry.value !== void 0) {
             itemBtn.createSpan({ text: formatNumber(entry.value), cls: "iter-note-score-pill" });
           }
           if (entry.date) {
             itemBtn.createSpan({ text: entry.date, cls: "iter-note-date-pill" });
           }
           itemBtn.addEventListener("click", () => {
-            if (entry.noteFile && onOpenFile) onOpenFile(entry.noteFile);
+            if (entry.habitFile && onOpenGoal) onOpenGoal(entry.habitFile);
+            else if (entry.noteFile && onOpenFile) onOpenFile(entry.noteFile);
             else if (entry.sourceFile && onOpenGoal) onOpenGoal(entry.sourceFile);
             else if (onMissingNote && entry.path) onMissingNote(entry.path);
           });
+          if (isHabitEntry && entry.habitFile && onWaterHabit) {
+            const watered = Boolean(entry.schedule?.wateredToday || entry.schedule?.wateredInPeriod);
+            const waterBtn = rowWrap.createEl("button", {
+              cls: `iter-habit-water-inline-btn${watered ? " is-watered" : ""}`,
+              type: "button",
+              attr: { title: watered ? "Watered for this cycle" : "Water habit now" }
+            });
+            const wIcon = waterBtn.createSpan({ cls: "iter-btn-icon" });
+            setIcon(wIcon, watered ? "check" : "droplet");
+            waterBtn.createSpan({ text: watered ? "Watered" : "Water" });
+            waterBtn.addEventListener("click", (event) => {
+              event.stopPropagation?.();
+              onWaterHabit(entry.habitFile);
+            });
+          }
         }
       }
     }
@@ -3583,6 +4068,7 @@ var require_canvas_editor = __commonJS({
         const toolsRight = toolbar.createDiv({ cls: "iter-flow-tools-right" });
         const tplSelect = toolsRight.createEl("select", { cls: "iter-flow-tpl-select" });
         tplSelect.createEl("option", { value: "", text: "Load template\u2026" });
+        tplSelect.createEl("option", { value: "habits_today", text: "Habits for Today (appearDate = today)" });
         tplSelect.createEl("option", { value: "filter_field", text: "Filter by property (e.g. pages)" });
         tplSelect.createEl("option", { value: "count_items", text: "Count entries / notes" });
         tplSelect.createEl("option", { value: "compare_children", text: "Compare children (Bar Chart)" });
@@ -3650,6 +4136,7 @@ var require_canvas_editor = __commonJS({
         const recipesBar = contentEl.createDiv({ cls: "iter-flow-recipes-bar" });
         recipesBar.createSpan({ text: "Quick recipes:", cls: "iter-flow-recipes-label" });
         const recipes = [
+          { id: "habits_today", label: "Habits for Today", title: "Habits for Today" },
           { id: "filter_field", label: `Sum "${preferredField}"`, title: `Total ${preferredField}` },
           { id: "count_items", label: "Count entries", title: "Total entries" },
           { id: "compare_children", label: "Compare children", title: "Breakdown by child" },
@@ -4348,6 +4835,9 @@ var require_canvas_editor = __commonJS({
           typeField.createEl("label", { text: "Data kinds", cls: "iter-modal-label" });
           const typeSel = typeField.createEl("select", { cls: "iter-modal-select" });
           typeSel.createEl("option", { value: "any", text: "All data types" });
+          typeSel.createEl("option", { value: "habits", text: "Habits \u2014 schedule & appearance time" });
+          typeSel.createEl("option", { value: "habits_today", text: "Habits appearing today (due today)" });
+          typeSel.createEl("option", { value: "habits_pending", text: "Habits needing water today" });
           typeSel.createEl("option", { value: "numeric", text: "Numeric (counters & numeric notes)" });
           typeSel.createEl("option", { value: "note", text: "Notes (plain & timed notes)" });
           typeSel.createEl("option", { value: "text", text: "Text lists" });
@@ -5847,819 +6337,6 @@ var require_panel_view = __commonJS({
   }
 });
 
-// src/tree-art.js
-var require_tree_art = __commonJS({
-  "src/tree-art.js"(exports2, module2) {
-    var SVG_NS = "http://www.w3.org/2000/svg";
-    function hashString(input) {
-      let hash = 2166136261;
-      const text = String(input || "iter");
-      for (let i = 0; i < text.length; i += 1) {
-        hash ^= text.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-      }
-      return hash >>> 0;
-    }
-    function createRng(seedValue) {
-      let state = seedValue || 1;
-      return () => {
-        state = Math.imul(1664525, state) + 1013904223 >>> 0;
-        return state / 4294967296;
-      };
-    }
-    function resolveStyle(tree) {
-      if (tree?.style && tree.style !== "auto") return tree.style;
-      switch (tree?.module) {
-        case "gym":
-          return "bonsai";
-        case "learning":
-          return "pine";
-        case "creative":
-          return "willow";
-        default:
-          return "canopy";
-      }
-    }
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
-    }
-    function round(num) {
-      return Math.round(num * 10) / 10;
-    }
-    function buildCanopyGeometry(growth, rand) {
-      const lean = (rand() - 0.5) * 14;
-      const baseY = 128;
-      const height = 28 + growth * 58;
-      const topY = baseY - height;
-      const topX = 80 + lean * 0.45;
-      const midX = 80 - lean * 0.35;
-      const midY = baseY - height * 0.5;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(midX)} ${round(midY)} ${round(topX)} ${round(topY)}`, width: round(2.2 + growth * 2.4) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      if (growth < 0.25) {
-        canopies.push(
-          { kind: "ellipse", cx: round(topX - 8), cy: round(topY - 2), rx: 8, ry: 4.5, rotate: -26, tone: "a" },
-          { kind: "ellipse", cx: round(topX + 8), cy: round(topY - 4), rx: 7.5, ry: 4, rotate: 24, tone: "b" }
-        );
-        return { trunks, branches, canopies, blossoms };
-      }
-      const leftBranchX = topX - (14 + growth * 14);
-      const leftBranchY = topY + height * 0.28;
-      const rightBranchX = topX + (14 + growth * 14);
-      const rightBranchY = topY + height * 0.22;
-      branches.push(
-        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.52)} Q ${round(topX - 10)} ${round(leftBranchY + 8)} ${round(leftBranchX)} ${round(leftBranchY)}`, width: round(1.5 + growth * 1.1) },
-        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.58)} Q ${round(topX + 10)} ${round(rightBranchY + 8)} ${round(rightBranchX)} ${round(rightBranchY)}`, width: round(1.5 + growth * 1.1) }
-      );
-      const scale = 0.65 + growth * 0.52;
-      canopies.push(
-        { kind: "ellipse", cx: round(leftBranchX), cy: round(leftBranchY - 4), rx: round(18 * scale), ry: round(13 * scale), rotate: -8, tone: "b" },
-        { kind: "ellipse", cx: round(rightBranchX), cy: round(rightBranchY - 5), rx: round(19 * scale), ry: round(14 * scale), rotate: 8, tone: "b" },
-        { kind: "ellipse", cx: round(topX), cy: round(topY - 8), rx: round(24 * scale), ry: round(18 * scale), rotate: 0, tone: "a" }
-      );
-      if (growth >= 0.55) {
-        canopies.push(
-          { kind: "ellipse", cx: round(topX - 11), cy: round(topY - 14), rx: round(15 * scale), ry: round(11 * scale), rotate: -5, tone: "c" },
-          { kind: "ellipse", cx: round(topX + 10), cy: round(topY - 12), rx: round(14 * scale), ry: round(11 * scale), rotate: 6, tone: "a" }
-        );
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX - 12), cy: round(topY - 10), r: 2.3 },
-          { cx: round(topX + 8), cy: round(topY - 17), r: 2.1 },
-          { cx: round(rightBranchX + 4), cy: round(rightBranchY - 7), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildBonsaiGeometry(growth, rand) {
-      const dir = rand() > 0.5 ? 1 : -1;
-      const baseY = 128;
-      const height = 28 + growth * 50;
-      const bendX = 80 - dir * (16 + growth * 12);
-      const apexX = 80 + dir * (12 + growth * 14);
-      const apexY = baseY - height;
-      const trunks = [
-        { d: `M 80 ${baseY} C ${round(80 - dir * 24)} ${round(baseY - height * 0.35)}, ${round(bendX)} ${round(baseY - height * 0.72)}, ${round(apexX)} ${round(apexY)}`, width: round(2.8 + growth * 2.6) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      if (growth < 0.25) {
-        canopies.push(
-          { kind: "ellipse", cx: round(apexX), cy: round(apexY - 4), rx: 11, ry: 5, rotate: dir * 6, tone: "a" }
-        );
-        return { trunks, branches, canopies, blossoms };
-      }
-      const sideX = 80 - dir * (22 + growth * 14);
-      const sideY = baseY - height * 0.54;
-      branches.push(
-        { d: `M ${round(80 - dir * 10)} ${round(baseY - height * 0.45)} Q ${round(sideX + dir * 8)} ${round(sideY + 6)} ${round(sideX)} ${round(sideY)}`, width: round(1.8 + growth) }
-      );
-      const padScale = 0.7 + growth * 0.48;
-      canopies.push(
-        { kind: "ellipse", cx: round(sideX), cy: round(sideY - 4), rx: round(19 * padScale), ry: round(8 * padScale), rotate: -dir * 4, tone: "b" },
-        { kind: "ellipse", cx: round(apexX), cy: round(apexY - 5), rx: round(24 * padScale), ry: round(9.5 * padScale), rotate: dir * 3, tone: "a" }
-      );
-      if (growth >= 0.58) {
-        const upperX = apexX - dir * 16;
-        const upperY = apexY + 12;
-        branches.push(
-          { d: `M ${round(apexX - dir * 4)} ${round(apexY + 16)} Q ${round(upperX + dir * 6)} ${round(upperY + 4)} ${round(upperX)} ${round(upperY)}`, width: 1.6 }
-        );
-        canopies.push(
-          { kind: "ellipse", cx: round(upperX), cy: round(upperY - 4), rx: round(15 * padScale), ry: round(7 * padScale), rotate: 0, tone: "c" }
-        );
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(apexX - 8), cy: round(apexY - 8), r: 2.2 },
-          { cx: round(apexX + 9), cy: round(apexY - 5), r: 2 },
-          { cx: round(sideX), cy: round(sideY - 6), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildPineGeometry(growth, rand) {
-      const sway = (rand() - 0.5) * 6;
-      const baseY = 128;
-      const height = 32 + growth * 60;
-      const topY = baseY - height;
-      const topX = 80 + sway;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(80 - sway * 0.5)} ${round(baseY - height * 0.5)} ${round(topX)} ${round(topY + 8)}`, width: round(2.2 + growth * 2) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      const tierCount = growth < 0.25 ? 1 : growth < 0.5 ? 2 : growth < 0.8 ? 3 : 4;
-      for (let i = 0; i < tierCount; i += 1) {
-        const t = (i + 1) / (tierCount + 0.35);
-        const tierY = baseY - height * (0.28 + t * 0.68);
-        const halfWidth = (10 + growth * 20) * (1 - i * 0.2);
-        const tierHeight = 14 + growth * 10;
-        const peakY = tierY - tierHeight;
-        const cx = 80 + sway * t;
-        const d = [
-          `M ${round(cx)} ${round(peakY)}`,
-          `Q ${round(cx + halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx + halfWidth)} ${round(tierY)}`,
-          `Q ${round(cx)} ${round(tierY + 4)} ${round(cx - halfWidth)} ${round(tierY)}`,
-          `Q ${round(cx - halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx)} ${round(peakY)} Z`
-        ].join(" ");
-        canopies.push({ kind: "path", d, tone: i % 2 === 0 ? "a" : "b" });
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX), cy: round(topY - 2), r: 2.2 },
-          { cx: round(topX - 9), cy: round(topY + 18), r: 1.9 },
-          { cx: round(topX + 10), cy: round(topY + 26), r: 1.9 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildWillowGeometry(growth, rand) {
-      const lean = (rand() - 0.5) * 10;
-      const baseY = 128;
-      const height = 28 + growth * 54;
-      const topY = baseY - height;
-      const topX = 80 + lean * 0.4;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(80 - lean * 0.4)} ${round(baseY - height * 0.48)} ${round(topX)} ${round(topY + 6)}`, width: round(2.2 + growth * 2.2) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      const frondCount = growth < 0.25 ? 2 : growth < 0.55 ? 4 : 6;
-      const span = 14 + growth * 22;
-      for (let i = 0; i < frondCount; i += 1) {
-        const ratio = frondCount === 1 ? 0.5 : i / (frondCount - 1);
-        const offset = (ratio - 0.5) * 2 * span;
-        const endX = topX + offset;
-        const drop = 16 + growth * 24 - Math.abs(offset) * 0.22;
-        const endY = topY + 6 + drop;
-        const ctrlX = topX + offset * 0.72;
-        const ctrlY = topY - 4;
-        branches.push({
-          d: `M ${round(topX)} ${round(topY + 6)} Q ${round(ctrlX)} ${round(ctrlY)} ${round(endX)} ${round(endY)}`,
-          width: 1.4,
-          soft: true
-        });
-        canopies.push({
-          kind: "ellipse",
-          cx: round(endX),
-          cy: round(endY - 4),
-          rx: 3.8,
-          ry: 7.5,
-          rotate: round(offset * 0.35),
-          tone: i % 2 === 0 ? "a" : "b"
-        });
-      }
-      canopies.unshift({
-        kind: "ellipse",
-        cx: round(topX),
-        cy: round(topY - 2),
-        rx: round(12 + growth * 12),
-        ry: round(7 + growth * 5),
-        rotate: 0,
-        tone: "c"
-      });
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX - 8), cy: round(topY - 3), r: 2.1 },
-          { cx: round(topX + 9), cy: round(topY + 1), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function computeTreeGeometry(tree) {
-      const growth = clamp(tree?.stats?.growth ?? 0.2, 0.15, 1);
-      const style = resolveStyle(tree);
-      const rand = createRng(hashString(`${tree?.title || "Iter"}:${style}`));
-      let shapes;
-      if (style === "bonsai") shapes = buildBonsaiGeometry(growth, rand);
-      else if (style === "pine") shapes = buildPineGeometry(growth, rand);
-      else if (style === "willow") shapes = buildWillowGeometry(growth, rand);
-      else shapes = buildCanopyGeometry(growth, rand);
-      return {
-        style,
-        growth,
-        hydrationState: tree?.stats?.hydrationState ?? "calm",
-        ...shapes
-      };
-    }
-    function svgEl(tag, attrs = {}) {
-      const node = document.createElementNS(SVG_NS, tag);
-      if (typeof node.isShown !== "function") {
-        node.isShown = function() {
-          return Boolean(this.isConnected);
-        };
-      }
-      for (const [key, value] of Object.entries(attrs)) {
-        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
-      }
-      return node;
-    }
-    function appendPot(svg, hydrationState) {
-      svg.appendChild(svgEl("ellipse", {
-        cx: 80,
-        cy: 164,
-        rx: 28,
-        ry: 3.5,
-        class: "iter-svg-shadow"
-      }));
-      svg.appendChild(svgEl("path", {
-        d: "M 55 135 L 105 135 L 98 159 Q 97 162 93 162 L 67 162 Q 63 162 62 159 Z",
-        class: "iter-svg-pot"
-      }));
-      svg.appendChild(svgEl("rect", {
-        x: 51,
-        y: 129,
-        width: 58,
-        height: 6,
-        rx: 3,
-        class: "iter-svg-rim"
-      }));
-      svg.appendChild(svgEl("path", {
-        d: "M 56 129 Q 80 125 104 129",
-        class: "iter-svg-soil"
-      }));
-      if (hydrationState === "hydrated" || hydrationState === "partial") {
-        const dewGroup = svgEl("g", {
-          class: hydrationState === "hydrated" ? "iter-svg-dew is-hydrated" : "iter-svg-dew is-partial"
-        });
-        dewGroup.appendChild(svgEl("path", {
-          d: "M 116 142 C 116 142 120 147.5 120 150 A 4 4 0 1 1 112 150 C 112 147.5 116 142 116 142 Z"
-        }));
-        svg.appendChild(dewGroup);
-      }
-    }
-    function renderTreeSvg(container, tree, options = {}) {
-      const geo = computeTreeGeometry(tree);
-      const svg = svgEl("svg", {
-        viewBox: "0 0 160 176",
-        class: `iter-tree-svg is-${geo.hydrationState} style-${geo.style}${options.large ? " is-large" : ""}`,
-        role: "img",
-        "aria-label": `${tree?.title || "Tree"} (${tree?.stats?.stageLabel || "Seedling"})`
-      });
-      const treeGroup = svgEl("g", { class: "iter-svg-plant" });
-      const canopyGroup = svgEl("g", { class: "iter-svg-canopy" });
-      for (const trunk of geo.trunks) {
-        treeGroup.appendChild(svgEl("path", {
-          d: trunk.d,
-          "stroke-width": trunk.width,
-          class: "iter-svg-trunk"
-        }));
-      }
-      for (const branch of geo.branches) {
-        treeGroup.appendChild(svgEl("path", {
-          d: branch.d,
-          "stroke-width": branch.width,
-          class: branch.soft ? "iter-svg-branch is-soft" : "iter-svg-branch"
-        }));
-      }
-      for (const shape of geo.canopies) {
-        if (shape.kind === "path") {
-          canopyGroup.appendChild(svgEl("path", {
-            d: shape.d,
-            class: `iter-svg-foliage tone-${shape.tone}`
-          }));
-        } else {
-          const transform = shape.rotate ? `rotate(${shape.rotate} ${shape.cx} ${shape.cy})` : null;
-          canopyGroup.appendChild(svgEl("ellipse", {
-            cx: shape.cx,
-            cy: shape.cy,
-            rx: shape.rx,
-            ry: shape.ry,
-            transform,
-            class: `iter-svg-foliage tone-${shape.tone}`
-          }));
-        }
-      }
-      for (const blossom of geo.blossoms) {
-        canopyGroup.appendChild(svgEl("circle", {
-          cx: blossom.cx,
-          cy: blossom.cy,
-          r: blossom.r,
-          class: "iter-svg-blossom"
-        }));
-      }
-      treeGroup.appendChild(canopyGroup);
-      svg.appendChild(treeGroup);
-      appendPot(svg, geo.hydrationState);
-      container.appendChild(svg);
-      return svg;
-    }
-    function renderEmptyPotSvg(container) {
-      const svg = svgEl("svg", {
-        viewBox: "0 0 160 176",
-        class: "iter-tree-svg is-empty-pot",
-        "aria-hidden": "true"
-      });
-      svg.appendChild(svgEl("path", {
-        d: "M 80 128 Q 78 112 72 106",
-        "stroke-width": 2,
-        class: "iter-svg-trunk"
-      }));
-      svg.appendChild(svgEl("ellipse", {
-        cx: 72,
-        cy: 103,
-        rx: 6,
-        ry: 3.2,
-        transform: "rotate(-25 72 103)",
-        class: "iter-svg-foliage tone-a"
-      }));
-      appendPot(svg, "calm");
-      container.appendChild(svg);
-      return svg;
-    }
-    module2.exports = {
-      resolveStyle,
-      computeTreeGeometry,
-      renderTreeSvg,
-      renderEmptyPotSvg
-    };
-  }
-});
-
-// src/garden-view.js
-var require_garden_view = __commonJS({
-  "src/garden-view.js"(exports2, module2) {
-    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
-    var { MODULES, ROOT, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
-    var { listGarden: listGarden2 } = require_catalog();
-    var { renderTreeSvg, renderEmptyPotSvg } = require_tree_art();
-    var GARDEN_VIEW2 = "iter-garden";
-    var MODULE_LABELS = Object.fromEntries(MODULES.map((item) => [item.id, item.label]));
-    var HYDRATION_LABELS = {
-      hydrated: "Watered",
-      partial: "Partly watered",
-      thirsty: "Needs water",
-      calm: "No habits yet"
-    };
-    var GardenView2 = class extends ItemView {
-      constructor(leaf, plugin) {
-        super(leaf);
-        this.plugin = plugin;
-        this.selectedTreePath = null;
-        this.renderTimer = null;
-      }
-      getViewType() {
-        return GARDEN_VIEW2;
-      }
-      getDisplayText() {
-        return "We";
-      }
-      getIcon() {
-        return "sprout";
-      }
-      async setState(state, result) {
-        if (state?.selectedTreePath !== void 0) {
-          this.selectedTreePath = state.selectedTreePath;
-          this.render();
-        }
-        await super.setState(state, result);
-      }
-      getState() {
-        return { selectedTreePath: this.selectedTreePath };
-      }
-      async onOpen() {
-        this.contentEl.addClass("iter-garden");
-        const schedule = (file) => {
-          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          }
-        };
-        for (const event of ["create", "delete", "modify"]) {
-          this.registerEvent(this.app.vault.on(event, schedule));
-        }
-        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-          if (oldPath === this.selectedTreePath) {
-            this.selectedTreePath = file.path;
-          }
-          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          } else {
-            schedule(file);
-          }
-        }));
-        this.registerEvent(this.app.metadataCache.on("changed", schedule));
-        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
-        this.render();
-      }
-      async onClose() {
-        if (this.renderTimer !== null) {
-          clearTimeout(this.renderTimer);
-          this.renderTimer = null;
-        }
-      }
-      scheduleRender() {
-        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
-        this.renderTimer = setTimeout(() => {
-          this.renderTimer = null;
-          this.render();
-        }, 90);
-      }
-      selectTree(treePath) {
-        this.selectedTreePath = this.selectedTreePath === treePath ? null : treePath;
-        this.render();
-      }
-      render() {
-        const container = this.contentEl;
-        container.empty();
-        const garden = listGarden2(this.app);
-        if (this.selectedTreePath && !garden.trees.some((tree) => tree.path === this.selectedTreePath)) {
-          this.selectedTreePath = null;
-        }
-        const shell = container.createDiv({ cls: "iter-garden-shell" });
-        this.renderHeader(shell, garden);
-        if (!garden.trees.length) {
-          this.renderEmptyState(shell);
-          return;
-        }
-        this.renderTodayQueue(shell, garden);
-        const grid = shell.createDiv({ cls: "iter-garden-grid" });
-        for (const tree of garden.trees) {
-          this.renderPotCard(grid, tree);
-        }
-        const selected = this.selectedTreePath ? garden.trees.find((tree) => tree.path === this.selectedTreePath) : null;
-        if (selected) {
-          this.renderInspector(shell, selected);
-        }
-      }
-      renderHeader(shell, garden) {
-        const header = shell.createDiv({ cls: "iter-garden-header" });
-        const titleGroup = header.createDiv({ cls: "iter-garden-heading" });
-        titleGroup.createEl("h1", { text: "We", cls: "iter-garden-title" });
-        const totalSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalTotal, 0);
-        const doneSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalDone, 0);
-        const totalHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitTotal, 0);
-        const wateredHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitWatered, 0);
-        const parts = [];
-        if (garden.trees.length) {
-          parts.push(`${garden.trees.length} ${garden.trees.length === 1 ? "tree" : "trees"}`);
-          if (totalSubgoals) parts.push(`${doneSubgoals}/${totalSubgoals} subgoals`);
-          if (totalHabits) parts.push(`${wateredHabits}/${totalHabits} watered`);
-        } else {
-          parts.push("Shared long-term garden");
-        }
-        titleGroup.createEl("p", { text: parts.join(" \xB7 "), cls: "iter-garden-subtitle" });
-        const actions = header.createDiv({ cls: "iter-garden-actions" });
-        if (garden.members.length) {
-          const membersWrap = actions.createDiv({ cls: "iter-members-strip" });
-          for (const member of garden.members) {
-            membersWrap.createSpan({ text: member, cls: "iter-member-pill" });
-          }
-        }
-        const newTreeBtn = actions.createEl("button", {
-          cls: "iter-primary-pill",
-          type: "button"
-        });
-        const plusIcon = newTreeBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(plusIcon, "plus");
-        newTreeBtn.createSpan({ text: "New tree" });
-        newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
-      }
-      renderTodayQueue(shell, garden) {
-        const dueHabits = [];
-        for (const tree of garden.trees) {
-          for (const habit of tree.habits) {
-            if (habit.isDueToday || habit.wateredToday) {
-              dueHabits.push({ tree, habit });
-            }
-          }
-        }
-        if (!dueHabits.length) return;
-        const doneCount = dueHabits.filter((item) => item.habit.wateredInPeriod || item.habit.wateredToday).length;
-        const remaining = dueHabits.filter((item) => !item.habit.wateredInPeriod && !item.habit.wateredToday);
-        const banner = shell.createDiv({ cls: "iter-today-queue" });
-        const head = banner.createDiv({ cls: "iter-today-queue-head" });
-        const titleWrap = head.createDiv({ cls: "iter-today-queue-title-wrap" });
-        const dropIcon = titleWrap.createSpan({ cls: "iter-btn-icon" });
-        setIcon(dropIcon, "droplet");
-        titleWrap.createSpan({ text: "Today\u2019s watering queue", cls: "iter-today-queue-title" });
-        titleWrap.createSpan({
-          text: `${doneCount}/${dueHabits.length} watered`,
-          cls: `iter-today-queue-count${remaining.length === 0 ? " is-complete" : ""}`
-        });
-        if (remaining.length > 1) {
-          const waterAllBtn = head.createEl("button", {
-            text: `Water all due (${remaining.length})`,
-            type: "button",
-            cls: "iter-ghost-action iter-water-all-btn"
-          });
-          waterAllBtn.addEventListener("click", async () => {
-            for (const item of remaining) {
-              await waterHabit2(this.app, item.habit.file);
-            }
-            new Notice2(`Watered ${remaining.length} due habits!`);
-            this.plugin.scheduleRefresh();
-          });
-        }
-        const pills = banner.createDiv({ cls: "iter-today-queue-pills" });
-        for (const { tree, habit } of dueHabits) {
-          const done = habit.wateredInPeriod || habit.wateredToday;
-          const pill = pills.createEl("button", {
-            type: "button",
-            cls: `iter-today-pill${done ? " is-watered" : ""}`,
-            attr: {
-              "aria-pressed": String(habit.wateredToday),
-              title: `${tree.title} \xB7 ${habit.title} (${habit.cadenceLabel})`
-            }
-          });
-          const icon = pill.createSpan({ cls: "iter-chip-icon" });
-          setIcon(icon, done ? "check-circle-2" : "droplet");
-          pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: "iter-today-pill-label" });
-          if (habit.streak > 0) {
-            pill.createSpan({ text: `${habit.streak}d`, cls: "iter-today-pill-streak" });
-          }
-          pill.addEventListener("click", async () => {
-            const watered = await waterHabit2(this.app, habit.file);
-            new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-            this.plugin.scheduleRefresh();
-          });
-        }
-      }
-      renderEmptyState(shell) {
-        const empty = shell.createDiv({ cls: "iter-garden-empty" });
-        const art = empty.createDiv({ cls: "iter-empty-art" });
-        renderEmptyPotSvg(art);
-        empty.createEl("h2", { text: "Your garden is quiet", cls: "iter-empty-title" });
-        empty.createEl("p", {
-          text: "Plant a tree for a long-term goal, break it into subgoals, and water it with daily, weekly, or monthly habits.",
-          cls: "iter-empty-copy"
-        });
-        const btn = empty.createEl("button", { text: "Create tree", cls: "mod-cta", type: "button" });
-        btn.addEventListener("click", () => this.plugin.promptCreateTree());
-      }
-      renderPotCard(grid, tree) {
-        const selected = this.selectedTreePath === tree.path;
-        const card = grid.createDiv({
-          cls: `iter-pot-card${selected ? " is-selected" : ""} is-${tree.stats.hydrationState}`
-        });
-        card.setAttribute("tabindex", "0");
-        card.setAttribute("role", "button");
-        card.setAttribute("aria-pressed", String(selected));
-        card.setAttribute("aria-label", `${tree.title}, ${tree.stats.stageLabel}`);
-        card.addEventListener("click", () => this.selectTree(tree.path));
-        card.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            this.selectTree(tree.path);
-          }
-        });
-        const stage = card.createDiv({ cls: "iter-pot-stage" });
-        renderTreeSvg(stage, tree);
-        const meta = card.createDiv({ cls: "iter-pot-meta" });
-        const nameRow = meta.createDiv({ cls: "iter-pot-name-row" });
-        nameRow.createSpan({ text: tree.title, cls: "iter-pot-title" });
-        const rightBadges = nameRow.createDiv({ cls: "iter-pot-badges" });
-        rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
-        if (tree.indexFile) {
-          const openBtn = rightBadges.createEl("button", {
-            cls: "iter-icon-button iter-pot-open-btn",
-            type: "button",
-            attr: {
-              "aria-label": `Open ${tree.title} goal view`,
-              title: `Open ${tree.title} goal view`
-            }
-          });
-          setIcon(openBtn, "arrow-up-right");
-          openBtn.addEventListener("click", (event) => {
-            event.stopPropagation();
-            void this.plugin.openGoal(tree.indexFile);
-          });
-        }
-        if (tree.goal) {
-          meta.createEl("p", { text: tree.goal, cls: "iter-pot-goal" });
-        }
-        const statsParts = [tree.stats.stageLabel];
-        if (tree.stats.subgoalTotal > 0) {
-          statsParts.push(`${tree.stats.subgoalDone}/${tree.stats.subgoalTotal} subgoals`);
-        }
-        if (tree.stats.habitTotal > 0) {
-          statsParts.push(`${tree.stats.habitWatered}/${tree.stats.habitTotal} watered`);
-        }
-        meta.createDiv({ text: statsParts.join(" \xB7 "), cls: "iter-pot-stats" });
-        if (tree.habits.length > 0) {
-          const waterBar = card.createDiv({ cls: "iter-pot-water-bar" });
-          const visibleHabits = tree.habits.slice(0, 3);
-          for (const habit of visibleHabits) {
-            const resting = !habit.isDueToday && !habit.wateredToday;
-            const chip = waterBar.createEl("button", {
-              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
-              type: "button",
-              attr: {
-                "aria-pressed": String(habit.wateredToday),
-                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water ${habit.title}` : `Water ${habit.title} (${habit.cadenceLabel})`
-              }
-            });
-            const drop = chip.createSpan({ cls: "iter-chip-icon" });
-            setIcon(drop, "droplet");
-            chip.createSpan({ text: habit.title, cls: "iter-chip-label" });
-            chip.addEventListener("click", async (event) => {
-              event.stopPropagation();
-              try {
-                const watered = await waterHabit2(this.app, habit.file);
-                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not water habit.");
-              }
-            });
-          }
-          if (tree.habits.length > 3) {
-            waterBar.createSpan({ text: `+${tree.habits.length - 3}`, cls: "iter-more-habits" });
-          }
-        }
-      }
-      renderInspector(shell, tree) {
-        const panel = shell.createDiv({ cls: "iter-inspector" });
-        const visual = panel.createDiv({ cls: "iter-inspector-visual" });
-        renderTreeSvg(visual, tree, { large: true });
-        const growthPct = Math.round(tree.stats.growth * 100);
-        visual.createDiv({
-          text: `${tree.stats.stageLabel} \xB7 ${growthPct}%`,
-          cls: "iter-inspector-stage"
-        });
-        visual.createDiv({
-          text: HYDRATION_LABELS[tree.stats.hydrationState],
-          cls: `iter-hydration-badge is-${tree.stats.hydrationState}`
-        });
-        const details = panel.createDiv({ cls: "iter-inspector-details" });
-        const top = details.createDiv({ cls: "iter-inspector-top" });
-        const heading = top.createDiv({ cls: "iter-inspector-heading" });
-        heading.createEl("h2", { text: tree.title, cls: "iter-inspector-title" });
-        heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
-        if (tree.endless) {
-          heading.createSpan({
-            text: "Never-ending",
-            cls: "iter-kind-pill is-endless",
-            attr: { title: "Grows continuously without an expected completion date" }
-          });
-        }
-        const topActions = top.createDiv({ cls: "iter-inspector-top-actions" });
-        if (tree.indexFile) {
-          const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
-          const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(noteIcon, "target");
-          noteBtn.createSpan({ text: "Open goal" });
-          noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
-        }
-        const closeBtn = topActions.createEl("button", {
-          cls: "iter-icon-button",
-          type: "button",
-          attr: { "aria-label": "Close inspector", title: "Close" }
-        });
-        setIcon(closeBtn, "x");
-        closeBtn.addEventListener("click", () => {
-          this.selectedTreePath = null;
-          this.render();
-        });
-        if (tree.goal) {
-          details.createEl("p", { text: tree.goal, cls: "iter-inspector-goal" });
-        }
-        if (tree.targets.length > 0) {
-          const targetsWrap = details.createDiv({ cls: "iter-targets-strip" });
-          for (const item of tree.targets) {
-            const pill = targetsWrap.createDiv({ cls: "iter-target-pill" });
-            pill.createSpan({ text: item.user, cls: "iter-target-user" });
-            pill.createSpan({ text: item.target, cls: "iter-target-value" });
-          }
-        }
-        const columns = details.createDiv({ cls: "iter-inspector-columns" });
-        const subCol = columns.createDiv({ cls: "iter-inspector-section" });
-        const subHeader = subCol.createDiv({ cls: "iter-section-header" });
-        subHeader.createEl("h3", { text: "Subgoals" });
-        const addSubBtn = subHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
-        const subPlus = addSubBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(subPlus, "plus");
-        addSubBtn.createSpan({ text: "Subgoal" });
-        addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
-        if (!tree.subgoals.length) {
-          subCol.createEl("p", { text: "No subgoals yet.", cls: "iter-section-empty" });
-        } else {
-          const list = subCol.createDiv({ cls: "iter-detail-list" });
-          for (const sub of tree.subgoals) {
-            const row = list.createDiv({ cls: `iter-detail-row${sub.done ? " is-done" : ""}` });
-            const checkBtn = row.createEl("button", {
-              cls: `iter-icon-button iter-check-btn${sub.done ? " is-done" : ""}`,
-              type: "button",
-              attr: {
-                "aria-pressed": String(sub.done),
-                "aria-label": sub.done ? `Mark ${sub.title} incomplete` : `Complete ${sub.title}`
-              }
-            });
-            setIcon(checkBtn, sub.done ? "check-circle-2" : "circle");
-            checkBtn.addEventListener("click", async () => {
-              try {
-                await toggleSubgoal(this.app, sub.file);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not update subgoal.");
-              }
-            });
-            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
-            textBtn.createSpan({ text: sub.title, cls: "iter-detail-title" });
-            if (sub.target) textBtn.createSpan({ text: sub.target, cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
-          }
-        }
-        const habCol = columns.createDiv({ cls: "iter-inspector-section" });
-        const habHeader = habCol.createDiv({ cls: "iter-section-header" });
-        habHeader.createEl("h3", { text: "Habits" });
-        const addHabBtn = habHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
-        const habPlus = addHabBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(habPlus, "plus");
-        addHabBtn.createSpan({ text: "Habit" });
-        addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
-        if (!tree.habits.length) {
-          habCol.createEl("p", { text: "No watering habits yet.", cls: "iter-section-empty" });
-        } else {
-          const list = habCol.createDiv({ cls: "iter-detail-list" });
-          for (const habit of tree.habits) {
-            const resting = !habit.isDueToday && !habit.wateredToday;
-            const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? " is-watered" : ""}` });
-            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
-            textBtn.createSpan({ text: habit.title, cls: "iter-detail-title" });
-            const subMeta = [habit.cadenceLabel];
-            if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
-            if (habit.target) subMeta.push(habit.target);
-            textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
-            const waterBtn = row.createEl("button", {
-              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
-              type: "button",
-              attr: { "aria-pressed": String(habit.wateredToday) }
-            });
-            const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
-            setIcon(drop, "droplet");
-            waterBtn.createSpan({
-              text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
-            });
-            waterBtn.addEventListener("click", async () => {
-              try {
-                const watered = await waterHabit2(this.app, habit.file);
-                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not water habit.");
-              }
-            });
-          }
-        }
-      }
-    };
-    module2.exports = {
-      GardenView: GardenView2,
-      GARDEN_VIEW: GARDEN_VIEW2
-    };
-  }
-});
-
 // src/goal-modals.js
 var require_goal_modals = __commonJS({
   "src/goal-modals.js"(exports2, module2) {
@@ -7024,6 +6701,21 @@ var require_goal_modals = __commonJS({
     };
     var TREE_WIDGET_PRESETS = [
       {
+        value: "__rel:habits:today",
+        label: "Habits appearing today (due today)",
+        initial: { mode: "query", childKinds: "habits", dataFilter: "habits_today", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:habits:pending",
+        label: "Habits needing water today",
+        initial: { mode: "query", childKinds: "habits", dataFilter: "habits_pending", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:habits:all",
+        label: "All habits & appearance schedule",
+        initial: { mode: "query", childKinds: "habits", dataFilter: "habits_all", perChildAgg: "all" }
+      },
+      {
         value: "__rel:all:numeric",
         label: "All children \xB7 Numeric (auto-includes new)",
         initial: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
@@ -7073,7 +6765,7 @@ var require_goal_modals = __commonJS({
         contentEl.addClass("iter-modal");
         const headBar = contentEl.createDiv({ cls: "iter-modal-headbar" });
         headBar.createEl("h2", { text: isEdit ? "Edit widget" : "Add widget", cls: "iter-modal-title" });
-        const isTree = this.goalKind === "tree" && Boolean(this.treePath);
+        const isTree = (this.goalKind === "tree" || this.goalKind === "garden") && Boolean(this.treePath);
         const canUseDataWidgets = this.datasets.length > 0 || isTree;
         let canvasSwitchBtn = null;
         if (this.onOpenCanvas) {
@@ -7135,7 +6827,7 @@ var require_goal_modals = __commonJS({
         } else if (this.datasets.length) {
           dsSelect.value = this.datasets[0].id;
         } else if (isTree) {
-          dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+          dsSelect.value = "__rel:all:numeric";
         }
         const relationSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         const titleField = form.createDiv({ cls: "iter-modal-field" });
@@ -7307,15 +6999,16 @@ var require_goal_modals = __commonJS({
               modeSelect.createEl("option", { value: item.id, text: item.label });
             }
             modeSelect.value = this.initialWidget?.mode || BAR_MODES[0].id;
+            const isHabitSchedulePreset = (dsSelect.value || "").startsWith("__rel:habits:") && dsSelect.value !== "__rel:habits:numeric";
             const tField = barRow.createDiv({ cls: "iter-modal-field" });
             tField.createEl("label", { text: "Goal target number", cls: "iter-modal-label" });
             targetInput = tField.createEl("input", {
               type: "number",
               step: "any",
-              placeholder: "e.g. 100",
+              placeholder: isHabitSchedulePreset ? "Optional (auto = total due habits)" : "e.g. 100",
               cls: "iter-modal-input"
             });
-            targetInput.required = true;
+            targetInput.required = !isHabitSchedulePreset;
             if (this.initialWidget?.target !== null && this.initialWidget?.target !== void 0) {
               targetInput.value = String(this.initialWidget.target);
             }
@@ -7330,7 +7023,8 @@ var require_goal_modals = __commonJS({
           } else if (wType === "note_navigator") {
             const currentVal = dsSelect.value || "";
             const currentDs = this.datasets.find((d) => d.id === currentVal);
-            const currentIsNote = currentDs ? currentDs.type === "note" || currentDs.type === "note_time" || currentDs.type === "rollup" && currentDs.relation?.dataFilter === "note" : currentVal === "__rel:all:note" || currentVal === "__rel:pick" || currentVal.startsWith("__child:") && (() => {
+            const currentIsHabitSchedule = currentVal === "__rel:habits:today" || currentVal === "__rel:habits:pending" || currentVal === "__rel:habits:all";
+            const currentIsNote = currentDs ? currentDs.type === "note" || currentDs.type === "note_time" || currentDs.type === "rollup" && (currentDs.relation?.dataFilter === "note" || String(currentDs.relation?.dataFilter || "").startsWith("habits_")) : currentIsHabitSchedule || currentVal === "__rel:all:note" || currentVal === "__rel:pick" || currentVal.startsWith("__child:") && (() => {
               const childItem = this.childDatasets[Number(currentVal.slice("__child:".length))];
               return childItem && (childItem.dataset.type === "note" || childItem.dataset.type === "note_time");
             })();
@@ -7339,7 +7033,7 @@ var require_goal_modals = __commonJS({
                 (d) => d.type === "note" || d.type === "note_time" || d.type === "rollup" && d.relation?.dataFilter === "note"
               );
               if (noteDs) dsSelect.value = noteDs.id;
-              else if (isTree) dsSelect.value = "__rel:all:note";
+              else if (isTree) dsSelect.value = "__rel:habits:today";
             }
           }
           rebuildRelationSlot();
@@ -7405,6 +7099,11 @@ var require_goal_modals = __commonJS({
           rebuildMetricSlot();
           if (aggSelect && !aggTouched) {
             aggSelect.value = isRollupSumDefault() ? "sum" : "latest";
+          }
+          if (targetInput) {
+            const isHabitPreset = (dsSelect.value || "").startsWith("__rel:habits:") && dsSelect.value !== "__rel:habits:numeric";
+            targetInput.required = !isHabitPreset;
+            targetInput.placeholder = isHabitPreset ? "Optional (auto = total due habits)" : "e.g. 100";
           }
         });
         typeSelect.addEventListener("change", rebuildOptions);
@@ -7955,9 +7654,31 @@ var require_goal_view = __commonJS({
             }
             await updateHabitSchedule2(this.app, this.file, next);
             currentLabel.textContent = formatCadenceLabel(next.frequency, next.days);
+            this.render();
             this.plugin.scheduleRefresh();
           }
         });
+        if (doc.habitSchedule) {
+          const hs = doc.habitSchedule;
+          const hiddenMeta = box.createDiv({ cls: "iter-habit-hidden-meta" });
+          hiddenMeta.createSpan({ text: "Auto fields:", cls: "iter-habit-hidden-label" });
+          hiddenMeta.createSpan({
+            text: `appearDate: ${hs.appearDate} (${hs.appearLabel})`,
+            cls: `iter-habit-hidden-pill is-${hs.status}`
+          });
+          hiddenMeta.createSpan({
+            text: `dueToday: ${hs.dueToday ? "true" : "false"}`,
+            cls: "iter-habit-hidden-pill"
+          });
+          hiddenMeta.createSpan({
+            text: `status: ${hs.status}`,
+            cls: "iter-habit-hidden-pill"
+          });
+          hiddenMeta.createSpan({
+            text: `streak: ${hs.streak}d`,
+            cls: "iter-habit-hidden-pill"
+          });
+        }
       }
       renderWidgetsSection(shell, doc) {
         const section = shell.createDiv({ cls: "iter-goal-section" });
@@ -7986,7 +7707,7 @@ var require_goal_view = __commonJS({
         setIcon(plus, "plus");
         addBtn.createSpan({ text: "Add widget" });
         addBtn.addEventListener("click", () => {
-          const isTree = doc.kind === "tree" && Boolean(doc.treePath);
+          const isTree = (doc.kind === "tree" || doc.kind === "garden") && Boolean(doc.treePath);
           if (doc.kind !== "habit" && !isTree && !doc.datasets.length) {
             new Notice2("Add a data list first, or use the Canvas editor.");
             return;
@@ -8025,7 +7746,7 @@ var require_goal_view = __commonJS({
         }
         if (!doc.widgets.length) {
           section.createEl("p", {
-            text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.kind === "tree" ? "No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
+            text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.kind === "garden" ? 'No widgets on your Garden yet. Click "+ Habits for Today" above, "+ Add widget", or open the Canvas editor.' : doc.kind === "tree" ? "No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
             cls: "iter-section-hint"
           });
           return;
@@ -8080,6 +7801,11 @@ var require_goal_view = __commonJS({
         const callbacks = {
           onOpenFile: (file) => void this.plugin.openFile(file),
           onOpenGoal: (file) => void this.plugin.openGoal(file),
+          onWaterHabit: async (file) => {
+            await waterHabit2(this.app, file);
+            this.render();
+            this.plugin.scheduleRefresh();
+          },
           onMissingNote: (path) => new Notice2(`Note not found: ${path}`)
         };
         if (widget.type === "pipeline") {
@@ -8142,7 +7868,7 @@ var require_goal_view = __commonJS({
           });
           setIcon(editBtn, "pencil");
           editBtn.addEventListener("click", () => {
-            const isTree = doc.kind === "tree" && Boolean(doc.treePath);
+            const isTree = (doc.kind === "tree" || doc.kind === "garden") && Boolean(doc.treePath);
             const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
             new AddWidgetModal(this.app, {
               datasets: doc.datasets,
@@ -8240,7 +7966,7 @@ var require_goal_view = __commonJS({
         }
         if (widget.type === "note_navigator") {
           const entries = resolveDatasetEntries(this.app, dataset, this.file.path, widget.metricKey);
-          const ordered = dataset.type === "note_time" ? [...entries].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.index - a.index) : entries;
+          const ordered = dataset.type === "note_time" && !dataset.isHabitSchedule ? [...entries].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.index - a.index) : entries;
           renderWidgetDisplayBody(card, { displayType: "note_navigator", entries: ordered }, callbacks);
         }
       }
@@ -8587,9 +8313,798 @@ var require_goal_view = __commonJS({
         }
       }
     };
+    function renderDocumentWidgetsSection(shell, { app, plugin, file, doc, onRefresh }) {
+      const host = {
+        app,
+        plugin,
+        file,
+        render: () => {
+          if (typeof onRefresh === "function") onRefresh();
+        },
+        renderWidgetReorderAndDuplicate(actions, widget, d) {
+          return GoalView2.prototype.renderWidgetReorderAndDuplicate.call(this, actions, widget, d);
+        },
+        renderWidgetCard(grid, widget, dataset, d) {
+          return GoalView2.prototype.renderWidgetCard.call(this, grid, widget, dataset, d);
+        }
+      };
+      return GoalView2.prototype.renderWidgetsSection.call(host, shell, doc);
+    }
     module2.exports = {
       GoalView: GoalView2,
-      GOAL_VIEW: GOAL_VIEW2
+      GOAL_VIEW: GOAL_VIEW2,
+      renderDocumentWidgetsSection
+    };
+  }
+});
+
+// src/tree-art.js
+var require_tree_art = __commonJS({
+  "src/tree-art.js"(exports2, module2) {
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    function hashString(input) {
+      let hash = 2166136261;
+      const text = String(input || "iter");
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+    function createRng(seedValue) {
+      let state = seedValue || 1;
+      return () => {
+        state = Math.imul(1664525, state) + 1013904223 >>> 0;
+        return state / 4294967296;
+      };
+    }
+    function resolveStyle(tree) {
+      if (tree?.style && tree.style !== "auto") return tree.style;
+      switch (tree?.module) {
+        case "gym":
+          return "bonsai";
+        case "learning":
+          return "pine";
+        case "creative":
+          return "willow";
+        default:
+          return "canopy";
+      }
+    }
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+    function round(num) {
+      return Math.round(num * 10) / 10;
+    }
+    function buildCanopyGeometry(growth, rand) {
+      const lean = (rand() - 0.5) * 14;
+      const baseY = 128;
+      const height = 28 + growth * 58;
+      const topY = baseY - height;
+      const topX = 80 + lean * 0.45;
+      const midX = 80 - lean * 0.35;
+      const midY = baseY - height * 0.5;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(midX)} ${round(midY)} ${round(topX)} ${round(topY)}`, width: round(2.2 + growth * 2.4) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      if (growth < 0.25) {
+        canopies.push(
+          { kind: "ellipse", cx: round(topX - 8), cy: round(topY - 2), rx: 8, ry: 4.5, rotate: -26, tone: "a" },
+          { kind: "ellipse", cx: round(topX + 8), cy: round(topY - 4), rx: 7.5, ry: 4, rotate: 24, tone: "b" }
+        );
+        return { trunks, branches, canopies, blossoms };
+      }
+      const leftBranchX = topX - (14 + growth * 14);
+      const leftBranchY = topY + height * 0.28;
+      const rightBranchX = topX + (14 + growth * 14);
+      const rightBranchY = topY + height * 0.22;
+      branches.push(
+        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.52)} Q ${round(topX - 10)} ${round(leftBranchY + 8)} ${round(leftBranchX)} ${round(leftBranchY)}`, width: round(1.5 + growth * 1.1) },
+        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.58)} Q ${round(topX + 10)} ${round(rightBranchY + 8)} ${round(rightBranchX)} ${round(rightBranchY)}`, width: round(1.5 + growth * 1.1) }
+      );
+      const scale = 0.65 + growth * 0.52;
+      canopies.push(
+        { kind: "ellipse", cx: round(leftBranchX), cy: round(leftBranchY - 4), rx: round(18 * scale), ry: round(13 * scale), rotate: -8, tone: "b" },
+        { kind: "ellipse", cx: round(rightBranchX), cy: round(rightBranchY - 5), rx: round(19 * scale), ry: round(14 * scale), rotate: 8, tone: "b" },
+        { kind: "ellipse", cx: round(topX), cy: round(topY - 8), rx: round(24 * scale), ry: round(18 * scale), rotate: 0, tone: "a" }
+      );
+      if (growth >= 0.55) {
+        canopies.push(
+          { kind: "ellipse", cx: round(topX - 11), cy: round(topY - 14), rx: round(15 * scale), ry: round(11 * scale), rotate: -5, tone: "c" },
+          { kind: "ellipse", cx: round(topX + 10), cy: round(topY - 12), rx: round(14 * scale), ry: round(11 * scale), rotate: 6, tone: "a" }
+        );
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX - 12), cy: round(topY - 10), r: 2.3 },
+          { cx: round(topX + 8), cy: round(topY - 17), r: 2.1 },
+          { cx: round(rightBranchX + 4), cy: round(rightBranchY - 7), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildBonsaiGeometry(growth, rand) {
+      const dir = rand() > 0.5 ? 1 : -1;
+      const baseY = 128;
+      const height = 28 + growth * 50;
+      const bendX = 80 - dir * (16 + growth * 12);
+      const apexX = 80 + dir * (12 + growth * 14);
+      const apexY = baseY - height;
+      const trunks = [
+        { d: `M 80 ${baseY} C ${round(80 - dir * 24)} ${round(baseY - height * 0.35)}, ${round(bendX)} ${round(baseY - height * 0.72)}, ${round(apexX)} ${round(apexY)}`, width: round(2.8 + growth * 2.6) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      if (growth < 0.25) {
+        canopies.push(
+          { kind: "ellipse", cx: round(apexX), cy: round(apexY - 4), rx: 11, ry: 5, rotate: dir * 6, tone: "a" }
+        );
+        return { trunks, branches, canopies, blossoms };
+      }
+      const sideX = 80 - dir * (22 + growth * 14);
+      const sideY = baseY - height * 0.54;
+      branches.push(
+        { d: `M ${round(80 - dir * 10)} ${round(baseY - height * 0.45)} Q ${round(sideX + dir * 8)} ${round(sideY + 6)} ${round(sideX)} ${round(sideY)}`, width: round(1.8 + growth) }
+      );
+      const padScale = 0.7 + growth * 0.48;
+      canopies.push(
+        { kind: "ellipse", cx: round(sideX), cy: round(sideY - 4), rx: round(19 * padScale), ry: round(8 * padScale), rotate: -dir * 4, tone: "b" },
+        { kind: "ellipse", cx: round(apexX), cy: round(apexY - 5), rx: round(24 * padScale), ry: round(9.5 * padScale), rotate: dir * 3, tone: "a" }
+      );
+      if (growth >= 0.58) {
+        const upperX = apexX - dir * 16;
+        const upperY = apexY + 12;
+        branches.push(
+          { d: `M ${round(apexX - dir * 4)} ${round(apexY + 16)} Q ${round(upperX + dir * 6)} ${round(upperY + 4)} ${round(upperX)} ${round(upperY)}`, width: 1.6 }
+        );
+        canopies.push(
+          { kind: "ellipse", cx: round(upperX), cy: round(upperY - 4), rx: round(15 * padScale), ry: round(7 * padScale), rotate: 0, tone: "c" }
+        );
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(apexX - 8), cy: round(apexY - 8), r: 2.2 },
+          { cx: round(apexX + 9), cy: round(apexY - 5), r: 2 },
+          { cx: round(sideX), cy: round(sideY - 6), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildPineGeometry(growth, rand) {
+      const sway = (rand() - 0.5) * 6;
+      const baseY = 128;
+      const height = 32 + growth * 60;
+      const topY = baseY - height;
+      const topX = 80 + sway;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(80 - sway * 0.5)} ${round(baseY - height * 0.5)} ${round(topX)} ${round(topY + 8)}`, width: round(2.2 + growth * 2) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      const tierCount = growth < 0.25 ? 1 : growth < 0.5 ? 2 : growth < 0.8 ? 3 : 4;
+      for (let i = 0; i < tierCount; i += 1) {
+        const t = (i + 1) / (tierCount + 0.35);
+        const tierY = baseY - height * (0.28 + t * 0.68);
+        const halfWidth = (10 + growth * 20) * (1 - i * 0.2);
+        const tierHeight = 14 + growth * 10;
+        const peakY = tierY - tierHeight;
+        const cx = 80 + sway * t;
+        const d = [
+          `M ${round(cx)} ${round(peakY)}`,
+          `Q ${round(cx + halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx + halfWidth)} ${round(tierY)}`,
+          `Q ${round(cx)} ${round(tierY + 4)} ${round(cx - halfWidth)} ${round(tierY)}`,
+          `Q ${round(cx - halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx)} ${round(peakY)} Z`
+        ].join(" ");
+        canopies.push({ kind: "path", d, tone: i % 2 === 0 ? "a" : "b" });
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX), cy: round(topY - 2), r: 2.2 },
+          { cx: round(topX - 9), cy: round(topY + 18), r: 1.9 },
+          { cx: round(topX + 10), cy: round(topY + 26), r: 1.9 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildWillowGeometry(growth, rand) {
+      const lean = (rand() - 0.5) * 10;
+      const baseY = 128;
+      const height = 28 + growth * 54;
+      const topY = baseY - height;
+      const topX = 80 + lean * 0.4;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(80 - lean * 0.4)} ${round(baseY - height * 0.48)} ${round(topX)} ${round(topY + 6)}`, width: round(2.2 + growth * 2.2) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      const frondCount = growth < 0.25 ? 2 : growth < 0.55 ? 4 : 6;
+      const span = 14 + growth * 22;
+      for (let i = 0; i < frondCount; i += 1) {
+        const ratio = frondCount === 1 ? 0.5 : i / (frondCount - 1);
+        const offset = (ratio - 0.5) * 2 * span;
+        const endX = topX + offset;
+        const drop = 16 + growth * 24 - Math.abs(offset) * 0.22;
+        const endY = topY + 6 + drop;
+        const ctrlX = topX + offset * 0.72;
+        const ctrlY = topY - 4;
+        branches.push({
+          d: `M ${round(topX)} ${round(topY + 6)} Q ${round(ctrlX)} ${round(ctrlY)} ${round(endX)} ${round(endY)}`,
+          width: 1.4,
+          soft: true
+        });
+        canopies.push({
+          kind: "ellipse",
+          cx: round(endX),
+          cy: round(endY - 4),
+          rx: 3.8,
+          ry: 7.5,
+          rotate: round(offset * 0.35),
+          tone: i % 2 === 0 ? "a" : "b"
+        });
+      }
+      canopies.unshift({
+        kind: "ellipse",
+        cx: round(topX),
+        cy: round(topY - 2),
+        rx: round(12 + growth * 12),
+        ry: round(7 + growth * 5),
+        rotate: 0,
+        tone: "c"
+      });
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX - 8), cy: round(topY - 3), r: 2.1 },
+          { cx: round(topX + 9), cy: round(topY + 1), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function computeTreeGeometry(tree) {
+      const growth = clamp(tree?.stats?.growth ?? 0.2, 0.15, 1);
+      const style = resolveStyle(tree);
+      const rand = createRng(hashString(`${tree?.title || "Iter"}:${style}`));
+      let shapes;
+      if (style === "bonsai") shapes = buildBonsaiGeometry(growth, rand);
+      else if (style === "pine") shapes = buildPineGeometry(growth, rand);
+      else if (style === "willow") shapes = buildWillowGeometry(growth, rand);
+      else shapes = buildCanopyGeometry(growth, rand);
+      return {
+        style,
+        growth,
+        hydrationState: tree?.stats?.hydrationState ?? "calm",
+        ...shapes
+      };
+    }
+    function svgEl(tag, attrs = {}) {
+      const node = document.createElementNS(SVG_NS, tag);
+      if (typeof node.isShown !== "function") {
+        node.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
+      }
+      return node;
+    }
+    function appendPot(svg, hydrationState) {
+      svg.appendChild(svgEl("ellipse", {
+        cx: 80,
+        cy: 164,
+        rx: 28,
+        ry: 3.5,
+        class: "iter-svg-shadow"
+      }));
+      svg.appendChild(svgEl("path", {
+        d: "M 55 135 L 105 135 L 98 159 Q 97 162 93 162 L 67 162 Q 63 162 62 159 Z",
+        class: "iter-svg-pot"
+      }));
+      svg.appendChild(svgEl("rect", {
+        x: 51,
+        y: 129,
+        width: 58,
+        height: 6,
+        rx: 3,
+        class: "iter-svg-rim"
+      }));
+      svg.appendChild(svgEl("path", {
+        d: "M 56 129 Q 80 125 104 129",
+        class: "iter-svg-soil"
+      }));
+      if (hydrationState === "hydrated" || hydrationState === "partial") {
+        const dewGroup = svgEl("g", {
+          class: hydrationState === "hydrated" ? "iter-svg-dew is-hydrated" : "iter-svg-dew is-partial"
+        });
+        dewGroup.appendChild(svgEl("path", {
+          d: "M 116 142 C 116 142 120 147.5 120 150 A 4 4 0 1 1 112 150 C 112 147.5 116 142 116 142 Z"
+        }));
+        svg.appendChild(dewGroup);
+      }
+    }
+    function renderTreeSvg(container, tree, options = {}) {
+      const geo = computeTreeGeometry(tree);
+      const svg = svgEl("svg", {
+        viewBox: "0 0 160 176",
+        class: `iter-tree-svg is-${geo.hydrationState} style-${geo.style}${options.large ? " is-large" : ""}`,
+        role: "img",
+        "aria-label": `${tree?.title || "Tree"} (${tree?.stats?.stageLabel || "Seedling"})`
+      });
+      const treeGroup = svgEl("g", { class: "iter-svg-plant" });
+      const canopyGroup = svgEl("g", { class: "iter-svg-canopy" });
+      for (const trunk of geo.trunks) {
+        treeGroup.appendChild(svgEl("path", {
+          d: trunk.d,
+          "stroke-width": trunk.width,
+          class: "iter-svg-trunk"
+        }));
+      }
+      for (const branch of geo.branches) {
+        treeGroup.appendChild(svgEl("path", {
+          d: branch.d,
+          "stroke-width": branch.width,
+          class: branch.soft ? "iter-svg-branch is-soft" : "iter-svg-branch"
+        }));
+      }
+      for (const shape of geo.canopies) {
+        if (shape.kind === "path") {
+          canopyGroup.appendChild(svgEl("path", {
+            d: shape.d,
+            class: `iter-svg-foliage tone-${shape.tone}`
+          }));
+        } else {
+          const transform = shape.rotate ? `rotate(${shape.rotate} ${shape.cx} ${shape.cy})` : null;
+          canopyGroup.appendChild(svgEl("ellipse", {
+            cx: shape.cx,
+            cy: shape.cy,
+            rx: shape.rx,
+            ry: shape.ry,
+            transform,
+            class: `iter-svg-foliage tone-${shape.tone}`
+          }));
+        }
+      }
+      for (const blossom of geo.blossoms) {
+        canopyGroup.appendChild(svgEl("circle", {
+          cx: blossom.cx,
+          cy: blossom.cy,
+          r: blossom.r,
+          class: "iter-svg-blossom"
+        }));
+      }
+      treeGroup.appendChild(canopyGroup);
+      svg.appendChild(treeGroup);
+      appendPot(svg, geo.hydrationState);
+      container.appendChild(svg);
+      return svg;
+    }
+    function renderEmptyPotSvg(container) {
+      const svg = svgEl("svg", {
+        viewBox: "0 0 160 176",
+        class: "iter-tree-svg is-empty-pot",
+        "aria-hidden": "true"
+      });
+      svg.appendChild(svgEl("path", {
+        d: "M 80 128 Q 78 112 72 106",
+        "stroke-width": 2,
+        class: "iter-svg-trunk"
+      }));
+      svg.appendChild(svgEl("ellipse", {
+        cx: 72,
+        cy: 103,
+        rx: 6,
+        ry: 3.2,
+        transform: "rotate(-25 72 103)",
+        class: "iter-svg-foliage tone-a"
+      }));
+      appendPot(svg, "calm");
+      container.appendChild(svg);
+      return svg;
+    }
+    module2.exports = {
+      resolveStyle,
+      computeTreeGeometry,
+      renderTreeSvg,
+      renderEmptyPotSvg
+    };
+  }
+});
+
+// src/garden-view.js
+var require_garden_view = __commonJS({
+  "src/garden-view.js"(exports2, module2) {
+    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
+    var { MODULES, ROOT, WE_PATH, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
+    var { listGarden: listGarden2 } = require_catalog();
+    var { readGoalDocument: readGoalDocument2 } = require_data_model();
+    var { renderDocumentWidgetsSection } = require_goal_view();
+    var { renderTreeSvg, renderEmptyPotSvg } = require_tree_art();
+    var GARDEN_VIEW2 = "iter-garden";
+    var MODULE_LABELS = Object.fromEntries(MODULES.map((item) => [item.id, item.label]));
+    var HYDRATION_LABELS = {
+      hydrated: "Watered",
+      partial: "Partly watered",
+      thirsty: "Needs water",
+      calm: "No habits yet"
+    };
+    var GardenView2 = class extends ItemView {
+      constructor(leaf, plugin) {
+        super(leaf);
+        this.plugin = plugin;
+        this.selectedTreePath = null;
+        this.renderTimer = null;
+      }
+      getViewType() {
+        return GARDEN_VIEW2;
+      }
+      getDisplayText() {
+        return "We";
+      }
+      getIcon() {
+        return "sprout";
+      }
+      async setState(state, result) {
+        if (state?.selectedTreePath !== void 0) {
+          this.selectedTreePath = state.selectedTreePath;
+          this.render();
+        }
+        await super.setState(state, result);
+      }
+      getState() {
+        return { selectedTreePath: this.selectedTreePath };
+      }
+      async onOpen() {
+        this.contentEl.addClass("iter-garden");
+        const schedule = (file) => {
+          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          }
+        };
+        for (const event of ["create", "delete", "modify"]) {
+          this.registerEvent(this.app.vault.on(event, schedule));
+        }
+        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+          if (oldPath === this.selectedTreePath) {
+            this.selectedTreePath = file.path;
+          }
+          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          } else {
+            schedule(file);
+          }
+        }));
+        this.registerEvent(this.app.metadataCache.on("changed", schedule));
+        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
+        this.render();
+      }
+      async onClose() {
+        if (this.renderTimer !== null) {
+          clearTimeout(this.renderTimer);
+          this.renderTimer = null;
+        }
+      }
+      scheduleRender() {
+        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
+        this.renderTimer = setTimeout(() => {
+          this.renderTimer = null;
+          this.render();
+        }, 90);
+      }
+      selectTree(treePath) {
+        this.selectedTreePath = this.selectedTreePath === treePath ? null : treePath;
+        this.render();
+      }
+      render() {
+        const container = this.contentEl;
+        container.empty();
+        const garden = listGarden2(this.app);
+        if (this.selectedTreePath && !garden.trees.some((tree) => tree.path === this.selectedTreePath)) {
+          this.selectedTreePath = null;
+        }
+        const shell = container.createDiv({ cls: "iter-garden-shell" });
+        this.renderHeader(shell, garden);
+        if (!garden.trees.length) {
+          this.renderEmptyState(shell);
+          return;
+        }
+        this.renderGardenWidgets(shell);
+        const grid = shell.createDiv({ cls: "iter-garden-grid" });
+        for (const tree of garden.trees) {
+          this.renderPotCard(grid, tree);
+        }
+        const selected = this.selectedTreePath ? garden.trees.find((tree) => tree.path === this.selectedTreePath) : null;
+        if (selected) {
+          this.renderInspector(shell, selected);
+        }
+      }
+      renderHeader(shell, garden) {
+        const header = shell.createDiv({ cls: "iter-garden-header" });
+        const titleGroup = header.createDiv({ cls: "iter-garden-heading" });
+        titleGroup.createEl("h1", { text: "We", cls: "iter-garden-title" });
+        const totalSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalTotal, 0);
+        const doneSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalDone, 0);
+        const totalHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitTotal, 0);
+        const wateredHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitWatered, 0);
+        const parts = [];
+        if (garden.trees.length) {
+          parts.push(`${garden.trees.length} ${garden.trees.length === 1 ? "tree" : "trees"}`);
+          if (totalSubgoals) parts.push(`${doneSubgoals}/${totalSubgoals} subgoals`);
+          if (totalHabits) parts.push(`${wateredHabits}/${totalHabits} watered`);
+        } else {
+          parts.push("Shared long-term garden");
+        }
+        titleGroup.createEl("p", { text: parts.join(" \xB7 "), cls: "iter-garden-subtitle" });
+        const actions = header.createDiv({ cls: "iter-garden-actions" });
+        if (garden.members.length) {
+          const membersWrap = actions.createDiv({ cls: "iter-members-strip" });
+          for (const member of garden.members) {
+            membersWrap.createSpan({ text: member, cls: "iter-member-pill" });
+          }
+        }
+        const newTreeBtn = actions.createEl("button", {
+          cls: "iter-primary-pill",
+          type: "button"
+        });
+        const plusIcon = newTreeBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(plusIcon, "plus");
+        newTreeBtn.createSpan({ text: "New tree" });
+        newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
+      }
+      renderGardenWidgets(shell) {
+        const weFile = this.app.vault.getAbstractFileByPath(WE_PATH);
+        if (!weFile) return;
+        const weDoc = readGoalDocument2(this.app, weFile);
+        const wrap = shell.createDiv({ cls: "iter-garden-widgets" });
+        renderDocumentWidgetsSection(wrap, {
+          app: this.app,
+          plugin: this.plugin,
+          file: weFile,
+          doc: weDoc,
+          onRefresh: () => {
+            this.render();
+            this.plugin.scheduleRefresh();
+          }
+        });
+      }
+      renderEmptyState(shell) {
+        const empty = shell.createDiv({ cls: "iter-garden-empty" });
+        const art = empty.createDiv({ cls: "iter-empty-art" });
+        renderEmptyPotSvg(art);
+        empty.createEl("h2", { text: "Your garden is quiet", cls: "iter-empty-title" });
+        empty.createEl("p", {
+          text: "Plant a tree for a long-term goal, break it into subgoals, and water it with daily, weekly, or monthly habits.",
+          cls: "iter-empty-copy"
+        });
+        const btn = empty.createEl("button", { text: "Create tree", cls: "mod-cta", type: "button" });
+        btn.addEventListener("click", () => this.plugin.promptCreateTree());
+      }
+      renderPotCard(grid, tree) {
+        const selected = this.selectedTreePath === tree.path;
+        const card = grid.createDiv({
+          cls: `iter-pot-card${selected ? " is-selected" : ""} is-${tree.stats.hydrationState}`
+        });
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-pressed", String(selected));
+        card.setAttribute("aria-label", `${tree.title}, ${tree.stats.stageLabel}`);
+        card.addEventListener("click", () => this.selectTree(tree.path));
+        card.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            this.selectTree(tree.path);
+          }
+        });
+        const stage = card.createDiv({ cls: "iter-pot-stage" });
+        renderTreeSvg(stage, tree);
+        const meta = card.createDiv({ cls: "iter-pot-meta" });
+        const nameRow = meta.createDiv({ cls: "iter-pot-name-row" });
+        nameRow.createSpan({ text: tree.title, cls: "iter-pot-title" });
+        const rightBadges = nameRow.createDiv({ cls: "iter-pot-badges" });
+        rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.indexFile) {
+          const openBtn = rightBadges.createEl("button", {
+            cls: "iter-icon-button iter-pot-open-btn",
+            type: "button",
+            attr: {
+              "aria-label": `Open ${tree.title} goal view`,
+              title: `Open ${tree.title} goal view`
+            }
+          });
+          setIcon(openBtn, "arrow-up-right");
+          openBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.plugin.openGoal(tree.indexFile);
+          });
+        }
+        if (tree.goal) {
+          meta.createEl("p", { text: tree.goal, cls: "iter-pot-goal" });
+        }
+        const statsParts = [tree.stats.stageLabel];
+        if (tree.stats.subgoalTotal > 0) {
+          statsParts.push(`${tree.stats.subgoalDone}/${tree.stats.subgoalTotal} subgoals`);
+        }
+        if (tree.stats.habitTotal > 0) {
+          statsParts.push(`${tree.stats.habitWatered}/${tree.stats.habitTotal} watered`);
+        }
+        meta.createDiv({ text: statsParts.join(" \xB7 "), cls: "iter-pot-stats" });
+        if (tree.habits.length > 0) {
+          const waterBar = card.createDiv({ cls: "iter-pot-water-bar" });
+          const visibleHabits = tree.habits.slice(0, 3);
+          for (const habit of visibleHabits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
+            const chip = waterBar.createEl("button", {
+              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
+              type: "button",
+              attr: {
+                "aria-pressed": String(habit.wateredToday),
+                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water ${habit.title}` : `Water ${habit.title} (${habit.cadenceLabel})`
+              }
+            });
+            const drop = chip.createSpan({ cls: "iter-chip-icon" });
+            setIcon(drop, "droplet");
+            chip.createSpan({ text: habit.title, cls: "iter-chip-label" });
+            chip.addEventListener("click", async (event) => {
+              event.stopPropagation();
+              try {
+                const watered = await waterHabit2(this.app, habit.file);
+                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not water habit.");
+              }
+            });
+          }
+          if (tree.habits.length > 3) {
+            waterBar.createSpan({ text: `+${tree.habits.length - 3}`, cls: "iter-more-habits" });
+          }
+        }
+      }
+      renderInspector(shell, tree) {
+        const panel = shell.createDiv({ cls: "iter-inspector" });
+        const visual = panel.createDiv({ cls: "iter-inspector-visual" });
+        renderTreeSvg(visual, tree, { large: true });
+        const growthPct = Math.round(tree.stats.growth * 100);
+        visual.createDiv({
+          text: `${tree.stats.stageLabel} \xB7 ${growthPct}%`,
+          cls: "iter-inspector-stage"
+        });
+        visual.createDiv({
+          text: HYDRATION_LABELS[tree.stats.hydrationState],
+          cls: `iter-hydration-badge is-${tree.stats.hydrationState}`
+        });
+        const details = panel.createDiv({ cls: "iter-inspector-details" });
+        const top = details.createDiv({ cls: "iter-inspector-top" });
+        const heading = top.createDiv({ cls: "iter-inspector-heading" });
+        heading.createEl("h2", { text: tree.title, cls: "iter-inspector-title" });
+        heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.endless) {
+          heading.createSpan({
+            text: "Never-ending",
+            cls: "iter-kind-pill is-endless",
+            attr: { title: "Grows continuously without an expected completion date" }
+          });
+        }
+        const topActions = top.createDiv({ cls: "iter-inspector-top-actions" });
+        if (tree.indexFile) {
+          const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
+          const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(noteIcon, "target");
+          noteBtn.createSpan({ text: "Open goal" });
+          noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
+        }
+        const closeBtn = topActions.createEl("button", {
+          cls: "iter-icon-button",
+          type: "button",
+          attr: { "aria-label": "Close inspector", title: "Close" }
+        });
+        setIcon(closeBtn, "x");
+        closeBtn.addEventListener("click", () => {
+          this.selectedTreePath = null;
+          this.render();
+        });
+        if (tree.goal) {
+          details.createEl("p", { text: tree.goal, cls: "iter-inspector-goal" });
+        }
+        if (tree.targets.length > 0) {
+          const targetsWrap = details.createDiv({ cls: "iter-targets-strip" });
+          for (const item of tree.targets) {
+            const pill = targetsWrap.createDiv({ cls: "iter-target-pill" });
+            pill.createSpan({ text: item.user, cls: "iter-target-user" });
+            pill.createSpan({ text: item.target, cls: "iter-target-value" });
+          }
+        }
+        const columns = details.createDiv({ cls: "iter-inspector-columns" });
+        const subCol = columns.createDiv({ cls: "iter-inspector-section" });
+        const subHeader = subCol.createDiv({ cls: "iter-section-header" });
+        subHeader.createEl("h3", { text: "Subgoals" });
+        const addSubBtn = subHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const subPlus = addSubBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(subPlus, "plus");
+        addSubBtn.createSpan({ text: "Subgoal" });
+        addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
+        if (!tree.subgoals.length) {
+          subCol.createEl("p", { text: "No subgoals yet.", cls: "iter-section-empty" });
+        } else {
+          const list = subCol.createDiv({ cls: "iter-detail-list" });
+          for (const sub of tree.subgoals) {
+            const row = list.createDiv({ cls: `iter-detail-row${sub.done ? " is-done" : ""}` });
+            const checkBtn = row.createEl("button", {
+              cls: `iter-icon-button iter-check-btn${sub.done ? " is-done" : ""}`,
+              type: "button",
+              attr: {
+                "aria-pressed": String(sub.done),
+                "aria-label": sub.done ? `Mark ${sub.title} incomplete` : `Complete ${sub.title}`
+              }
+            });
+            setIcon(checkBtn, sub.done ? "check-circle-2" : "circle");
+            checkBtn.addEventListener("click", async () => {
+              try {
+                await toggleSubgoal(this.app, sub.file);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not update subgoal.");
+              }
+            });
+            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
+            textBtn.createSpan({ text: sub.title, cls: "iter-detail-title" });
+            if (sub.target) textBtn.createSpan({ text: sub.target, cls: "iter-detail-sub" });
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
+          }
+        }
+        const habCol = columns.createDiv({ cls: "iter-inspector-section" });
+        const habHeader = habCol.createDiv({ cls: "iter-section-header" });
+        habHeader.createEl("h3", { text: "Habits" });
+        const addHabBtn = habHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const habPlus = addHabBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(habPlus, "plus");
+        addHabBtn.createSpan({ text: "Habit" });
+        addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
+        if (!tree.habits.length) {
+          habCol.createEl("p", { text: "No watering habits yet.", cls: "iter-section-empty" });
+        } else {
+          const list = habCol.createDiv({ cls: "iter-detail-list" });
+          for (const habit of tree.habits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
+            const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? " is-watered" : ""}` });
+            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
+            textBtn.createSpan({ text: habit.title, cls: "iter-detail-title" });
+            const subMeta = [habit.cadenceLabel];
+            if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
+            if (habit.target) subMeta.push(habit.target);
+            textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+            const waterBtn = row.createEl("button", {
+              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
+              type: "button",
+              attr: { "aria-pressed": String(habit.wateredToday) }
+            });
+            const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
+            setIcon(drop, "droplet");
+            waterBtn.createSpan({
+              text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
+            });
+            waterBtn.addEventListener("click", async () => {
+              try {
+                const watered = await waterHabit2(this.app, habit.file);
+                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not water habit.");
+              }
+            });
+          }
+        }
+      }
+    };
+    module2.exports = {
+      GardenView: GardenView2,
+      GARDEN_VIEW: GARDEN_VIEW2
     };
   }
 });

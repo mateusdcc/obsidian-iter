@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createMockApp } = require('./obsidian-mock');
-const { ensureStructure, createTree, createSubgoal, createHabit, waterHabit, updateHabitSchedule } = require('../src/storage');
+const { WE_PATH, ensureStructure, createTree, createSubgoal, createHabit, waterHabit, updateHabitSchedule, computeHabitScheduleMeta } = require('../src/storage');
 const {
   readGoalDocument,
   updateGoalMeta,
@@ -21,6 +21,7 @@ const {
   resolveDatasetEntries,
   resolveNumericSeries,
   formatDueStatus,
+  discoverHabits,
   discoverChildDatasets,
   resolveVirtualDataset,
   resolveWidgetDataset,
@@ -751,4 +752,120 @@ test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, m
   const regexRes = evaluatePipeline(app, regexMathFlow, treeDoc);
   // Note 0 was updated to 25 pages, Note 1 (Seneca) has 60 pages -> 2-point moving average is (25 + 60)/2 = 42.5
   assert.equal(regexRes.output.stat.value, 42.5);
+});
+
+test('habits automatically expose hidden schedule data for "Habits for Today" widgets on Trees and on the We Garden', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  // 2026-11-11 is a Wednesday (day 3)
+  const wedNow = new Date('2026-11-11T12:00:00Z');
+
+  const readingTree = await createTree(app.vault, { name: 'Reading', endless: true });
+  const gymTree = await createTree(app.vault, { name: 'Gym', endless: true });
+
+  // 1) Daily habit (due every day, including Wednesday)
+  const hPoems = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Poems', frequency: 'daily' });
+  // 2) Wednesday + Friday habit (due on Wednesday)
+  const hEssays = await createHabit(app.vault, {
+    treePath: 'Iter/Reading',
+    name: 'Read Philosophical Essays',
+    frequency: 'weekdays',
+    days: [3, 5],
+  });
+  // 3) Thursday-only habit (NOT due on Wednesday -> appears tomorrow 2026-11-12)
+  const hBench = await createHabit(app.vault, {
+    treePath: 'Iter/Gym',
+    name: 'Heavy Bench Session',
+    frequency: 'weekdays',
+    days: [4],
+  });
+
+  // Check readGoalDocument attaches automatic habitSchedule metadata
+  const benchDoc = readGoalDocument(app, hBench, wedNow);
+  assert.ok(benchDoc.habitSchedule);
+  assert.equal(benchDoc.habitSchedule.dueToday, false);
+  assert.equal(benchDoc.habitSchedule.appearDate, '2026-11-12');
+  assert.equal(benchDoc.habitSchedule.daysUntil, 1);
+  assert.equal(benchDoc.habitSchedule.status, 'upcoming');
+
+  const essaysDoc = readGoalDocument(app, hEssays, wedNow);
+  assert.equal(essaysDoc.habitSchedule.dueToday, true);
+  assert.equal(essaysDoc.habitSchedule.pendingToday, true);
+  assert.equal(essaysDoc.habitSchedule.appearDate, '2026-11-11');
+  assert.equal(essaysDoc.habitSchedule.daysUntil, 0);
+  assert.equal(essaysDoc.habitSchedule.status, 'due');
+
+  // Discover all habits across the entire Garden
+  const allGardenHabits = discoverHabits(app, 'Iter', wedNow);
+  assert.equal(allGardenHabits.length, 3);
+  const dueGardenHabits = allGardenHabits.filter(h => h.schedule.dueToday);
+  assert.equal(dueGardenHabits.length, 2);
+  assert.deepEqual(dueGardenHabits.map(h => h.label), ['Read Philosophical Essays', 'Read Poems']);
+
+  // Create "Habits for Today" widget on Reading tree (Simple mode relation: habits_today)
+  const treeTodayWidget = await addWidget(app, readingTree, {
+    title: 'Habits for Today',
+    type: 'note_navigator',
+    relation: { mode: 'query', childKinds: 'habits', dataFilter: 'habits_today', perChildAgg: 'all' },
+  });
+  const treeDoc = readGoalDocument(app, readingTree, wedNow);
+  const treeDs = resolveVirtualDataset(
+    app,
+    { id: treeTodayWidget.id, relation: treeTodayWidget.relation },
+    readingTree.path,
+    treeDoc.treePath,
+    '',
+    new Set(),
+    wedNow,
+  );
+  assert.equal(treeDs.isHabitSchedule, true);
+  assert.equal(treeDs.resolvedEntries.length, 2);
+
+  // Goal bar on habits_today automatically tracks watered / total due habits (0/2 -> 1/2 after watering)
+  let barBefore = computeGoalBar(app, treeDs, 'count', null, readingTree.path);
+  assert.equal(barBefore.current, 0);
+  assert.equal(barBefore.target, 2);
+  assert.equal(barBefore.rawPercent, 0);
+
+  await waterHabit(app, hPoems, wedNow);
+  const treeDsAfterWater = resolveVirtualDataset(
+    app,
+    { id: treeTodayWidget.id, relation: treeTodayWidget.relation },
+    readingTree.path,
+    treeDoc.treePath,
+    '',
+    new Set(),
+    wedNow,
+  );
+  let barAfter = computeGoalBar(app, treeDsAfterWater, 'count', null, readingTree.path);
+  assert.equal(barAfter.current, 1);
+  assert.equal(barAfter.target, 2);
+  assert.equal(barAfter.rawPercent, 50);
+
+  // Canvas Editor "habits_today" template and automatic appearDate filter on We Garden (Iter/_index/We.md)
+  const weFile = app.vault.getAbstractFileByPath(WE_PATH);
+  const weDoc = readGoalDocument(app, weFile, wedNow);
+  assert.equal(weDoc.kind, 'garden');
+  assert.equal(weDoc.treePath, 'Iter');
+
+  const tplFlow = buildPipelineTemplate('habits_today', weDoc);
+  const tplEval = evaluatePipeline(app, tplFlow, weDoc, wedNow);
+  assert.equal(tplEval.output.displayType, 'note_navigator');
+  assert.equal(tplEval.output.entries.length, 2);
+  assert.deepEqual(tplEval.output.entries.map(e => e.label), ['Read Philosophical Essays', 'Read Poems']);
+
+  // Also test default Source(datasetFilter: 'any') -> Filter(appearDate is_today) auto-includes habits!
+  const customAppearFlow = {
+    nodes: [
+      { id: 'n_src', type: 'source', config: { scope: 'tree_children', datasetFilter: 'any' } },
+      { id: 'n_flt', type: 'filter', config: { match: 'all', rules: [{ field: 'appearDate', op: 'is_today', value: '' }] } },
+      { id: 'n_out', type: 'output', config: { displayType: 'note_navigator' } },
+    ],
+    edges: [
+      { id: 'e1', from: 'n_src', to: 'n_flt' },
+      { id: 'e2', from: 'n_flt', to: 'n_out' },
+    ],
+  };
+  const customEval = evaluatePipeline(app, customAppearFlow, weDoc, wedNow);
+  assert.equal(customEval.output.entries.length, 2);
 });
