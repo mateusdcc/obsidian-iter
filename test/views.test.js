@@ -775,6 +775,22 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     flowModal.contentEl = createMockElement('div');
     flowModal.onOpen();
 
+    // Fresh modal starts with n_src -> n_out; clicking '+ Filter' splices Filter in-line (n_src -> Filter -> n_out)
+    assert.equal(flowModal.pipeline.nodes.length, 2);
+    const filterAddBtn = flowModal.contentEl.findAll(
+      el => el.className.split(/\s+/).includes('iter-flow-add-btn') && el.findAll(s => s.textContent === '+ Filter').length > 0,
+    )[0];
+    await fire(filterAddBtn, 'click');
+    assert.equal(flowModal.pipeline.nodes.length, 3);
+    assert.equal(flowModal.pipeline.edges.length, 2);
+    assert.ok(!flowModal.pipeline.edges.some(e => e.from === 'n_src' && e.to === 'n_out'));
+
+    // Editing Node label updates card title element directly without DOM selector errors
+    const labelIn = flowModal.inspectorEl.findAll(el => el.tagName === 'INPUT')[0];
+    labelIn.value = 'Page Filter';
+    await fire(labelIn, 'input');
+    assert.equal(flowModal.nodeTitleEls.get(flowModal.selectedNodeId).textContent, 'Page Filter');
+
     // Load 'filter_field' template (prefers 'pages' field)
     const tplSelect = flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-tpl-select'))[0];
     tplSelect.value = 'filter_field';

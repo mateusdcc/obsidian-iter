@@ -3756,6 +3756,15 @@ var require_pipeline = __commonJS({
         childTitles: [...childTitleSet].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }))
       };
     }
+    function lookupFieldValue(fields, key) {
+      if (!fields || typeof fields !== "object" || !key) return void 0;
+      if (Object.prototype.hasOwnProperty.call(fields, key)) return fields[key];
+      const lower = key.toLowerCase();
+      for (const [k, v] of Object.entries(fields)) {
+        if (k.toLowerCase() === lower) return v;
+      }
+      return void 0;
+    }
     function readItemField(item, field) {
       if (!field) return void 0;
       if (field === "datasetName") return item.datasetName;
@@ -3769,9 +3778,9 @@ var require_pipeline = __commonJS({
       if (field === "path") return item.path;
       if (field.startsWith("prop:")) {
         const k = field.slice(5).trim();
-        return item.fields?.[k];
+        return lookupFieldValue(item.fields, k);
       }
-      return item.fields?.[field];
+      return lookupFieldValue(item.fields, field);
     }
     function ruleMatchesItem(item, rule, now = /* @__PURE__ */ new Date()) {
       const rawField = typeof rule.field === "string" ? rule.field.trim() : "";
@@ -4404,6 +4413,84 @@ var require_pipeline = __commonJS({
           ]
         });
       }
+      if (templateId === "count_items") {
+        const src = createNode("source", {
+          id: "n_src",
+          config: { scope: defaultScope, datasetFilter: "any" }
+        });
+        const flt = createNode("filter", {
+          id: "n_flt",
+          config: {
+            match: "all",
+            rules: context?.datasetNames?.[0] ? [{ field: "datasetName", op: "contains", value: context.datasetNames[0] }] : []
+          }
+        });
+        const out = createNode("output", {
+          id: "n_out",
+          config: { displayType: "stat", agg: "count", unit: "entries" }
+        });
+        return autoLayoutPipeline({
+          version: 1,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          nodes: [src, flt, out],
+          edges: [
+            { id: "e_1", from: src.id, to: flt.id },
+            { id: "e_2", from: flt.id, to: out.id }
+          ]
+        });
+      }
+      if (templateId === "goal_progress") {
+        const src = createNode("source", {
+          id: "n_src",
+          config: { scope: defaultScope, datasetFilter: "any" }
+        });
+        const ext = createNode("extract", {
+          id: "n_ext",
+          config: { field: preferredField, fallbackToValue: true, dropMissing: true, unit: preferredField }
+        });
+        const out = createNode("output", {
+          id: "n_out",
+          config: { displayType: "goal_bar", mode: "sum", target: 100, unit: preferredField }
+        });
+        return autoLayoutPipeline({
+          version: 1,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          nodes: [src, ext, out],
+          edges: [
+            { id: "e_1", from: src.id, to: ext.id },
+            { id: "e_2", from: ext.id, to: out.id }
+          ]
+        });
+      }
+      if (templateId === "habit_waterings") {
+        const w = createNode("water_source", {
+          id: "n_wat",
+          config: { scope: doc?.kind === "habit" ? "this_habit" : "tree_habits", nameMatch: "" }
+        });
+        const grp = createNode("group", {
+          id: "n_grp",
+          config: { by: isTree ? "sourceTitle" : "month", agg: "sum" }
+        });
+        const out = createNode("output", {
+          id: "n_out",
+          config: { displayType: "chart", variant: "bar", unit: "waterings" }
+        });
+        return autoLayoutPipeline({
+          version: 1,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          nodes: [w, grp, out],
+          edges: [
+            { id: "e_1", from: w.id, to: grp.id },
+            { id: "e_2", from: grp.id, to: out.id }
+          ]
+        });
+      }
       return normalizePipeline(null, doc);
     }
     function buildPipelineFromSimpleConfig(config = {}, doc = null) {
@@ -4809,13 +4896,30 @@ var require_canvas_editor = __commonJS({
         this.inspectorEl = null;
         this.previewEl = null;
         this.statusEl = null;
+        this.titleInputEl = null;
+        this.lastEval = null;
         this.nodeEls = /* @__PURE__ */ new Map();
+        this.nodeTitleEls = /* @__PURE__ */ new Map();
+        this.nodeSummaryEls = /* @__PURE__ */ new Map();
         this.boundMove = null;
         this.boundUp = null;
         this.boundKey = null;
       }
+      applyTemplateRecipe(id, suggestedTitle = "") {
+        if (!id) return;
+        this.pipeline = buildPipelineTemplate(id, this.doc, this.context);
+        if (suggestedTitle && !this.title.trim()) {
+          this.title = suggestedTitle;
+          if (this.titleInputEl) this.titleInputEl.value = suggestedTitle;
+        }
+        this.selectedNodeId = this.pipeline.nodes[1]?.id || this.pipeline.nodes[0]?.id || null;
+        this.selectedEdgeId = null;
+        this.pendingFromNodeId = null;
+        this.refreshAll();
+      }
       onOpen() {
         this.modalEl?.addClass?.("iter-flow-modal");
+        this.containerEl?.addClass?.("iter-flow-modal-container");
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("iter-flow-shell");
@@ -4827,8 +4931,10 @@ var require_canvas_editor = __commonJS({
           cls: "iter-flow-title-input"
         });
         titleInput.value = this.title;
+        this.titleInputEl = titleInput;
         titleInput.addEventListener("input", () => {
           this.title = titleInput.value;
+          if (this.lastEval) this.refreshPreview(this.lastEval);
         });
         const palette = toolbar.createDiv({ cls: "iter-flow-palette" });
         for (const def of PIPELINE_NODE_TYPES) {
@@ -4844,7 +4950,10 @@ var require_canvas_editor = __commonJS({
         const tplSelect = toolsRight.createEl("select", { cls: "iter-flow-tpl-select" });
         tplSelect.createEl("option", { value: "", text: "Load template\u2026" });
         tplSelect.createEl("option", { value: "filter_field", text: "Filter by property (e.g. pages)" });
+        tplSelect.createEl("option", { value: "count_items", text: "Count entries / notes" });
         tplSelect.createEl("option", { value: "compare_children", text: "Compare children (Bar Chart)" });
+        tplSelect.createEl("option", { value: "goal_progress", text: "Goal Progress Bar" });
+        tplSelect.createEl("option", { value: "habit_waterings", text: "Habit waterings over time" });
         tplSelect.createEl("option", { value: "merge_branches", text: "Merge two branches" });
         tplSelect.createEl("option", { value: "filtered_notes", text: "Filtered Note Navigator" });
         tplSelect.createEl("option", { value: "blank", text: "Minimal (Source \u2192 Output)" });
@@ -4852,12 +4961,8 @@ var require_canvas_editor = __commonJS({
         tplSelect.addEventListener("change", () => {
           const id = tplSelect.value;
           if (!id) return;
-          this.pipeline = buildPipelineTemplate(id, this.doc, this.context);
-          this.selectedNodeId = this.pipeline.nodes[1]?.id || this.pipeline.nodes[0]?.id || null;
-          this.selectedEdgeId = null;
-          this.pendingFromNodeId = null;
           tplSelect.value = "";
-          this.refreshAll();
+          this.applyTemplateRecipe(id);
         });
         const layoutBtn = toolsRight.createEl("button", {
           text: "Auto-layout",
@@ -4900,6 +5005,25 @@ var require_canvas_editor = __commonJS({
             saveBtn.disabled = false;
           }
         });
+        const preferredField = this.context.fieldNames.find((k) => k.toLowerCase().includes("page")) || this.context.fieldNames.find((k) => k.toLowerCase().includes("chapter")) || this.context.fieldNames[0] || "pages";
+        const recipesBar = contentEl.createDiv({ cls: "iter-flow-recipes-bar" });
+        recipesBar.createSpan({ text: "Quick recipes:", cls: "iter-flow-recipes-label" });
+        const recipes = [
+          { id: "filter_field", label: `Sum "${preferredField}"`, title: `Total ${preferredField}` },
+          { id: "count_items", label: "Count entries", title: "Total entries" },
+          { id: "compare_children", label: "Compare children", title: "Breakdown by child" },
+          { id: "goal_progress", label: "Goal progress bar", title: `${preferredField} progress` },
+          { id: "habit_waterings", label: "Habit waterings", title: "Habit waterings" },
+          { id: "filtered_notes", label: "This month notes", title: "Recent notes" }
+        ];
+        for (const rec of recipes) {
+          const pill = recipesBar.createEl("button", {
+            text: rec.label,
+            type: "button",
+            cls: "iter-flow-recipe-pill"
+          });
+          pill.addEventListener("click", () => this.applyTemplateRecipe(rec.id, rec.title));
+        }
         const body = contentEl.createDiv({ cls: "iter-flow-body" });
         const canvasCol = body.createDiv({ cls: "iter-flow-canvas-col" });
         const statusBar = canvasCol.createDiv({ cls: "iter-flow-canvas-bar" });
@@ -4938,8 +5062,19 @@ var require_canvas_editor = __commonJS({
             originPanX: this.pipeline.panX,
             originPanY: this.pipeline.panY
           };
-          this.refreshInspector();
-          this.renderWires(evaluatePipeline(this.app, this.pipeline, this.doc));
+          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+          this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+        });
+        this.viewportEl.addEventListener("wheel", (event) => {
+          event.preventDefault?.();
+          if (event.ctrlKey || event.metaKey) {
+            const delta = event.deltaY < 0 ? 0.08 : -0.08;
+            this.setZoom((this.pipeline.zoom || 1) + delta);
+          } else {
+            this.pipeline.panX = Math.round((this.pipeline.panX || 0) - (event.deltaX || 0));
+            this.pipeline.panY = Math.round((this.pipeline.panY || 0) - (event.deltaY || 0));
+            this.applyWorldTransform();
+          }
         });
         const sideCol = body.createDiv({ cls: "iter-flow-side" });
         this.inspectorEl = sideCol.createDiv({ cls: "iter-flow-inspector" });
@@ -4963,6 +5098,7 @@ var require_canvas_editor = __commonJS({
           if (this.boundKey) window.removeEventListener("keydown", this.boundKey);
         }
         this.modalEl?.removeClass?.("iter-flow-modal");
+        this.containerEl?.removeClass?.("iter-flow-modal-container");
         this.contentEl.empty();
       }
       setZoom(next) {
@@ -4995,7 +5131,7 @@ var require_canvas_editor = __commonJS({
             card.style.left = `${node.x}px`;
             card.style.top = `${node.y}px`;
           }
-          this.renderWires();
+          this.renderWires(this.lastEval);
           return;
         }
         if (this.dragState.kind === "wire") {
@@ -5005,7 +5141,7 @@ var require_canvas_editor = __commonJS({
           if (rect) {
             this.dragState.cursorX = (event.clientX - rect.left - this.pipeline.panX) / zoom;
             this.dragState.cursorY = (event.clientY - rect.top - this.pipeline.panY) / zoom;
-            this.renderWires();
+            this.renderWires(this.lastEval);
           }
         }
       }
@@ -5014,10 +5150,21 @@ var require_canvas_editor = __commonJS({
         const prev = this.dragState;
         this.dragState = null;
         if (prev.kind === "wire" && prev.dragged) {
-          this.renderWires();
+          this.renderWires(this.lastEval);
         }
       }
       handleKeyDown(event) {
+        if (event.key === "Escape") {
+          if (this.pendingFromNodeId || this.dragState || this.selectedEdgeId) {
+            this.pendingFromNodeId = null;
+            this.dragState = null;
+            this.selectedEdgeId = null;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            this.refreshAll();
+          }
+          return;
+        }
         if (event.key !== "Delete" && event.key !== "Backspace") return;
         const tag = event.target?.tagName?.toUpperCase?.() || "";
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -5040,9 +5187,44 @@ var require_canvas_editor = __commonJS({
         const initialConfig = type === "source" ? { scope: this.doc?.kind === "tree" ? "tree_children" : "this_goal" } : type === "water_source" ? { scope: this.doc?.kind === "habit" ? "this_habit" : "tree_habits" } : {};
         const node = createNode(type, { x, y, config: initialConfig });
         this.pipeline.nodes.push(node);
-        if (anchor && getNodeDef(anchor.type)?.hasOut && def.hasIn) {
+        const anchorDef = anchor ? getNodeDef(anchor.type) : null;
+        if (def.hasIn && def.hasOut) {
+          if (anchor && anchorDef && !anchorDef.hasOut) {
+            const inEdges = this.pipeline.edges.filter((e) => e.to === anchor.id);
+            if (inEdges.length > 0) {
+              const prevEdge = inEdges[inEdges.length - 1];
+              this.pipeline.edges = this.pipeline.edges.filter((e) => e.id !== prevEdge.id);
+              this.connectNodes(prevEdge.from, node.id);
+              this.connectNodes(node.id, anchor.id);
+            } else {
+              this.connectNodes(node.id, anchor.id);
+            }
+          } else if (anchor && anchorDef?.hasOut) {
+            const outEdges = this.pipeline.edges.filter((e) => e.from === anchor.id);
+            if (outEdges.length === 1) {
+              const targetId = outEdges[0].to;
+              this.pipeline.edges = this.pipeline.edges.filter((e) => e.id !== outEdges[0].id);
+              this.connectNodes(anchor.id, node.id);
+              this.connectNodes(node.id, targetId);
+            } else {
+              this.connectNodes(anchor.id, node.id);
+              const lonelyOut = this.pipeline.nodes.find(
+                (n) => n.type === "output" && !this.pipeline.edges.some((e) => e.to === n.id)
+              );
+              if (lonelyOut) this.connectNodes(node.id, lonelyOut.id);
+            }
+          }
+        } else if (!def.hasIn && def.hasOut) {
+          if (anchor && anchorDef?.hasIn) {
+            this.connectNodes(node.id, anchor.id);
+          } else {
+            const mergeOrOut = this.pipeline.nodes.find((n) => n.type === "merge") || this.pipeline.nodes.find((n) => n.type === "output");
+            if (mergeOrOut) this.connectNodes(node.id, mergeOrOut.id);
+          }
+        } else if (def.hasIn && !def.hasOut && anchor && anchorDef?.hasOut) {
           this.connectNodes(anchor.id, node.id);
         }
+        this.pipeline = autoLayoutPipeline(this.pipeline);
         this.selectedNodeId = node.id;
         this.selectedEdgeId = null;
         this.pendingFromNodeId = null;
@@ -5052,10 +5234,24 @@ var require_canvas_editor = __commonJS({
         if (!fromId || !toId || fromId === toId) return;
         const exists = this.pipeline.edges.some((e) => e.from === fromId && e.to === toId);
         if (exists) return;
-        const fromDef = getNodeDef(this.pipeline.nodes.find((n) => n.id === fromId)?.type);
-        const toDef = getNodeDef(this.pipeline.nodes.find((n) => n.id === toId)?.type);
+        const fromNode = this.pipeline.nodes.find((n) => n.id === fromId);
+        const toNode = this.pipeline.nodes.find((n) => n.id === toId);
+        const fromDef = getNodeDef(fromNode?.type);
+        const toDef = getNodeDef(toNode?.type);
         if (!fromDef?.hasOut || !toDef?.hasIn) return;
-        this.pipeline.edges.push({ id: `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`, from: fromId, to: toId });
+        if (toNode.type !== "merge") {
+          const upstreamParents = new Set(this.pipeline.edges.filter((e) => e.to === fromId).map((e) => e.from));
+          if (upstreamParents.size > 0) {
+            this.pipeline.edges = this.pipeline.edges.filter(
+              (e) => !(e.to === toId && upstreamParents.has(e.from))
+            );
+          }
+        }
+        this.pipeline.edges.push({
+          id: `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+          from: fromId,
+          to: toId
+        });
       }
       removeEdge(edgeId) {
         this.pipeline.edges = this.pipeline.edges.filter((e) => e.id !== edgeId);
@@ -5067,8 +5263,13 @@ var require_canvas_editor = __commonJS({
           new Notice2("Keep at least one node in the flow.");
           return;
         }
+        const inParents = this.pipeline.edges.filter((e) => e.to === nodeId).map((e) => e.from);
+        const outTargets = this.pipeline.edges.filter((e) => e.from === nodeId).map((e) => e.to);
         this.pipeline.nodes = this.pipeline.nodes.filter((n) => n.id !== nodeId);
         this.pipeline.edges = this.pipeline.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
+        if (inParents.length === 1 && outTargets.length === 1) {
+          this.connectNodes(inParents[0], outTargets[0]);
+        }
         if (this.selectedNodeId === nodeId) {
           this.selectedNodeId = this.pipeline.nodes[this.pipeline.nodes.length - 1]?.id || null;
         }
@@ -5077,24 +5278,30 @@ var require_canvas_editor = __commonJS({
       }
       refreshAll() {
         const evalResult = evaluatePipeline(this.app, this.pipeline, this.doc);
+        this.lastEval = evalResult;
         this.refreshCanvas(evalResult);
         this.refreshInspector(evalResult);
         this.refreshPreview(evalResult);
       }
       refreshCanvas(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+        this.lastEval = evalResult;
         if (!this.worldEl) return;
         this.applyWorldTransform();
         if (this.statusEl) {
           const out = evalResult.output;
           let summary = "";
+          if (this.pendingFromNodeId) {
+            const fromNode = this.pipeline.nodes.find((n) => n.id === this.pendingFromNodeId);
+            summary = `Connecting from "${fromNode?.label || "Node"}" \u2014 click a target node or input port \u25CF (Esc to cancel) \xB7 `;
+          }
           if (out.displayType === "stat") {
-            summary = `Live: ${out.entries.length} items \u2192 ${out.stat.display}${out.stat.unit ? ` ${out.stat.unit}` : ""}`;
+            summary += `Live: ${out.entries.length} items \u2192 ${out.stat.display}${out.stat.unit ? ` ${out.stat.unit}` : ""}`;
           } else if (out.displayType === "goal_bar") {
-            summary = `Live: ${out.bar.currentDisplay} / ${out.bar.targetDisplay} (${out.bar.rawPercent}%)`;
+            summary += `Live: ${out.bar.currentDisplay} / ${out.bar.targetDisplay} (${out.bar.rawPercent}%)`;
           } else if (out.displayType === "chart") {
-            summary = `Live: ${out.points.length} plotted points`;
+            summary += `Live: ${out.points.length} plotted points`;
           } else {
-            summary = `Live: ${out.entries.length} matching notes`;
+            summary += `Live: ${out.entries.length} matching notes`;
           }
           this.statusEl.textContent = summary;
         }
@@ -5104,6 +5311,8 @@ var require_canvas_editor = __commonJS({
           if (idx !== void 0 && idx >= 0) this.worldEl.children.splice(idx, 1);
         }
         this.nodeEls.clear();
+        this.nodeTitleEls.clear();
+        this.nodeSummaryEls.clear();
         for (const node of this.pipeline.nodes) {
           this.renderNodeCard(node, evalResult);
         }
@@ -5114,21 +5323,41 @@ var require_canvas_editor = __commonJS({
         if (!def) return;
         const isSelected = this.selectedNodeId === node.id && !this.selectedEdgeId;
         const isPendingFrom = this.pendingFromNodeId === node.id;
+        const isConnectTarget = Boolean(this.pendingFromNodeId && this.pendingFromNodeId !== node.id && def.hasIn);
         const count = evalResult.nodeResults.get(node.id)?.count ?? 0;
         const card = this.worldEl.createDiv({
-          cls: `iter-flow-node cat-${def.category}${isSelected ? " is-selected" : ""}${isPendingFrom ? " is-connecting" : ""}`
+          cls: `iter-flow-node cat-${def.category}${isSelected ? " is-selected" : ""}${isPendingFrom ? " is-connecting" : ""}${isConnectTarget ? " is-connect-target" : ""}`
         });
         card.style.left = `${node.x}px`;
         card.style.top = `${node.y}px`;
         this.nodeEls.set(node.id, card);
         const head = card.createDiv({ cls: "iter-flow-node-head" });
         head.createSpan({ cls: `iter-flow-cat-dot cat-${def.category}` });
-        head.createSpan({ text: node.label || def.label, cls: "iter-flow-node-title" });
+        const titleSpan = head.createSpan({ text: node.label || def.label, cls: "iter-flow-node-title" });
+        this.nodeTitleEls.set(node.id, titleSpan);
         head.createSpan({ text: String(count), cls: "iter-flow-count-pill" });
+        if (this.pipeline.nodes.length > 1) {
+          const delNodeBtn = head.createEl("button", {
+            text: "\xD7",
+            type: "button",
+            cls: "iter-flow-node-del",
+            attr: { title: "Delete node", "aria-label": "Delete node" }
+          });
+          delNodeBtn.addEventListener("mousedown", (event) => event.stopPropagation?.());
+          delNodeBtn.addEventListener("click", (event) => {
+            event.stopPropagation?.();
+            this.removeNode(node.id);
+          });
+        }
         const body = card.createDiv({ cls: "iter-flow-node-body" });
-        body.createSpan({ text: formatPipelineNodeSummary(node), cls: "iter-flow-node-summary" });
+        const summarySpan = body.createSpan({ text: formatPipelineNodeSummary(node), cls: "iter-flow-node-summary" });
+        this.nodeSummaryEls.set(node.id, summarySpan);
         card.addEventListener("mousedown", (event) => {
-          if (event.target?.className?.includes?.("iter-flow-port")) return;
+          const targetCls = typeof event.target?.className === "string" ? event.target.className : "";
+          if (targetCls.includes("iter-flow-port") || targetCls.includes("iter-flow-node-del")) return;
+          if (this.pendingFromNodeId && this.pendingFromNodeId !== node.id && def.hasIn) {
+            return;
+          }
           this.selectedNodeId = node.id;
           this.selectedEdgeId = null;
           this.dragState = {
@@ -5142,7 +5371,26 @@ var require_canvas_editor = __commonJS({
           for (const [id, el] of this.nodeEls.entries()) {
             el.toggleClass?.("is-selected", id === node.id);
           }
-          this.refreshInspector(evaluatePipeline(this.app, this.pipeline, this.doc));
+          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+        });
+        card.addEventListener("mouseup", (event) => {
+          if (this.dragState?.kind === "wire" && this.dragState.fromNodeId !== node.id && def.hasIn) {
+            event.stopPropagation?.();
+            this.connectNodes(this.dragState.fromNodeId, node.id);
+            this.dragState = null;
+            this.pendingFromNodeId = null;
+            this.refreshAll();
+          }
+        });
+        card.addEventListener("click", (event) => {
+          const targetCls = typeof event.target?.className === "string" ? event.target.className : "";
+          if (targetCls.includes("iter-flow-port") || targetCls.includes("iter-flow-node-del")) return;
+          if (this.pendingFromNodeId && this.pendingFromNodeId !== node.id && def.hasIn) {
+            event.stopPropagation?.();
+            this.connectNodes(this.pendingFromNodeId, node.id);
+            this.pendingFromNodeId = null;
+            this.refreshAll();
+          }
         });
         if (def.hasIn) {
           const inPort = card.createEl("button", {
@@ -5189,11 +5437,11 @@ var require_canvas_editor = __commonJS({
           outPort.addEventListener("click", (event) => {
             event.stopPropagation?.();
             this.pendingFromNodeId = this.pendingFromNodeId === node.id ? null : node.id;
-            this.refreshCanvas();
+            this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
           });
         }
       }
-      renderWires(evalResult = null) {
+      renderWires(evalResult = this.lastEval) {
         if (!this.svgEl) return;
         if (typeof this.svgEl.empty === "function") {
           this.svgEl.empty();
@@ -5290,12 +5538,12 @@ var require_canvas_editor = __commonJS({
         labelInput.value = node.label || "";
         labelInput.addEventListener("input", () => {
           node.label = labelInput.value;
-          const cardEl = this.nodeEls.get(node.id);
-          const titleEl = cardEl?.findAll?.((e) => e.className?.includes?.("iter-flow-node-title"))?.[0];
+          const titleEl = this.nodeTitleEls.get(node.id);
           if (titleEl) titleEl.textContent = node.label || def?.label || "";
         });
         const onCfgChange = (structural = false) => {
           const nextEval = evaluatePipeline(this.app, this.pipeline, this.doc);
+          this.lastEval = nextEval;
           if (structural) this.refreshInspector(nextEval);
           this.refreshCanvas(nextEval);
           this.refreshPreview(nextEval);
@@ -5303,6 +5551,48 @@ var require_canvas_editor = __commonJS({
         };
         const formBody = host.createDiv({ cls: "iter-flow-ins-form" });
         this.renderNodeConfigFields(formBody, node, onCfgChange);
+        const connSection = host.createDiv({ cls: "iter-flow-conn-box" });
+        connSection.createEl("div", { text: "Connections", cls: "iter-micro-label" });
+        const inEdges = this.pipeline.edges.filter((e) => e.to === node.id);
+        const outEdges = this.pipeline.edges.filter((e) => e.from === node.id);
+        if (!inEdges.length && !outEdges.length) {
+          connSection.createEl("p", { text: "Not wired yet.", cls: "iter-section-hint" });
+        } else {
+          const connList = connSection.createDiv({ cls: "iter-flow-conn-list" });
+          for (const edge of inEdges) {
+            const fromN = this.pipeline.nodes.find((n) => n.id === edge.from);
+            const pill = connList.createDiv({ cls: "iter-flow-conn-pill" });
+            pill.createSpan({ text: `\u2190 ${fromN?.label || edge.from}` });
+            const rm = pill.createEl("button", { text: "\xD7", type: "button", cls: "iter-flow-conn-rm" });
+            rm.addEventListener("click", () => this.removeEdge(edge.id));
+          }
+          for (const edge of outEdges) {
+            const toN = this.pipeline.nodes.find((n) => n.id === edge.to);
+            const pill = connList.createDiv({ cls: "iter-flow-conn-pill" });
+            pill.createSpan({ text: `\u2192 ${toN?.label || edge.to}` });
+            const rm = pill.createEl("button", { text: "\xD7", type: "button", cls: "iter-flow-conn-rm" });
+            rm.addEventListener("click", () => this.removeEdge(edge.id));
+          }
+        }
+        if (def?.hasOut) {
+          const candidates = this.pipeline.nodes.filter(
+            (target) => target.id !== node.id && getNodeDef(target.type)?.hasIn && !this.pipeline.edges.some((e) => e.from === node.id && e.to === target.id)
+          );
+          if (candidates.length) {
+            const quickRow = connSection.createDiv({ cls: "iter-chip-suggestions" });
+            for (const cand of candidates) {
+              const btn = quickRow.createEl("button", {
+                text: `Connect \u2192 ${cand.label || cand.type}`,
+                type: "button",
+                cls: "iter-suggest-chip"
+              });
+              btn.addEventListener("click", () => {
+                this.connectNodes(node.id, cand.id);
+                this.refreshAll();
+              });
+            }
+          }
+        }
         const peekSlot = host.createDiv({ cls: "iter-flow-peek" });
         this.renderSamplePeek(peekSlot, node, evalResult);
       }

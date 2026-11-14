@@ -395,6 +395,16 @@ function collectCanvasContext(app, doc) {
   };
 }
 
+function lookupFieldValue(fields, key) {
+  if (!fields || typeof fields !== 'object' || !key) return undefined;
+  if (Object.prototype.hasOwnProperty.call(fields, key)) return fields[key];
+  const lower = key.toLowerCase();
+  for (const [k, v] of Object.entries(fields)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
+}
+
 function readItemField(item, field) {
   if (!field) return undefined;
   if (field === 'datasetName') return item.datasetName;
@@ -408,9 +418,9 @@ function readItemField(item, field) {
   if (field === 'path') return item.path;
   if (field.startsWith('prop:')) {
     const k = field.slice(5).trim();
-    return item.fields?.[k];
+    return lookupFieldValue(item.fields, k);
   }
-  return item.fields?.[field];
+  return lookupFieldValue(item.fields, field);
 }
 
 function ruleMatchesItem(item, rule, now = new Date()) {
@@ -1119,6 +1129,89 @@ function buildPipelineTemplate(templateId, doc, context = null) {
       edges: [
         { id: 'e_1', from: src.id, to: flt.id },
         { id: 'e_2', from: flt.id, to: out.id },
+      ],
+    });
+  }
+
+  if (templateId === 'count_items') {
+    const src = createNode('source', {
+      id: 'n_src',
+      config: { scope: defaultScope, datasetFilter: 'any' },
+    });
+    const flt = createNode('filter', {
+      id: 'n_flt',
+      config: {
+        match: 'all',
+        rules: context?.datasetNames?.[0]
+          ? [{ field: 'datasetName', op: 'contains', value: context.datasetNames[0] }]
+          : [],
+      },
+    });
+    const out = createNode('output', {
+      id: 'n_out',
+      config: { displayType: 'stat', agg: 'count', unit: 'entries' },
+    });
+    return autoLayoutPipeline({
+      version: 1,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      nodes: [src, flt, out],
+      edges: [
+        { id: 'e_1', from: src.id, to: flt.id },
+        { id: 'e_2', from: flt.id, to: out.id },
+      ],
+    });
+  }
+
+  if (templateId === 'goal_progress') {
+    const src = createNode('source', {
+      id: 'n_src',
+      config: { scope: defaultScope, datasetFilter: 'any' },
+    });
+    const ext = createNode('extract', {
+      id: 'n_ext',
+      config: { field: preferredField, fallbackToValue: true, dropMissing: true, unit: preferredField },
+    });
+    const out = createNode('output', {
+      id: 'n_out',
+      config: { displayType: 'goal_bar', mode: 'sum', target: 100, unit: preferredField },
+    });
+    return autoLayoutPipeline({
+      version: 1,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      nodes: [src, ext, out],
+      edges: [
+        { id: 'e_1', from: src.id, to: ext.id },
+        { id: 'e_2', from: ext.id, to: out.id },
+      ],
+    });
+  }
+
+  if (templateId === 'habit_waterings') {
+    const w = createNode('water_source', {
+      id: 'n_wat',
+      config: { scope: doc?.kind === 'habit' ? 'this_habit' : 'tree_habits', nameMatch: '' },
+    });
+    const grp = createNode('group', {
+      id: 'n_grp',
+      config: { by: isTree ? 'sourceTitle' : 'month', agg: 'sum' },
+    });
+    const out = createNode('output', {
+      id: 'n_out',
+      config: { displayType: 'chart', variant: 'bar', unit: 'waterings' },
+    });
+    return autoLayoutPipeline({
+      version: 1,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      nodes: [w, grp, out],
+      edges: [
+        { id: 'e_1', from: w.id, to: grp.id },
+        { id: 'e_2', from: grp.id, to: out.id },
       ],
     });
   }
