@@ -283,6 +283,14 @@ async function updateHabitSchedule(app, file, { frequency, days = [] }) {
     frontmatter.frequency = freq;
     frontmatter.days = cleanDays;
   });
+  if (typeof app.vault?.read === 'function' && typeof app.vault?.modify === 'function') {
+    const raw = await app.vault.read(file);
+    const nextCadence = `Cadence: ${formatCadenceLabel(freq, cleanDays)}`;
+    if (/^Cadence:\s*.*$/m.test(raw)) {
+      const updated = raw.replace(/^Cadence:\s*.*$/m, nextCadence);
+      if (updated !== raw) await app.vault.modify(file, updated);
+    }
+  }
   return { frequency: freq, days: cleanDays };
 }
 

@@ -1,13 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createMockApp } = require('./obsidian-mock');
-const { ensureStructure, createTree, createSubgoal, createHabit, waterHabit } = require('../src/storage');
+const { ensureStructure, createTree, createSubgoal, createHabit, waterHabit, updateHabitSchedule } = require('../src/storage');
 const {
   readGoalDocument,
   updateGoalMeta,
   addDataset,
   updateDataset,
   addDatasetEntry,
+  updateDatasetEntry,
   removeDatasetEntry,
   addWidget,
   updateWidget,
@@ -688,4 +689,18 @@ test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, m
   assert.equal(updatedEssayDs.name, 'Essay Chapter Analyses');
   assert.deepEqual(updatedEssayDs.metricKeys, ['chapters', 'pages', 'topic']);
   assert.equal(updatedEssayDs.entries.length, 2);
+
+  // updateDatasetEntry edits an existing entry in place
+  const editedEntry = await updateDatasetEntry(app, hEssays, essayNotes.id, 0, {
+    path: 'Notes/Eros-Ch1.md',
+    date: '2026-04-03',
+    props: { chapters: 2, pages: 25, topic: 'melancholy' },
+  });
+  assert.equal(editedEntry.props.chapters, 2);
+  assert.equal(editedEntry.props.pages, 25);
+
+  // updateHabitSchedule updates both frontmatter and the Markdown body Cadence line
+  await updateHabitSchedule(app, hEssays, { frequency: 'weekdays', days: [1, 3, 5] });
+  const habitMd = await app.vault.read(hEssays);
+  assert.ok(habitMd.includes('Cadence: Mon, Wed, Fri'), 'Markdown body Cadence line should stay synced');
 });

@@ -882,25 +882,33 @@ class NotePickerModal extends FuzzySuggestModal {
 }
 
 class NoteTimeMetaModal extends Modal {
-  constructor(app, { noteFile, showDate = true, metricKey = 'score', metricKeys = null, onSubmit }) {
+  constructor(app, { noteFile = null, path = '', showDate = true, metricKey = 'score', metricKeys = null, initialEntry = null, syncToNote = false, onSubmit }) {
     super(app);
     this.noteFile = noteFile;
+    this.notePath = noteFile?.path || path || initialEntry?.path || '';
     this.showDate = Boolean(showDate);
     const resolvedKeys = Array.isArray(metricKeys)
       ? metricKeys.filter(k => typeof k === 'string' && k.trim()).map(k => k.trim())
       : (typeof metricKey === 'string' && metricKey.trim() ? [metricKey.trim()] : []);
     this.metricKeys = resolvedKeys;
+    this.initialEntry = initialEntry;
+    this.syncToNote = Boolean(syncToNote && noteFile);
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
 
   onOpen() {
+    const isEdit = Boolean(this.initialEntry);
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('iter-modal');
-    contentEl.createEl('h2', { text: `Add "${stripMd(this.noteFile.name)}"`, cls: 'iter-modal-title' });
+    const noteTitle = this.noteFile ? stripMd(this.noteFile.name) : stripMd(this.notePath.split('/').pop());
+    contentEl.createEl('h2', {
+      text: `${isEdit ? 'Edit' : 'Add'} "${noteTitle}"`,
+      cls: 'iter-modal-title',
+    });
 
-    const fm = this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter ?? null;
+    const fm = (this.noteFile && this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter) ?? null;
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
     let dateInput = null;
 
@@ -908,7 +916,7 @@ class NoteTimeMetaModal extends Modal {
       const dateField = form.createDiv({ cls: 'iter-modal-field' });
       dateField.createEl('label', { text: 'Date', cls: 'iter-modal-label' });
       dateInput = dateField.createEl('input', { type: 'date', cls: 'iter-modal-input' });
-      dateInput.value = toDateKey();
+      dateInput.value = this.initialEntry?.date || toDateKey();
       dateInput.required = true;
     }
 
@@ -927,14 +935,43 @@ class NoteTimeMetaModal extends Modal {
           placeholder,
           cls: 'iter-modal-input',
         });
+        const initProp = this.initialEntry?.props?.[key]
+          ?? (key === this.metricKeys[0] && this.initialEntry?.value !== undefined && this.initialEntry?.value !== null
+            ? this.initialEntry.value
+            : undefined);
+        if (initProp !== undefined && initProp !== null) {
+          input.value = String(initProp);
+        }
         propInputs.set(key, input);
       }
+    }
+
+    let syncToggleBtn = null;
+    if (this.metricKeys.length && this.noteFile) {
+      syncToggleBtn = form.createEl('button', {
+        text: this.syncToNote
+          ? '✓ Syncing entered values into note YAML frontmatter'
+          : 'Write entered values to note YAML frontmatter (optional)',
+        type: 'button',
+        cls: `iter-btn-ghost iter-sync-fm-btn${this.syncToNote ? ' is-active' : ''}`,
+      });
+      syncToggleBtn.addEventListener('click', () => {
+        this.syncToNote = !this.syncToNote;
+        syncToggleBtn.toggleClass('is-active', this.syncToNote);
+        syncToggleBtn.textContent = this.syncToNote
+          ? '✓ Syncing entered values into note YAML frontmatter'
+          : 'Write entered values to note YAML frontmatter (optional)';
+      });
     }
 
     const actions = form.createDiv({ cls: 'iter-modal-actions' });
     const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
     cancel.addEventListener('click', () => this.close());
-    const submit = actions.createEl('button', { text: 'Add note', type: 'submit', cls: 'mod-cta' });
+    const submit = actions.createEl('button', {
+      text: isEdit ? 'Save changes' : 'Add note',
+      type: 'submit',
+      cls: 'mod-cta',
+    });
 
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -951,12 +988,19 @@ class NoteTimeMetaModal extends Modal {
           props[key] = num !== null ? num : raw;
           hasProps = true;
         }
+        if (this.syncToNote && hasProps && this.noteFile && typeof this.app?.fileManager?.processFrontMatter === 'function') {
+          await this.app.fileManager.processFrontMatter(this.noteFile, noteFm => {
+            for (const [k, v] of Object.entries(props)) {
+              noteFm[k] = v;
+            }
+          });
+        }
         const primaryKey = this.metricKeys[0] || '';
         const primaryVal = primaryKey && props[primaryKey] !== undefined
           ? toFiniteNumber(props[primaryKey])
           : null;
 
-        const payload = { path: this.noteFile.path };
+        const payload = { path: this.notePath };
         if (this.showDate && dateInput) payload.date = dateInput.value;
         if (primaryVal !== null) payload.value = primaryVal;
         if (hasProps) payload.props = props;
@@ -980,9 +1024,82 @@ class NoteTimeMetaModal extends Modal {
   }
 }
 
+class EditEntryModal extends Modal {
+  constructor(app, { dataset, entry, onSubmit }) {
+    super(app);
+    this.dataset = dataset;
+    this.entry = entry;
+    this.onSubmit = onSubmit;
+    this.submitting = false;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('iter-modal');
+    contentEl.createEl('h2', { text: `Edit entry in "${this.dataset.name}"`, cls: 'iter-modal-title' });
+
+    const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
+    const isNumber = this.dataset.type === 'number_time';
+
+    const valField = form.createDiv({ cls: 'iter-modal-field' });
+    valField.createEl('label', {
+      text: isNumber ? (this.dataset.unit ? `Value (${this.dataset.unit})` : 'Value') : 'Text',
+      cls: 'iter-modal-label',
+    });
+    const valInput = valField.createEl('input', {
+      type: isNumber ? 'number' : 'text',
+      step: isNumber ? 'any' : undefined,
+      cls: 'iter-modal-input',
+    });
+    valInput.required = true;
+    valInput.value = String(this.entry?.value ?? this.entry?.label ?? '');
+
+    let dateInput = null;
+    if (isNumber || this.entry?.date) {
+      const dateField = form.createDiv({ cls: 'iter-modal-field' });
+      dateField.createEl('label', { text: 'Date', cls: 'iter-modal-label' });
+      dateInput = dateField.createEl('input', { type: 'date', cls: 'iter-modal-input' });
+      dateInput.value = this.entry?.date || toDateKey();
+      if (isNumber) dateInput.required = true;
+    }
+
+    const actions = form.createDiv({ cls: 'iter-modal-actions' });
+    const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
+    cancel.addEventListener('click', () => this.close());
+    const submit = actions.createEl('button', { text: 'Save changes', type: 'submit', cls: 'mod-cta' });
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (this.submitting) return;
+      this.submitting = true;
+      submit.disabled = true;
+      try {
+        const payload = isNumber
+          ? { value: Number(valInput.value), date: dateInput?.value || toDateKey() }
+          : (dateInput?.value ? { value: valInput.value, date: dateInput.value } : { value: valInput.value });
+        await this.onSubmit(payload);
+        this.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error));
+      } finally {
+        this.submitting = false;
+        submit.disabled = false;
+      }
+    });
+
+    valInput.focus();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 module.exports = {
   AddDatasetModal,
   AddWidgetModal,
   NotePickerModal,
   NoteTimeMetaModal,
+  EditEntryModal,
 };

@@ -163,6 +163,15 @@ function createMockApp() {
     getMarkdownFiles() {
       return Array.from(entries.values()).filter(item => !Array.isArray(item.children) && item.extension === 'md');
     },
+    async read(file) {
+      return file?.content ?? '';
+    },
+    async cachedRead(file) {
+      return file?.content ?? '';
+    },
+    async modify(file, content) {
+      if (file) file.content = content;
+    },
     async delete(entry, force = false) {
       if (!entry || !entries.has(entry.path)) return;
       if (Array.isArray(entry.children) && entry.children.length > 0 && !force) {

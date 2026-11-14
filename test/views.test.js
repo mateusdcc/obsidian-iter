@@ -7,7 +7,7 @@ const { IterPanelView } = require('../src/panel-view');
 const { GardenView } = require('../src/garden-view');
 const { GoalView } = require('../src/goal-view');
 const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('../src/modals');
-const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal } = require('../src/goal-modals');
+const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal, EditEntryModal } = require('../src/goal-modals');
 const { WorkflowEditorModal } = require('../src/canvas-editor');
 const { renderSchedulePicker } = require('../src/schedule-picker');
 const {
@@ -862,6 +862,51 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     app.lastModal.contentEl = createMockElement('div');
     app.lastModal.onOpen();
     assert.equal(app.lastModal.pipeline.nodes.length, 5);
+
+    // f) NoteTimeMetaModal with syncToNote: true writes entered properties into the target note's YAML frontmatter
+    const noteFile = app.vault.getAbstractFileByPath('Notes/Descartes.md');
+    let syncedEntry = null;
+    const syncModal = new NoteTimeMetaModal(app, {
+      noteFile,
+      showDate: false,
+      metricKeys: ['chapters', 'pages'],
+      initialEntry: { path: noteFile.path, props: { chapters: 4, pages: 55 } },
+      syncToNote: true,
+      onSubmit: entry => {
+        syncedEntry = entry;
+      },
+    });
+    syncModal.contentEl = createMockElement('div');
+    syncModal.onOpen();
+    const syncInputs = syncModal.contentEl.findAll(el => el.tagName === 'INPUT');
+    assert.equal(syncInputs[0].value, '4');
+    assert.equal(syncInputs[1].value, '55');
+    syncInputs[0].value = '6';
+    syncInputs[1].value = '80';
+    await fire(syncModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.equal(syncedEntry.props.chapters, 6);
+    assert.equal(syncedEntry.props.pages, 80);
+    const updatedNoteCache = app.metadataCache.getFileCache(noteFile);
+    assert.equal(updatedNoteCache.frontmatter.chapters, 6);
+    assert.equal(updatedNoteCache.frontmatter.pages, 80);
+
+    // g) EditEntryModal edits a number_time entry in place
+    let editedNumeric = null;
+    const editEntryModal = new EditEntryModal(app, {
+      dataset: { name: 'Pages read', type: 'number_time', unit: 'pg' },
+      entry: { value: 30, date: '2026-04-01', note: 'Ch 1' },
+      onSubmit: entry => {
+        editedNumeric = entry;
+      },
+    });
+    editEntryModal.contentEl = createMockElement('div');
+    editEntryModal.onOpen();
+    const editInputs = editEntryModal.contentEl.findAll(el => el.tagName === 'INPUT');
+    assert.equal(editInputs[0].value, '30');
+    editInputs[0].value = '45';
+    await fire(editEntryModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.equal(editedNumeric.value, 45);
+    assert.equal(editedNumeric.date, '2026-04-01');
   } finally {
     global.document = prevDocument;
   }

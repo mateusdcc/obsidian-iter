@@ -2598,3 +2598,35 @@ button.iter-flow-port.is-armed {
   gap: 8px;
   background: var(--background-primary);
 }
+
+.iter-sync-fm-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.iter-sync-fm-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: var(--font-ui-smaller);
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  border: 1px dashed var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.iter-sync-fm-btn.is-active {
+  border-style: solid;
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.iter-entry-edit {
+  opacity: 0.65;
+}
+
+.iter-entry-row:hover .iter-entry-edit {
+  opacity: 1;
+}

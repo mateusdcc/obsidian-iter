@@ -25,6 +25,7 @@ const {
   updateDataset,
   removeDataset,
   addDatasetEntry,
+  updateDatasetEntry,
   removeDatasetEntry,
   addWidget,
   updateWidget,
@@ -41,6 +42,7 @@ const {
   AddWidgetModal,
   NotePickerModal,
   NoteTimeMetaModal,
+  EditEntryModal,
 } = require('./goal-modals');
 
 const GOAL_VIEW = 'iter-goal';
@@ -688,6 +690,7 @@ class GoalView extends ItemView {
             noteFile,
             showDate: false,
             metricKeys: keys,
+            syncToNote: true,
             onSubmit: async entry => {
               await addDatasetEntry(this.app, this.file, dataset.id, entry);
               this.render();
@@ -710,6 +713,7 @@ class GoalView extends ItemView {
           noteFile,
           showDate: true,
           metricKeys: keys,
+          syncToNote: true,
           onSubmit: async entry => {
             await addDatasetEntry(this.app, this.file, dataset.id, entry);
             this.render();
@@ -921,6 +925,41 @@ class GoalView extends ItemView {
       if (item.date) {
         row.createSpan({ text: item.date, cls: 'iter-entry-date' });
       }
+
+      const editBtn = row.createEl('button', {
+        cls: 'iter-icon-button iter-entry-edit',
+        type: 'button',
+        attr: { 'aria-label': 'Edit entry', title: 'Edit entry' },
+      });
+      setIcon(editBtn, 'pencil');
+      editBtn.addEventListener('click', () => {
+        if (dataset.type === 'note' || dataset.type === 'note_time') {
+          const baseKeys = Array.isArray(dataset.metricKeys) ? dataset.metricKeys : [];
+          const extraKeys = Array.isArray(item.propsList) ? item.propsList.map(p => p.key) : [];
+          const mergedKeys = [...new Set([...baseKeys, ...extraKeys].filter(Boolean))];
+          new NoteTimeMetaModal(this.app, {
+            noteFile: item.noteFile,
+            path: item.path,
+            showDate: dataset.type === 'note_time',
+            metricKeys: mergedKeys,
+            initialEntry: dataset.entries[item.index],
+            syncToNote: true,
+            onSubmit: async updated => {
+              await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+              this.render();
+            },
+          }).open();
+        } else {
+          new EditEntryModal(this.app, {
+            dataset,
+            entry: dataset.entries[item.index],
+            onSubmit: async updated => {
+              await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+              this.render();
+            },
+          }).open();
+        }
+      });
 
       const delBtn = row.createEl('button', {
         cls: 'iter-icon-button iter-entry-del',

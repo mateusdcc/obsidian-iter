@@ -1058,6 +1058,24 @@ async function addDatasetEntry(app, file, datasetId, rawEntry) {
   return added;
 }
 
+async function updateDatasetEntry(app, file, datasetId, entryIndex, rawEntry) {
+  let updated = null;
+  await app.fileManager.processFrontMatter(file, fm => {
+    if (!Array.isArray(fm.datasets)) throw new Error('No datasets found on this goal.');
+    const ds = fm.datasets.find(item => item?.id === datasetId);
+    if (!ds || !Array.isArray(ds.entries)) throw new Error('Dataset not found.');
+    if (entryIndex < 0 || entryIndex >= ds.entries.length) {
+      throw new Error('Entry index out of range.');
+    }
+    const dsType = normalizeDatasetType(ds.type);
+    const entry = normalizeEntry(dsType, rawEntry);
+    if (!entry) throw new Error('Invalid entry value.');
+    ds.entries[entryIndex] = entry;
+    updated = entry;
+  });
+  return updated;
+}
+
 async function removeDatasetEntry(app, file, datasetId, entryIndex) {
   await app.fileManager.processFrontMatter(file, fm => {
     if (!Array.isArray(fm.datasets)) return;
@@ -1168,6 +1186,7 @@ module.exports = {
   updateDataset,
   removeDataset,
   addDatasetEntry,
+  updateDatasetEntry,
   removeDatasetEntry,
   addWidget,
   updateWidget,

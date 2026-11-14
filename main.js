@@ -257,6 +257,14 @@ var require_storage = __commonJS({
         frontmatter.frequency = freq;
         frontmatter.days = cleanDays;
       });
+      if (typeof app.vault?.read === "function" && typeof app.vault?.modify === "function") {
+        const raw = await app.vault.read(file);
+        const nextCadence = `Cadence: ${formatCadenceLabel(freq, cleanDays)}`;
+        if (/^Cadence:\s*.*$/m.test(raw)) {
+          const updated = raw.replace(/^Cadence:\s*.*$/m, nextCadence);
+          if (updated !== raw) await app.vault.modify(file, updated);
+        }
+      }
       return { frequency: freq, days: cleanDays };
     }
     async function trashEntry(app, target) {
@@ -3366,6 +3374,23 @@ var require_data_model = __commonJS({
       });
       return added;
     }
+    async function updateDatasetEntry(app, file, datasetId, entryIndex, rawEntry) {
+      let updated = null;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        if (!Array.isArray(fm.datasets)) throw new Error("No datasets found on this goal.");
+        const ds = fm.datasets.find((item) => item?.id === datasetId);
+        if (!ds || !Array.isArray(ds.entries)) throw new Error("Dataset not found.");
+        if (entryIndex < 0 || entryIndex >= ds.entries.length) {
+          throw new Error("Entry index out of range.");
+        }
+        const dsType = normalizeDatasetType(ds.type);
+        const entry = normalizeEntry(dsType, rawEntry);
+        if (!entry) throw new Error("Invalid entry value.");
+        ds.entries[entryIndex] = entry;
+        updated = entry;
+      });
+      return updated;
+    }
     async function removeDatasetEntry(app, file, datasetId, entryIndex) {
       await app.fileManager.processFrontMatter(file, (fm) => {
         if (!Array.isArray(fm.datasets)) return;
@@ -3467,6 +3492,7 @@ var require_data_model = __commonJS({
       updateDataset,
       removeDataset,
       addDatasetEntry,
+      updateDatasetEntry,
       removeDatasetEntry,
       addWidget,
       updateWidget,
@@ -6908,28 +6934,36 @@ var require_goal_modals = __commonJS({
       }
     };
     var NoteTimeMetaModal = class extends Modal {
-      constructor(app, { noteFile, showDate = true, metricKey = "score", metricKeys = null, onSubmit }) {
+      constructor(app, { noteFile = null, path = "", showDate = true, metricKey = "score", metricKeys = null, initialEntry = null, syncToNote = false, onSubmit }) {
         super(app);
         this.noteFile = noteFile;
+        this.notePath = noteFile?.path || path || initialEntry?.path || "";
         this.showDate = Boolean(showDate);
         const resolvedKeys = Array.isArray(metricKeys) ? metricKeys.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim()) : typeof metricKey === "string" && metricKey.trim() ? [metricKey.trim()] : [];
         this.metricKeys = resolvedKeys;
+        this.initialEntry = initialEntry;
+        this.syncToNote = Boolean(syncToNote && noteFile);
         this.onSubmit = onSubmit;
         this.submitting = false;
       }
       onOpen() {
+        const isEdit = Boolean(this.initialEntry);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("iter-modal");
-        contentEl.createEl("h2", { text: `Add "${stripMd(this.noteFile.name)}"`, cls: "iter-modal-title" });
-        const fm = this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter ?? null;
+        const noteTitle = this.noteFile ? stripMd(this.noteFile.name) : stripMd(this.notePath.split("/").pop());
+        contentEl.createEl("h2", {
+          text: `${isEdit ? "Edit" : "Add"} "${noteTitle}"`,
+          cls: "iter-modal-title"
+        });
+        const fm = (this.noteFile && this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter) ?? null;
         const form = contentEl.createEl("form", { cls: "iter-modal-form" });
         let dateInput = null;
         if (this.showDate) {
           const dateField = form.createDiv({ cls: "iter-modal-field" });
           dateField.createEl("label", { text: "Date", cls: "iter-modal-label" });
           dateInput = dateField.createEl("input", { type: "date", cls: "iter-modal-input" });
-          dateInput.value = toDateKey();
+          dateInput.value = this.initialEntry?.date || toDateKey();
           dateInput.required = true;
         }
         const propInputs = /* @__PURE__ */ new Map();
@@ -6945,13 +6979,34 @@ var require_goal_modals = __commonJS({
               placeholder,
               cls: "iter-modal-input"
             });
+            const initProp = this.initialEntry?.props?.[key] ?? (key === this.metricKeys[0] && this.initialEntry?.value !== void 0 && this.initialEntry?.value !== null ? this.initialEntry.value : void 0);
+            if (initProp !== void 0 && initProp !== null) {
+              input.value = String(initProp);
+            }
             propInputs.set(key, input);
           }
+        }
+        let syncToggleBtn = null;
+        if (this.metricKeys.length && this.noteFile) {
+          syncToggleBtn = form.createEl("button", {
+            text: this.syncToNote ? "\u2713 Syncing entered values into note YAML frontmatter" : "Write entered values to note YAML frontmatter (optional)",
+            type: "button",
+            cls: `iter-btn-ghost iter-sync-fm-btn${this.syncToNote ? " is-active" : ""}`
+          });
+          syncToggleBtn.addEventListener("click", () => {
+            this.syncToNote = !this.syncToNote;
+            syncToggleBtn.toggleClass("is-active", this.syncToNote);
+            syncToggleBtn.textContent = this.syncToNote ? "\u2713 Syncing entered values into note YAML frontmatter" : "Write entered values to note YAML frontmatter (optional)";
+          });
         }
         const actions = form.createDiv({ cls: "iter-modal-actions" });
         const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
         cancel.addEventListener("click", () => this.close());
-        const submit = actions.createEl("button", { text: "Add note", type: "submit", cls: "mod-cta" });
+        const submit = actions.createEl("button", {
+          text: isEdit ? "Save changes" : "Add note",
+          type: "submit",
+          cls: "mod-cta"
+        });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           if (this.submitting) return;
@@ -6967,9 +7022,16 @@ var require_goal_modals = __commonJS({
               props[key] = num !== null ? num : raw;
               hasProps = true;
             }
+            if (this.syncToNote && hasProps && this.noteFile && typeof this.app?.fileManager?.processFrontMatter === "function") {
+              await this.app.fileManager.processFrontMatter(this.noteFile, (noteFm) => {
+                for (const [k, v] of Object.entries(props)) {
+                  noteFm[k] = v;
+                }
+              });
+            }
             const primaryKey = this.metricKeys[0] || "";
             const primaryVal = primaryKey && props[primaryKey] !== void 0 ? toFiniteNumber(props[primaryKey]) : null;
-            const payload = { path: this.noteFile.path };
+            const payload = { path: this.notePath };
             if (this.showDate && dateInput) payload.date = dateInput.value;
             if (primaryVal !== null) payload.value = primaryVal;
             if (hasProps) payload.props = props;
@@ -6989,11 +7051,73 @@ var require_goal_modals = __commonJS({
         this.contentEl.empty();
       }
     };
+    var EditEntryModal = class extends Modal {
+      constructor(app, { dataset, entry, onSubmit }) {
+        super(app);
+        this.dataset = dataset;
+        this.entry = entry;
+        this.onSubmit = onSubmit;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: `Edit entry in "${this.dataset.name}"`, cls: "iter-modal-title" });
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const isNumber = this.dataset.type === "number_time";
+        const valField = form.createDiv({ cls: "iter-modal-field" });
+        valField.createEl("label", {
+          text: isNumber ? this.dataset.unit ? `Value (${this.dataset.unit})` : "Value" : "Text",
+          cls: "iter-modal-label"
+        });
+        const valInput = valField.createEl("input", {
+          type: isNumber ? "number" : "text",
+          step: isNumber ? "any" : void 0,
+          cls: "iter-modal-input"
+        });
+        valInput.required = true;
+        valInput.value = String(this.entry?.value ?? this.entry?.label ?? "");
+        let dateInput = null;
+        if (isNumber || this.entry?.date) {
+          const dateField = form.createDiv({ cls: "iter-modal-field" });
+          dateField.createEl("label", { text: "Date", cls: "iter-modal-label" });
+          dateInput = dateField.createEl("input", { type: "date", cls: "iter-modal-input" });
+          dateInput.value = this.entry?.date || toDateKey();
+          if (isNumber) dateInput.required = true;
+        }
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Save changes", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            const payload = isNumber ? { value: Number(valInput.value), date: dateInput?.value || toDateKey() } : dateInput?.value ? { value: valInput.value, date: dateInput.value } : { value: valInput.value };
+            await this.onSubmit(payload);
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+        valInput.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
     module2.exports = {
       AddDatasetModal,
       AddWidgetModal,
       NotePickerModal,
-      NoteTimeMetaModal
+      NoteTimeMetaModal,
+      EditEntryModal
     };
   }
 });
@@ -7028,6 +7152,7 @@ var require_goal_view = __commonJS({
       updateDataset,
       removeDataset,
       addDatasetEntry,
+      updateDatasetEntry,
       removeDatasetEntry,
       addWidget,
       updateWidget,
@@ -7043,7 +7168,8 @@ var require_goal_view = __commonJS({
       AddDatasetModal,
       AddWidgetModal,
       NotePickerModal,
-      NoteTimeMetaModal
+      NoteTimeMetaModal,
+      EditEntryModal
     } = require_goal_modals();
     var GOAL_VIEW2 = "iter-goal";
     var TYPE_LABELS = Object.fromEntries(DATASET_TYPES.map((t) => [t.id, t.label]));
@@ -7579,6 +7705,7 @@ var require_goal_view = __commonJS({
                 noteFile,
                 showDate: false,
                 metricKeys: keys,
+                syncToNote: true,
                 onSubmit: async (entry) => {
                   await addDatasetEntry(this.app, this.file, dataset.id, entry);
                   this.render();
@@ -7598,6 +7725,7 @@ var require_goal_view = __commonJS({
               noteFile,
               showDate: true,
               metricKeys: keys,
+              syncToNote: true,
               onSubmit: async (entry) => {
                 await addDatasetEntry(this.app, this.file, dataset.id, entry);
                 this.render();
@@ -7781,6 +7909,40 @@ var require_goal_view = __commonJS({
           if (item.date) {
             row.createSpan({ text: item.date, cls: "iter-entry-date" });
           }
+          const editBtn = row.createEl("button", {
+            cls: "iter-icon-button iter-entry-edit",
+            type: "button",
+            attr: { "aria-label": "Edit entry", title: "Edit entry" }
+          });
+          setIcon(editBtn, "pencil");
+          editBtn.addEventListener("click", () => {
+            if (dataset.type === "note" || dataset.type === "note_time") {
+              const baseKeys = Array.isArray(dataset.metricKeys) ? dataset.metricKeys : [];
+              const extraKeys = Array.isArray(item.propsList) ? item.propsList.map((p) => p.key) : [];
+              const mergedKeys = [...new Set([...baseKeys, ...extraKeys].filter(Boolean))];
+              new NoteTimeMetaModal(this.app, {
+                noteFile: item.noteFile,
+                path: item.path,
+                showDate: dataset.type === "note_time",
+                metricKeys: mergedKeys,
+                initialEntry: dataset.entries[item.index],
+                syncToNote: true,
+                onSubmit: async (updated) => {
+                  await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+                  this.render();
+                }
+              }).open();
+            } else {
+              new EditEntryModal(this.app, {
+                dataset,
+                entry: dataset.entries[item.index],
+                onSubmit: async (updated) => {
+                  await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+                  this.render();
+                }
+              }).open();
+            }
+          });
           const delBtn = row.createEl("button", {
             cls: "iter-icon-button iter-entry-del",
             type: "button",
