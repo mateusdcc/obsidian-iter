@@ -278,6 +278,11 @@ function computeTreeGeometry(tree) {
 
 function svgEl(tag, attrs = {}) {
   const node = document.createElementNS(SVG_NS, tag);
+  if (typeof node.isShown !== 'function') {
+    node.isShown = function () {
+      return Boolean(this.isConnected);
+    };
+  }
   for (const [key, value] of Object.entries(attrs)) {
     if (value !== undefined && value !== null) node.setAttribute(key, String(value));
   }

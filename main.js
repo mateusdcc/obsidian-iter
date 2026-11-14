@@ -45,10 +45,21 @@ var require_storage = __commonJS({
         if (!isFolder(existing)) throw new Error(`A file exists where a folder is required: ${path}`);
         return existing;
       }
+      if (typeof vault.adapter?.exists === "function") {
+        try {
+          if (await vault.adapter.exists(path)) {
+            return vault.getAbstractFileByPath(path);
+          }
+        } catch {
+        }
+      }
       try {
         await vault.createFolder(path);
       } catch (error) {
-        if (!isFolder(vault.getAbstractFileByPath(path))) throw error;
+        const after = vault.getAbstractFileByPath(path);
+        if (after && !isFolder(after)) throw error;
+        const msg = String(error?.message || error || "").toLowerCase();
+        if (!isFolder(after) && !msg.includes("already exists")) throw error;
       }
       return vault.getAbstractFileByPath(path);
     }
@@ -56,23 +67,34 @@ var require_storage = __commonJS({
       await ensureFolder(vault, ROOT);
       await ensureFolder(vault, INDEX_FOLDER);
       if (!vault.getAbstractFileByPath(WE_PATH)) {
-        const content = [
-          "---",
-          "type: iter-index",
-          'title: "We"',
-          "members: []",
-          `created: ${(/* @__PURE__ */ new Date()).toISOString()}`,
-          "---",
-          "",
-          "# We",
-          "",
-          "A shared garden of long-term goals. Each folder inside `Iter/` represents a tree watered through habits and subgoals.",
-          ""
-        ].join("\n");
-        try {
-          await vault.create(WE_PATH, content);
-        } catch (error) {
-          if (!vault.getAbstractFileByPath(WE_PATH)) throw error;
+        let existsOnDisk = false;
+        if (typeof vault.adapter?.exists === "function") {
+          try {
+            existsOnDisk = await vault.adapter.exists(WE_PATH);
+          } catch {
+            existsOnDisk = false;
+          }
+        }
+        if (!existsOnDisk) {
+          const content = [
+            "---",
+            "type: iter-index",
+            'title: "We"',
+            "members: []",
+            `created: ${(/* @__PURE__ */ new Date()).toISOString()}`,
+            "---",
+            "",
+            "# We",
+            "",
+            "A shared garden of long-term goals. Each folder inside `Iter/` represents a tree watered through habits and subgoals.",
+            ""
+          ].join("\n");
+          try {
+            await vault.create(WE_PATH, content);
+          } catch (error) {
+            const msg = String(error?.message || error || "").toLowerCase();
+            if (!vault.getAbstractFileByPath(WE_PATH) && !msg.includes("already exists")) throw error;
+          }
         }
       }
       return vault.getAbstractFileByPath(ROOT);
@@ -1940,6 +1962,11 @@ var require_tree_art = __commonJS({
     }
     function svgEl(tag, attrs = {}) {
       const node = document.createElementNS(SVG_NS, tag);
+      if (typeof node.isShown !== "function") {
+        node.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
       for (const [key, value] of Object.entries(attrs)) {
         if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
       }
@@ -2162,6 +2189,7 @@ var require_garden_view = __commonJS({
           this.renderEmptyState(shell);
           return;
         }
+        this.renderTodayQueue(shell, garden);
         const grid = shell.createDiv({ cls: "iter-garden-grid" });
         for (const tree of garden.trees) {
           this.renderPotCard(grid, tree);
@@ -2204,6 +2232,66 @@ var require_garden_view = __commonJS({
         newTreeBtn.createSpan({ text: "New tree" });
         newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
       }
+      renderTodayQueue(shell, garden) {
+        const dueHabits = [];
+        for (const tree of garden.trees) {
+          for (const habit of tree.habits) {
+            if (habit.isDueToday || habit.wateredToday) {
+              dueHabits.push({ tree, habit });
+            }
+          }
+        }
+        if (!dueHabits.length) return;
+        const doneCount = dueHabits.filter((item) => item.habit.wateredInPeriod || item.habit.wateredToday).length;
+        const remaining = dueHabits.filter((item) => !item.habit.wateredInPeriod && !item.habit.wateredToday);
+        const banner = shell.createDiv({ cls: "iter-today-queue" });
+        const head = banner.createDiv({ cls: "iter-today-queue-head" });
+        const titleWrap = head.createDiv({ cls: "iter-today-queue-title-wrap" });
+        const dropIcon = titleWrap.createSpan({ cls: "iter-btn-icon" });
+        setIcon(dropIcon, "droplet");
+        titleWrap.createSpan({ text: "Today\u2019s watering queue", cls: "iter-today-queue-title" });
+        titleWrap.createSpan({
+          text: `${doneCount}/${dueHabits.length} watered`,
+          cls: `iter-today-queue-count${remaining.length === 0 ? " is-complete" : ""}`
+        });
+        if (remaining.length > 1) {
+          const waterAllBtn = head.createEl("button", {
+            text: `Water all due (${remaining.length})`,
+            type: "button",
+            cls: "iter-ghost-action iter-water-all-btn"
+          });
+          waterAllBtn.addEventListener("click", async () => {
+            for (const item of remaining) {
+              await waterHabit(this.app, item.habit.file);
+            }
+            new Notice2(`Watered ${remaining.length} due habits!`);
+            this.plugin.scheduleRefresh();
+          });
+        }
+        const pills = banner.createDiv({ cls: "iter-today-queue-pills" });
+        for (const { tree, habit } of dueHabits) {
+          const done = habit.wateredInPeriod || habit.wateredToday;
+          const pill = pills.createEl("button", {
+            type: "button",
+            cls: `iter-today-pill${done ? " is-watered" : ""}`,
+            attr: {
+              "aria-pressed": String(habit.wateredToday),
+              title: `${tree.title} \xB7 ${habit.title} (${habit.cadenceLabel})`
+            }
+          });
+          const icon = pill.createSpan({ cls: "iter-chip-icon" });
+          setIcon(icon, done ? "check-circle-2" : "droplet");
+          pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: "iter-today-pill-label" });
+          if (habit.streak > 0) {
+            pill.createSpan({ text: `${habit.streak}d`, cls: "iter-today-pill-streak" });
+          }
+          pill.addEventListener("click", async () => {
+            const watered = await waterHabit(this.app, habit.file);
+            new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+            this.plugin.scheduleRefresh();
+          });
+        }
+      }
       renderEmptyState(shell) {
         const empty = shell.createDiv({ cls: "iter-garden-empty" });
         const art = empty.createDiv({ cls: "iter-empty-art" });
@@ -2237,7 +2325,23 @@ var require_garden_view = __commonJS({
         const meta = card.createDiv({ cls: "iter-pot-meta" });
         const nameRow = meta.createDiv({ cls: "iter-pot-name-row" });
         nameRow.createSpan({ text: tree.title, cls: "iter-pot-title" });
-        nameRow.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        const rightBadges = nameRow.createDiv({ cls: "iter-pot-badges" });
+        rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.indexFile) {
+          const openBtn = rightBadges.createEl("button", {
+            cls: "iter-icon-button iter-pot-open-btn",
+            type: "button",
+            attr: {
+              "aria-label": `Open ${tree.title} goal view`,
+              title: `Open ${tree.title} goal view`
+            }
+          });
+          setIcon(openBtn, "arrow-up-right");
+          openBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.plugin.openGoal(tree.indexFile);
+          });
+        }
         if (tree.goal) {
           meta.createEl("p", { text: tree.goal, cls: "iter-pot-goal" });
         }
@@ -4943,6 +5047,11 @@ var require_widget_art = __commonJS({
     var SVG_NS = "http://www.w3.org/2000/svg";
     function svgEl(tag, attrs = {}) {
       const node = document.createElementNS(SVG_NS, tag);
+      if (typeof node.isShown !== "function") {
+        node.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
       for (const [key, value] of Object.entries(attrs)) {
         if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
       }
@@ -5244,7 +5353,7 @@ var require_canvas_editor = __commonJS({
     var WorkflowEditorModal = class extends Modal {
       constructor(app, { doc, initialTitle = "", initialPipeline = null, onSubmit }) {
         super(app);
-        this.doc = doc;
+        this.goalDoc = doc;
         this.title = initialTitle || "";
         this.onSubmit = onSubmit;
         this.context = collectCanvasContext(app, doc);
@@ -5269,9 +5378,24 @@ var require_canvas_editor = __commonJS({
         this.boundUp = null;
         this.boundKey = null;
       }
+      onEscapeKey(event) {
+        if (this.pendingFromNodeId || this.dragState || this.selectedEdgeId) {
+          this.pendingFromNodeId = null;
+          this.dragState = null;
+          this.selectedEdgeId = null;
+          event?.preventDefault?.();
+          this.refreshAll();
+          return;
+        }
+        if (typeof super.onEscapeKey === "function") {
+          super.onEscapeKey(event);
+        } else {
+          this.close();
+        }
+      }
       applyTemplateRecipe(id, suggestedTitle = "") {
         if (!id) return;
-        this.pipeline = buildPipelineTemplate(id, this.doc, this.context);
+        this.pipeline = buildPipelineTemplate(id, this.goalDoc, this.context);
         if (suggestedTitle && !this.title.trim()) {
           this.title = suggestedTitle;
           if (this.titleInputEl) this.titleInputEl.value = suggestedTitle;
@@ -5366,7 +5490,7 @@ var require_canvas_editor = __commonJS({
             await this.onSubmit({
               type: "pipeline",
               title: this.title,
-              pipeline: normalizePipeline(this.pipeline, this.doc)
+              pipeline: normalizePipeline(this.pipeline, this.goalDoc)
             });
             this.close();
           } catch (err) {
@@ -5429,7 +5553,7 @@ var require_canvas_editor = __commonJS({
         applyJsonBtn.addEventListener("click", () => {
           try {
             const parsed = JSON.parse(jsonArea.value);
-            this.pipeline = normalizePipeline(parsed, this.doc);
+            this.pipeline = normalizePipeline(parsed, this.goalDoc);
             this.selectedNodeId = this.pipeline.nodes[0]?.id || null;
             this.selectedEdgeId = null;
             jsonDrawer.style.display = "none";
@@ -5477,8 +5601,8 @@ var require_canvas_editor = __commonJS({
             originPanX: this.pipeline.panX,
             originPanY: this.pipeline.panY
           };
-          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
-          this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
+          this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
         });
         this.viewportEl.addEventListener("wheel", (event) => {
           event.preventDefault?.();
@@ -5599,7 +5723,7 @@ var require_canvas_editor = __commonJS({
         const count = this.pipeline.nodes.length;
         const x = anchor && !isSource ? Math.min(CANVAS_W - 260, anchor.x + 264) : 64 + count % 3 * 40;
         const y = anchor && !isSource ? anchor.y : 64 + count * 48;
-        const initialConfig = type === "source" ? { scope: this.doc?.kind === "tree" ? "tree_children" : "this_goal" } : type === "water_source" ? { scope: this.doc?.kind === "habit" ? "this_habit" : "tree_habits" } : {};
+        const initialConfig = type === "source" ? { scope: this.goalDoc?.kind === "tree" ? "tree_children" : "this_goal" } : type === "water_source" ? { scope: this.goalDoc?.kind === "habit" ? "this_habit" : "tree_habits" } : {};
         const node = createNode(type, { x, y, config: initialConfig });
         this.pipeline.nodes.push(node);
         const anchorDef = anchor ? getNodeDef(anchor.type) : null;
@@ -5718,13 +5842,13 @@ var require_canvas_editor = __commonJS({
         this.refreshAll();
       }
       refreshAll() {
-        const evalResult = evaluatePipeline(this.app, this.pipeline, this.doc);
+        const evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc);
         this.lastEval = evalResult;
         this.refreshCanvas(evalResult);
         this.refreshInspector(evalResult);
         this.refreshPreview(evalResult);
       }
-      refreshCanvas(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+      refreshCanvas(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
         this.lastEval = evalResult;
         if (!this.worldEl) return;
         this.applyWorldTransform();
@@ -5812,7 +5936,7 @@ var require_canvas_editor = __commonJS({
           for (const [id, el] of this.nodeEls.entries()) {
             el.toggleClass?.("is-selected", id === node.id);
           }
-          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+          this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
         });
         card.addEventListener("mouseup", (event) => {
           if (this.dragState?.kind === "wire" && this.dragState.fromNodeId !== node.id && def.hasIn) {
@@ -5878,7 +6002,7 @@ var require_canvas_editor = __commonJS({
           outPort.addEventListener("click", (event) => {
             event.stopPropagation?.();
             this.pendingFromNodeId = this.pendingFromNodeId === node.id ? null : node.id;
-            this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+            this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
           });
         }
       }
@@ -5930,7 +6054,7 @@ var require_canvas_editor = __commonJS({
           }
         }
       }
-      refreshInspector(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+      refreshInspector(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
         const host = this.inspectorEl;
         if (!host) return;
         host.empty();
@@ -5993,7 +6117,7 @@ var require_canvas_editor = __commonJS({
           if (titleEl) titleEl.textContent = node.label || def?.label || "";
         });
         const onCfgChange = (structural = false) => {
-          const nextEval = evaluatePipeline(this.app, this.pipeline, this.doc);
+          const nextEval = evaluatePipeline(this.app, this.pipeline, this.goalDoc);
           this.lastEval = nextEval;
           if (structural) this.refreshInspector(nextEval);
           this.refreshCanvas(nextEval);
@@ -6464,7 +6588,7 @@ var require_canvas_editor = __commonJS({
           container.createEl("span", { text: `+${items.length - 4} more\u2026`, cls: "iter-dataset-count" });
         }
       }
-      refreshPreview(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+      refreshPreview(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
         const host = this.previewEl;
         if (!host) return;
         host.empty();
@@ -8446,10 +8570,43 @@ var IterPlugin = class extends Plugin {
     this.refreshTimer = null;
     this.gardenViewType = GARDEN_VIEW;
     this.goalViewType = GOAL_VIEW;
-    await ensureStructure(this.app.vault);
+    if (typeof SVGElement !== "undefined") {
+      if (typeof SVGElement.prototype.isShown !== "function") {
+        SVGElement.prototype.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
+      if (!("doc" in SVGElement.prototype)) {
+        Object.defineProperty(SVGElement.prototype, "doc", {
+          get() {
+            return this.ownerDocument;
+          },
+          configurable: true
+        });
+      }
+    }
+    if (typeof HTMLElement !== "undefined" && typeof HTMLElement.prototype.createEl === "function") {
+      const origCreateEl = HTMLElement.prototype.createEl;
+      if (!origCreateEl._iterPatched) {
+        const patched = function(tag, opts, cb) {
+          const el = origCreateEl.call(this, tag, opts, cb);
+          if (opts && typeof opts === "object" && opts.type && el && el.tagName === "BUTTON") {
+            el.type = opts.type;
+          }
+          return el;
+        };
+        patched._iterPatched = true;
+        HTMLElement.prototype.createEl = patched;
+      }
+    }
     this.registerView(PANEL_VIEW, (leaf) => new IterPanelView(leaf, this));
     this.registerView(GARDEN_VIEW, (leaf) => new GardenView(leaf, this));
     this.registerView(GOAL_VIEW, (leaf) => new GoalView(leaf, this));
+    try {
+      await ensureStructure(this.app.vault);
+    } catch (error) {
+      console.warn("Iter: deferred folder initialization until layout ready:", error);
+    }
     this.addRibbonIcon("sprout", "Open Iter panel", () => {
       void this.activatePanel(true);
     });

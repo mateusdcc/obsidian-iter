@@ -108,6 +108,8 @@ class GardenView extends ItemView {
       return;
     }
 
+    this.renderTodayQueue(shell, garden);
+
     const grid = shell.createDiv({ cls: 'iter-garden-grid' });
     for (const tree of garden.trees) {
       this.renderPotCard(grid, tree);
@@ -160,6 +162,71 @@ class GardenView extends ItemView {
     newTreeBtn.addEventListener('click', () => this.plugin.promptCreateTree());
   }
 
+  renderTodayQueue(shell, garden) {
+    const dueHabits = [];
+    for (const tree of garden.trees) {
+      for (const habit of tree.habits) {
+        if (habit.isDueToday || habit.wateredToday) {
+          dueHabits.push({ tree, habit });
+        }
+      }
+    }
+    if (!dueHabits.length) return;
+
+    const doneCount = dueHabits.filter(item => item.habit.wateredInPeriod || item.habit.wateredToday).length;
+    const remaining = dueHabits.filter(item => !item.habit.wateredInPeriod && !item.habit.wateredToday);
+
+    const banner = shell.createDiv({ cls: 'iter-today-queue' });
+    const head = banner.createDiv({ cls: 'iter-today-queue-head' });
+    const titleWrap = head.createDiv({ cls: 'iter-today-queue-title-wrap' });
+    const dropIcon = titleWrap.createSpan({ cls: 'iter-btn-icon' });
+    setIcon(dropIcon, 'droplet');
+    titleWrap.createSpan({ text: 'Today’s watering queue', cls: 'iter-today-queue-title' });
+    titleWrap.createSpan({
+      text: `${doneCount}/${dueHabits.length} watered`,
+      cls: `iter-today-queue-count${remaining.length === 0 ? ' is-complete' : ''}`,
+    });
+
+    if (remaining.length > 1) {
+      const waterAllBtn = head.createEl('button', {
+        text: `Water all due (${remaining.length})`,
+        type: 'button',
+        cls: 'iter-ghost-action iter-water-all-btn',
+      });
+      waterAllBtn.addEventListener('click', async () => {
+        for (const item of remaining) {
+          await waterHabit(this.app, item.habit.file);
+        }
+        new Notice(`Watered ${remaining.length} due habits!`);
+        this.plugin.scheduleRefresh();
+      });
+    }
+
+    const pills = banner.createDiv({ cls: 'iter-today-queue-pills' });
+    for (const { tree, habit } of dueHabits) {
+      const done = habit.wateredInPeriod || habit.wateredToday;
+      const pill = pills.createEl('button', {
+        type: 'button',
+        cls: `iter-today-pill${done ? ' is-watered' : ''}`,
+        attr: {
+          'aria-pressed': String(habit.wateredToday),
+          title: `${tree.title} · ${habit.title} (${habit.cadenceLabel})`,
+        },
+      });
+      const icon = pill.createSpan({ cls: 'iter-chip-icon' });
+      setIcon(icon, done ? 'check-circle-2' : 'droplet');
+      pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: 'iter-today-pill-label' });
+      if (habit.streak > 0) {
+        pill.createSpan({ text: `${habit.streak}d`, cls: 'iter-today-pill-streak' });
+      }
+      pill.addEventListener('click', async () => {
+        const watered = await waterHabit(this.app, habit.file);
+        new Notice(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+        this.plugin.scheduleRefresh();
+      });
+    }
+  }
+
   renderEmptyState(shell) {
     const empty = shell.createDiv({ cls: 'iter-garden-empty' });
     const art = empty.createDiv({ cls: 'iter-empty-art' });
@@ -197,7 +264,23 @@ class GardenView extends ItemView {
     const meta = card.createDiv({ cls: 'iter-pot-meta' });
     const nameRow = meta.createDiv({ cls: 'iter-pot-name-row' });
     nameRow.createSpan({ text: tree.title, cls: 'iter-pot-title' });
-    nameRow.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: 'iter-module-pill' });
+    const rightBadges = nameRow.createDiv({ cls: 'iter-pot-badges' });
+    rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: 'iter-module-pill' });
+    if (tree.indexFile) {
+      const openBtn = rightBadges.createEl('button', {
+        cls: 'iter-icon-button iter-pot-open-btn',
+        type: 'button',
+        attr: {
+          'aria-label': `Open ${tree.title} goal view`,
+          title: `Open ${tree.title} goal view`,
+        },
+      });
+      setIcon(openBtn, 'arrow-up-right');
+      openBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        void this.plugin.openGoal(tree.indexFile);
+      });
+    }
 
     if (tree.goal) {
       meta.createEl('p', { text: tree.goal, cls: 'iter-pot-goal' });

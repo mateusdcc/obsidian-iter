@@ -163,7 +163,7 @@ function renderSuggestionChips(container, items, onPick) {
 class WorkflowEditorModal extends Modal {
   constructor(app, { doc, initialTitle = '', initialPipeline = null, onSubmit }) {
     super(app);
-    this.doc = doc;
+    this.goalDoc = doc;
     this.title = initialTitle || '';
     this.onSubmit = onSubmit;
     this.context = collectCanvasContext(app, doc);
@@ -191,9 +191,25 @@ class WorkflowEditorModal extends Modal {
     this.boundKey = null;
   }
 
+  onEscapeKey(event) {
+    if (this.pendingFromNodeId || this.dragState || this.selectedEdgeId) {
+      this.pendingFromNodeId = null;
+      this.dragState = null;
+      this.selectedEdgeId = null;
+      event?.preventDefault?.();
+      this.refreshAll();
+      return;
+    }
+    if (typeof super.onEscapeKey === 'function') {
+      super.onEscapeKey(event);
+    } else {
+      this.close();
+    }
+  }
+
   applyTemplateRecipe(id, suggestedTitle = '') {
     if (!id) return;
-    this.pipeline = buildPipelineTemplate(id, this.doc, this.context);
+    this.pipeline = buildPipelineTemplate(id, this.goalDoc, this.context);
     if (suggestedTitle && !this.title.trim()) {
       this.title = suggestedTitle;
       if (this.titleInputEl) this.titleInputEl.value = suggestedTitle;
@@ -299,7 +315,7 @@ class WorkflowEditorModal extends Modal {
         await this.onSubmit({
           type: 'pipeline',
           title: this.title,
-          pipeline: normalizePipeline(this.pipeline, this.doc),
+          pipeline: normalizePipeline(this.pipeline, this.goalDoc),
         });
         this.close();
       } catch (err) {
@@ -368,7 +384,7 @@ class WorkflowEditorModal extends Modal {
     applyJsonBtn.addEventListener('click', () => {
       try {
         const parsed = JSON.parse(jsonArea.value);
-        this.pipeline = normalizePipeline(parsed, this.doc);
+        this.pipeline = normalizePipeline(parsed, this.goalDoc);
         this.selectedNodeId = this.pipeline.nodes[0]?.id || null;
         this.selectedEdgeId = null;
         jsonDrawer.style.display = 'none';
@@ -423,8 +439,8 @@ class WorkflowEditorModal extends Modal {
         originPanX: this.pipeline.panX,
         originPanY: this.pipeline.panY,
       };
-      this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
-      this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+      this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
+      this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
     });
 
     this.viewportEl.addEventListener('wheel', event => {
@@ -560,9 +576,9 @@ class WorkflowEditorModal extends Modal {
     const y = anchor && !isSource ? anchor.y : 64 + count * 48;
 
     const initialConfig = type === 'source'
-      ? { scope: this.doc?.kind === 'tree' ? 'tree_children' : 'this_goal' }
+      ? { scope: this.goalDoc?.kind === 'tree' ? 'tree_children' : 'this_goal' }
       : type === 'water_source'
-        ? { scope: this.doc?.kind === 'habit' ? 'this_habit' : 'tree_habits' }
+        ? { scope: this.goalDoc?.kind === 'habit' ? 'this_habit' : 'tree_habits' }
         : {};
     const node = createNode(type, { x, y, config: initialConfig });
     this.pipeline.nodes.push(node);
@@ -696,14 +712,14 @@ class WorkflowEditorModal extends Modal {
   }
 
   refreshAll() {
-    const evalResult = evaluatePipeline(this.app, this.pipeline, this.doc);
+    const evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc);
     this.lastEval = evalResult;
     this.refreshCanvas(evalResult);
     this.refreshInspector(evalResult);
     this.refreshPreview(evalResult);
   }
 
-  refreshCanvas(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+  refreshCanvas(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
     this.lastEval = evalResult;
     if (!this.worldEl) return;
     this.applyWorldTransform();
@@ -802,7 +818,7 @@ class WorkflowEditorModal extends Modal {
       for (const [id, el] of this.nodeEls.entries()) {
         el.toggleClass?.('is-selected', id === node.id);
       }
-      this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+      this.refreshInspector(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
     });
 
     card.addEventListener('mouseup', event => {
@@ -872,7 +888,7 @@ class WorkflowEditorModal extends Modal {
       outPort.addEventListener('click', event => {
         event.stopPropagation?.();
         this.pendingFromNodeId = this.pendingFromNodeId === node.id ? null : node.id;
-        this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.doc));
+        this.refreshCanvas(this.lastEval || evaluatePipeline(this.app, this.pipeline, this.goalDoc));
       });
     }
   }
@@ -930,7 +946,7 @@ class WorkflowEditorModal extends Modal {
     }
   }
 
-  refreshInspector(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+  refreshInspector(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
     const host = this.inspectorEl;
     if (!host) return;
     host.empty();
@@ -998,7 +1014,7 @@ class WorkflowEditorModal extends Modal {
     });
 
     const onCfgChange = (structural = false) => {
-      const nextEval = evaluatePipeline(this.app, this.pipeline, this.doc);
+      const nextEval = evaluatePipeline(this.app, this.pipeline, this.goalDoc);
       this.lastEval = nextEval;
       if (structural) this.refreshInspector(nextEval);
       this.refreshCanvas(nextEval);
@@ -1521,7 +1537,7 @@ class WorkflowEditorModal extends Modal {
     }
   }
 
-  refreshPreview(evalResult = evaluatePipeline(this.app, this.pipeline, this.doc)) {
+  refreshPreview(evalResult = evaluatePipeline(this.app, this.pipeline, this.goalDoc)) {
     const host = this.previewEl;
     if (!host) return;
     host.empty();

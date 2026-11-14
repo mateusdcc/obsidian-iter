@@ -27,11 +27,46 @@ class IterPlugin extends Plugin {
     this.gardenViewType = GARDEN_VIEW;
     this.goalViewType = GOAL_VIEW;
 
-    await ensureStructure(this.app.vault);
+    if (typeof SVGElement !== 'undefined') {
+      if (typeof SVGElement.prototype.isShown !== 'function') {
+        SVGElement.prototype.isShown = function () {
+          return Boolean(this.isConnected);
+        };
+      }
+      if (!('doc' in SVGElement.prototype)) {
+        Object.defineProperty(SVGElement.prototype, 'doc', {
+          get() {
+            return this.ownerDocument;
+          },
+          configurable: true,
+        });
+      }
+    }
+
+    if (typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.createEl === 'function') {
+      const origCreateEl = HTMLElement.prototype.createEl;
+      if (!origCreateEl._iterPatched) {
+        const patched = function (tag, opts, cb) {
+          const el = origCreateEl.call(this, tag, opts, cb);
+          if (opts && typeof opts === 'object' && opts.type && el && el.tagName === 'BUTTON') {
+            el.type = opts.type;
+          }
+          return el;
+        };
+        patched._iterPatched = true;
+        HTMLElement.prototype.createEl = patched;
+      }
+    }
 
     this.registerView(PANEL_VIEW, leaf => new IterPanelView(leaf, this));
     this.registerView(GARDEN_VIEW, leaf => new GardenView(leaf, this));
     this.registerView(GOAL_VIEW, leaf => new GoalView(leaf, this));
+
+    try {
+      await ensureStructure(this.app.vault);
+    } catch (error) {
+      console.warn('Iter: deferred folder initialization until layout ready:', error);
+    }
 
     this.addRibbonIcon('sprout', 'Open Iter panel', () => {
       void this.activatePanel(true);

@@ -31,6 +31,15 @@ test('ensureStructure creates Iter, _index, and We.md idempotently', async () =>
 
   await ensureStructure(app.vault);
   assert.equal(app.vault.getAbstractFileByPath(WE_PATH).name, 'We.md');
+
+  // Simulate early Obsidian startup where getAbstractFileByPath is null while folders/files already exist on disk
+  const origGet = app.vault.getAbstractFileByPath;
+  app.vault.getAbstractFileByPath = () => null;
+  try {
+    await assert.doesNotReject(() => ensureStructure(app.vault));
+  } finally {
+    app.vault.getAbstractFileByPath = origGet;
+  }
 });
 
 test('createTree creates folder and _tree.md and rejects invalid or duplicate names', async () => {

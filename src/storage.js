@@ -51,10 +51,22 @@ async function ensureFolder(vault, path) {
     if (!isFolder(existing)) throw new Error(`A file exists where a folder is required: ${path}`);
     return existing;
   }
+  if (typeof vault.adapter?.exists === 'function') {
+    try {
+      if (await vault.adapter.exists(path)) {
+        return vault.getAbstractFileByPath(path);
+      }
+    } catch {
+      // Fall through to createFolder
+    }
+  }
   try {
     await vault.createFolder(path);
   } catch (error) {
-    if (!isFolder(vault.getAbstractFileByPath(path))) throw error;
+    const after = vault.getAbstractFileByPath(path);
+    if (after && !isFolder(after)) throw error;
+    const msg = String(error?.message || error || '').toLowerCase();
+    if (!isFolder(after) && !msg.includes('already exists')) throw error;
   }
   return vault.getAbstractFileByPath(path);
 }
@@ -63,23 +75,34 @@ async function ensureStructure(vault) {
   await ensureFolder(vault, ROOT);
   await ensureFolder(vault, INDEX_FOLDER);
   if (!vault.getAbstractFileByPath(WE_PATH)) {
-    const content = [
-      '---',
-      'type: iter-index',
-      'title: "We"',
-      'members: []',
-      `created: ${new Date().toISOString()}`,
-      '---',
-      '',
-      '# We',
-      '',
-      'A shared garden of long-term goals. Each folder inside `Iter/` represents a tree watered through habits and subgoals.',
-      '',
-    ].join('\n');
-    try {
-      await vault.create(WE_PATH, content);
-    } catch (error) {
-      if (!vault.getAbstractFileByPath(WE_PATH)) throw error;
+    let existsOnDisk = false;
+    if (typeof vault.adapter?.exists === 'function') {
+      try {
+        existsOnDisk = await vault.adapter.exists(WE_PATH);
+      } catch {
+        existsOnDisk = false;
+      }
+    }
+    if (!existsOnDisk) {
+      const content = [
+        '---',
+        'type: iter-index',
+        'title: "We"',
+        'members: []',
+        `created: ${new Date().toISOString()}`,
+        '---',
+        '',
+        '# We',
+        '',
+        'A shared garden of long-term goals. Each folder inside `Iter/` represents a tree watered through habits and subgoals.',
+        '',
+      ].join('\n');
+      try {
+        await vault.create(WE_PATH, content);
+      } catch (error) {
+        const msg = String(error?.message || error || '').toLowerCase();
+        if (!vault.getAbstractFileByPath(WE_PATH) && !msg.includes('already exists')) throw error;
+      }
     }
   }
   return vault.getAbstractFileByPath(ROOT);

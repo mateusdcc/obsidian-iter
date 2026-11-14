@@ -22,6 +22,7 @@ class Plugin {
 
 class Modal {
   constructor(app) { this.app = app; }
+  get doc() { return typeof document !== 'undefined' ? document : null; }
   open() { this.app.lastModal = this; }
   close() {}
 }
