@@ -1197,14 +1197,19 @@ input.iter-due-input {
 /* ---------- Widgets ---------- */
 
 .iter-widget-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 14px;
 }
 
 .iter-widget-card {
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  flex: 1 1 220px;
+  min-width: 200px;
   gap: 10px;
   padding: 16px 18px;
   border: 1px solid var(--background-modifier-border);
@@ -1212,13 +1217,31 @@ input.iter-due-input {
   background: var(--background-secondary);
 }
 
-.iter-widget-card.is-wide {
-  grid-column: span 2;
+.iter-widget-card.is-wide:not(.has-custom-width) {
+  flex: 2 1 440px;
+  min-width: 320px;
+}
+
+.iter-widget-card.has-custom-height {
+  overflow: hidden;
+}
+
+.iter-widget-card.has-custom-height .iter-note-nav-list {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+}
+
+.iter-widget-card.is-resizing {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  user-select: none;
 }
 
 @media (max-width: 600px) {
-  .iter-widget-card.is-wide {
-    grid-column: span 1;
+  .iter-widget-card.is-wide:not(.has-custom-width) {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 }
 
@@ -1420,28 +1443,39 @@ input.iter-due-input {
 .iter-note-nav-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 220px;
+  gap: 6px;
+  max-height: 360px;
   overflow-y: auto;
+  padding-right: 2px;
 }
 
-.iter-goal-view button.iter-note-nav-item {
+button.iter-note-nav-item,
+.iter-goal-view button.iter-note-nav-item,
+.iter-garden button.iter-note-nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   height: auto;
-  padding: 6px 8px;
+  min-height: 38px;
+  padding: 7px 10px;
   border-radius: var(--radius-s);
   text-align: left;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--background-primary) 55%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 65%, transparent);
 }
 
-.iter-goal-view button.iter-note-nav-item:hover {
+button.iter-note-nav-item:hover,
+.iter-goal-view button.iter-note-nav-item:hover,
+.iter-garden button.iter-note-nav-item:hover {
   background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border);
 }
 
 .iter-note-nav-icon {
   display: inline-flex;
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
@@ -1453,13 +1487,16 @@ input.iter-due-input {
 .iter-note-nav-main {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-width: 0;
+  gap: 2px;
+  flex: 1 1 140px;
+  min-width: 90px;
 }
 
 .iter-note-nav-title {
   color: var(--text-normal);
   font-size: var(--font-ui-small);
+  font-weight: 500;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1468,12 +1505,25 @@ input.iter-due-input {
 .iter-note-nav-path {
   color: var(--text-faint);
   font-size: 11px;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.iter-note-nav-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+  max-width: 52%;
+}
+
+.iter-habit-streak-pill,
 .iter-note-score-pill {
+  flex-shrink: 0;
   padding: 1px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
@@ -1483,6 +1533,7 @@ input.iter-due-input {
 }
 
 .iter-note-date-pill {
+  flex-shrink: 0;
   color: var(--text-faint);
   font-size: 11px;
 }
@@ -2905,4 +2956,68 @@ button.iter-habit-water-inline-btn.is-watered {
   color: var(--text-normal);
   border-color: color-mix(in srgb, var(--interactive-accent) 50%, var(--background-modifier-border));
 }
+
+/* Interactive Widget Border & Corner Resize Handles */
+.iter-widget-resize-handle {
+  position: absolute;
+  z-index: 4;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+
+.iter-widget-resize-handle.is-e {
+  top: 8px;
+  right: -3px;
+  bottom: 14px;
+  width: 7px;
+  cursor: ew-resize;
+  border-radius: 999px;
+}
+
+.iter-widget-resize-handle.is-s {
+  left: 8px;
+  right: 14px;
+  bottom: -3px;
+  height: 7px;
+  cursor: ns-resize;
+  border-radius: 999px;
+}
+
+.iter-widget-resize-handle.is-se {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  border-bottom-right-radius: 12px;
+  opacity: 0;
+}
+
+.iter-widget-resize-handle.is-se::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  border-bottom-right-radius: 2px;
+  opacity: 0.7;
+}
+
+.iter-widget-card:hover .iter-widget-resize-handle.is-se,
+.iter-widget-card.is-resizing .iter-widget-resize-handle.is-se {
+  opacity: 1;
+}
+
+.iter-widget-resize-handle.is-e:hover,
+.iter-widget-resize-handle.is-s:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 50%, transparent);
+}
+
+.iter-widget-resize-handle.is-se:hover::after {
+  border-color: var(--interactive-accent);
+  opacity: 1;
+}
+
 

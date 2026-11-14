@@ -29,6 +29,7 @@ const {
   removeDatasetEntry,
   addWidget,
   updateWidget,
+  resizeWidget,
   removeWidget,
   moveWidget,
   duplicateWidget,
@@ -522,6 +523,98 @@ class GoalView extends ItemView {
     }
   }
 
+  applyWidgetDimensions(card, widget) {
+    if (widget?.width && Number.isFinite(widget.width)) {
+      card.style.width = `${widget.width}px`;
+      card.style.flex = `0 0 ${widget.width}px`;
+      card.style.maxWidth = '100%';
+      card.addClass?.('has-custom-width');
+    }
+    if (widget?.height && Number.isFinite(widget.height)) {
+      card.style.height = `${widget.height}px`;
+      card.addClass?.('has-custom-height');
+    }
+  }
+
+  attachWidgetResizeHandles(card, widget) {
+    if (!widget?.id) return;
+    const handles = [
+      { mode: 'e', cls: 'iter-widget-resize-handle is-e', title: 'Drag right border to resize width (double-click to reset)' },
+      { mode: 's', cls: 'iter-widget-resize-handle is-s', title: 'Drag bottom border to resize height (double-click to reset)' },
+      { mode: 'se', cls: 'iter-widget-resize-handle is-se', title: 'Drag corner to resize widget (double-click to reset)' },
+    ];
+
+    for (const h of handles) {
+      const handleEl = card.createDiv({
+        cls: h.cls,
+        attr: { title: h.title, 'data-resize-mode': h.mode },
+      });
+
+      handleEl.addEventListener('dblclick', async event => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        widget.width = null;
+        widget.height = null;
+        await resizeWidget(this.app, this.file, widget.id, { width: null, height: null });
+        this.render();
+      });
+
+      handleEl.addEventListener('mousedown', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+
+        const rect = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+        const startW = (rect && rect.width > 0) ? rect.width : (widget.width || 420);
+        const startH = (rect && rect.height > 0) ? rect.height : (widget.height || 240);
+        const startX = Number(event.clientX) || 0;
+        const startY = Number(event.clientY) || 0;
+
+        let nextW = widget.width ?? null;
+        let nextH = widget.height ?? null;
+        let moved = false;
+
+        card.addClass?.('is-resizing');
+
+        const onMove = moveEv => {
+          const dx = (Number(moveEv.clientX) || 0) - startX;
+          const dy = (Number(moveEv.clientY) || 0) - startY;
+          if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
+
+          if (h.mode === 'e' || h.mode === 'se') {
+            nextW = Math.round(Math.max(200, Math.min(1800, startW + dx)));
+            card.style.width = `${nextW}px`;
+            card.style.flex = `0 0 ${nextW}px`;
+            card.style.maxWidth = '100%';
+            card.addClass?.('has-custom-width');
+          }
+          if (h.mode === 's' || h.mode === 'se') {
+            nextH = Math.round(Math.max(110, Math.min(1400, startH + dy)));
+            card.style.height = `${nextH}px`;
+            card.addClass?.('has-custom-height');
+          }
+        };
+
+        const onUp = async () => {
+          if (typeof window !== 'undefined' && window?.removeEventListener) {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+          }
+          card.removeClass?.('is-resizing');
+          if (!moved) return;
+          widget.width = nextW;
+          widget.height = nextH;
+          await resizeWidget(this.app, this.file, widget.id, { width: nextW, height: nextH });
+        };
+
+        if (typeof window !== 'undefined' && window?.addEventListener) {
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }
+      });
+    }
+  }
+
   renderWidgetCard(grid, widget, dataset, doc) {
     const callbacks = {
       onOpenFile: file => void this.plugin.openFile(file),
@@ -541,6 +634,7 @@ class GoalView extends ItemView {
       const card = grid.createDiv({
         cls: `iter-widget-card type-${out.displayType} is-pipeline${wide ? ' is-wide' : ''}`,
       });
+      this.applyWidgetDimensions(card, widget);
 
       const top = card.createDiv({ cls: 'iter-widget-top' });
       top.createSpan({ text: widget.title || 'Custom Flow', cls: 'iter-widget-title' });
@@ -577,6 +671,7 @@ class GoalView extends ItemView {
       });
 
       renderWidgetDisplayBody(card, out, callbacks);
+      this.attachWidgetResizeHandles(card, widget);
       return;
     }
 
@@ -584,6 +679,8 @@ class GoalView extends ItemView {
     const card = grid.createDiv({
       cls: `iter-widget-card type-${widget.type}${wide ? ' is-wide' : ''}`,
     });
+    this.applyWidgetDimensions(card, widget);
+    this.attachWidgetResizeHandles(card, widget);
 
     const top = card.createDiv({ cls: 'iter-widget-top' });
     const rawBaseTitle = !dataset
@@ -1130,6 +1227,12 @@ function renderDocumentWidgetsSection(shell, { app, plugin, file, doc, onRefresh
     file,
     render: () => {
       if (typeof onRefresh === 'function') onRefresh();
+    },
+    applyWidgetDimensions(card, widget) {
+      return GoalView.prototype.applyWidgetDimensions.call(this, card, widget);
+    },
+    attachWidgetResizeHandles(card, widget) {
+      return GoalView.prototype.attachWidgetResizeHandles.call(this, card, widget);
     },
     renderWidgetReorderAndDuplicate(actions, widget, d) {
       return GoalView.prototype.renderWidgetReorderAndDuplicate.call(this, actions, widget, d);

@@ -132,24 +132,41 @@ function renderWidgetDisplayBody(card, payload, { onOpenFile, onOpenGoal, onWate
         const subParts = [];
         if (entry.treeTitle) subParts.push(entry.treeTitle);
         if (entry.schedule?.cadenceLabel) subParts.push(entry.schedule.cadenceLabel);
+        if (entry.schedule && !entry.schedule.dueToday && entry.schedule.appearLabel) {
+          subParts.push(entry.schedule.appearLabel);
+        }
         if (subParts.length) {
           main.createSpan({ text: subParts.join(' · '), cls: 'iter-note-nav-path' });
         }
-      } else if (entry.path) {
-        const folder = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : 'Vault root';
-        const origin = entry.sourceTitle ? `${entry.sourceTitle} · ${folder}` : folder;
-        main.createSpan({ text: origin, cls: 'iter-note-nav-path' });
-      }
-      if (Array.isArray(entry.propsList) && entry.propsList.length > 0) {
-        for (const p of entry.propsList) {
-          const valStr = p.num !== null && p.num !== undefined ? formatNumber(p.num) : String(p.raw ?? p.value ?? '');
-          itemBtn.createSpan({ text: `${p.key}: ${valStr}`, cls: 'iter-note-score-pill' });
+        if (entry.schedule?.streak > 0) {
+          itemBtn.createSpan({
+            text: `${entry.schedule.streak}d`,
+            cls: 'iter-habit-streak-pill',
+            attr: { title: `${entry.schedule.streak}-day streak` },
+          });
         }
-      } else if (!isHabitEntry && entry.value !== null && entry.value !== undefined) {
-        itemBtn.createSpan({ text: formatNumber(entry.value), cls: 'iter-note-score-pill' });
-      }
-      if (entry.date) {
-        itemBtn.createSpan({ text: entry.date, cls: 'iter-note-date-pill' });
+      } else {
+        if (entry.path) {
+          const folder = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : 'Vault root';
+          const origin = entry.sourceTitle ? `${entry.sourceTitle} · ${folder}` : folder;
+          main.createSpan({ text: origin, cls: 'iter-note-nav-path' });
+        }
+        const hasProps = Array.isArray(entry.propsList) && entry.propsList.length > 0;
+        const hasVal = !hasProps && entry.value !== null && entry.value !== undefined;
+        if (hasProps || hasVal || entry.date) {
+          const metaWrap = itemBtn.createSpan({ cls: 'iter-note-nav-meta' });
+          if (hasProps) {
+            for (const p of entry.propsList) {
+              const valStr = p.num !== null && p.num !== undefined ? formatNumber(p.num) : String(p.raw ?? p.value ?? '');
+              metaWrap.createSpan({ text: `${p.key}: ${valStr}`, cls: 'iter-note-score-pill' });
+            }
+          } else if (hasVal) {
+            metaWrap.createSpan({ text: formatNumber(entry.value), cls: 'iter-note-score-pill' });
+          }
+          if (entry.date) {
+            metaWrap.createSpan({ text: entry.date, cls: 'iter-note-date-pill' });
+          }
+        }
       }
       itemBtn.addEventListener('click', () => {
         if (entry.habitFile && onOpenGoal) onOpenGoal(entry.habitFile);

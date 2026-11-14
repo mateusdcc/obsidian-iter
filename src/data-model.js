@@ -282,6 +282,13 @@ function normalizePipelineRef(raw) {
   };
 }
 
+function normalizeWidgetDimension(val, min = 140, max = 1800) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = toFiniteNumber(val);
+  if (n === null || n <= 0) return null;
+  return Math.round(Math.max(min, Math.min(max, n)));
+}
+
 function normalizeWidget(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const type = normalizeWidgetType(raw.type);
@@ -306,6 +313,8 @@ function normalizeWidget(raw) {
     target: toFiniteNumber(raw.target),
     variant: normalizeChartVariant(raw.variant),
     metricKey: typeof raw.metricKey === 'string' && raw.metricKey.trim() ? raw.metricKey.trim() : '',
+    width: normalizeWidgetDimension(raw.width, 180, 1800),
+    height: normalizeWidgetDimension(raw.height, 100, 1400),
   };
 }
 
@@ -1300,6 +1309,8 @@ function buildWidgetPayload(raw, existingId = '') {
     target: toFiniteNumber(raw.target),
     variant: normalizeChartVariant(raw.variant),
     metricKey: typeof raw.metricKey === 'string' ? raw.metricKey.trim() : '',
+    width: normalizeWidgetDimension(raw.width, 180, 1800),
+    height: normalizeWidgetDimension(raw.height, 100, 1400),
   };
 }
 
@@ -1313,17 +1324,49 @@ async function addWidget(app, file, config) {
 }
 
 async function updateWidget(app, file, widgetId, config) {
-  const widget = buildWidgetPayload(config, widgetId);
+  let widget = buildWidgetPayload(config, widgetId);
   await app.fileManager.processFrontMatter(file, fm => {
     const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
     const idx = existing.findIndex(item => item?.id === widgetId);
     if (idx === -1) {
       fm.widgets = [...existing, widget];
     } else {
+      const prev = existing[idx] || {};
+      widget = {
+        ...widget,
+        width: config.width !== undefined
+          ? normalizeWidgetDimension(config.width, 180, 1800)
+          : normalizeWidgetDimension(prev.width, 180, 1800),
+        height: config.height !== undefined
+          ? normalizeWidgetDimension(config.height, 100, 1400)
+          : normalizeWidgetDimension(prev.height, 100, 1400),
+      };
       fm.widgets = existing.map((item, i) => (i === idx ? widget : item));
     }
   });
   return widget;
+}
+
+async function resizeWidget(app, file, widgetId, { width, height }) {
+  let updated = null;
+  await app.fileManager.processFrontMatter(file, fm => {
+    const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+    const idx = existing.findIndex(item => item?.id === widgetId);
+    if (idx === -1) return;
+    const prev = existing[idx] || {};
+    updated = {
+      ...prev,
+      width: width !== undefined
+        ? normalizeWidgetDimension(width, 180, 1800)
+        : normalizeWidgetDimension(prev.width, 180, 1800),
+      height: height !== undefined
+        ? normalizeWidgetDimension(height, 100, 1400)
+        : normalizeWidgetDimension(prev.height, 100, 1400),
+    };
+    existing[idx] = updated;
+    fm.widgets = existing;
+  });
+  return updated;
 }
 
 async function removeWidget(app, file, widgetId) {
@@ -1586,6 +1629,7 @@ module.exports = {
   removeDatasetEntry,
   addWidget,
   updateWidget,
+  resizeWidget,
   removeWidget,
   moveWidget,
   duplicateWidget,

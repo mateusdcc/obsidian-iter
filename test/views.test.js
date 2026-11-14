@@ -953,11 +953,23 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     );
     const inlineWaterBtns = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-habit-water-inline-btn'));
     assert.ok(inlineWaterBtns.length >= 1, 'Habits for Today widget should render inline Water buttons');
+    // Habit entries should NOT render flooded "tree: ...", "appear: ...", "cadence: ..." score pills
+    const habitItemBtns = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('is-habit-entry'));
+    assert.ok(habitItemBtns.length >= 1);
+    assert.equal(
+      habitItemBtns[0].findAll(el => el.className.split(/\s+/).includes('iter-note-score-pill')).length,
+      0,
+      'Habit widget rows should not be flooded with raw key:value score pills',
+    );
     await fire(inlineWaterBtns[0], 'click');
     const wateredBtnsAfter = gardenView.contentEl.findAll(
       el => el.className.split(/\s+/).includes('iter-habit-water-inline-btn') && el.className.split(/\s+/).includes('is-watered'),
     );
     assert.ok(wateredBtnsAfter.length >= 1, 'Clicking inline Water button should water the habit and update widget row');
+
+    // k) Every widget card renders border/corner resize handles (is-e, is-s, is-se)
+    const resizeHandles = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-widget-resize-handle'));
+    assert.equal(resizeHandles.length, 3, 'Widget card should render right, bottom, and corner resize handles');
   } finally {
     global.document = prevDocument;
   }

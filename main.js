@@ -1025,6 +1025,12 @@ var require_data_model = __commonJS({
         edges: JSON.parse(JSON.stringify(edges))
       };
     }
+    function normalizeWidgetDimension(val, min = 140, max = 1800) {
+      if (val === null || val === void 0 || val === "") return null;
+      const n = toFiniteNumber(val);
+      if (n === null || n <= 0) return null;
+      return Math.round(Math.max(min, Math.min(max, n)));
+    }
     function normalizeWidget(raw) {
       if (!raw || typeof raw !== "object") return null;
       const type = normalizeWidgetType(raw.type);
@@ -1046,7 +1052,9 @@ var require_data_model = __commonJS({
         mode: normalizeBarMode(raw.mode),
         target: toFiniteNumber(raw.target),
         variant: normalizeChartVariant(raw.variant),
-        metricKey: typeof raw.metricKey === "string" && raw.metricKey.trim() ? raw.metricKey.trim() : ""
+        metricKey: typeof raw.metricKey === "string" && raw.metricKey.trim() ? raw.metricKey.trim() : "",
+        width: normalizeWidgetDimension(raw.width, 180, 1800),
+        height: normalizeWidgetDimension(raw.height, 100, 1400)
       };
     }
     function resolveGoalKind(file, fm) {
@@ -1937,7 +1945,9 @@ var require_data_model = __commonJS({
         mode: normalizeBarMode(raw.mode),
         target: toFiniteNumber(raw.target),
         variant: normalizeChartVariant(raw.variant),
-        metricKey: typeof raw.metricKey === "string" ? raw.metricKey.trim() : ""
+        metricKey: typeof raw.metricKey === "string" ? raw.metricKey.trim() : "",
+        width: normalizeWidgetDimension(raw.width, 180, 1800),
+        height: normalizeWidgetDimension(raw.height, 100, 1400)
       };
     }
     async function addWidget2(app, file, config) {
@@ -1949,17 +1959,40 @@ var require_data_model = __commonJS({
       return widget;
     }
     async function updateWidget(app, file, widgetId, config) {
-      const widget = buildWidgetPayload(config, widgetId);
+      let widget = buildWidgetPayload(config, widgetId);
       await app.fileManager.processFrontMatter(file, (fm) => {
         const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
         const idx = existing.findIndex((item) => item?.id === widgetId);
         if (idx === -1) {
           fm.widgets = [...existing, widget];
         } else {
+          const prev = existing[idx] || {};
+          widget = {
+            ...widget,
+            width: config.width !== void 0 ? normalizeWidgetDimension(config.width, 180, 1800) : normalizeWidgetDimension(prev.width, 180, 1800),
+            height: config.height !== void 0 ? normalizeWidgetDimension(config.height, 100, 1400) : normalizeWidgetDimension(prev.height, 100, 1400)
+          };
           fm.widgets = existing.map((item, i) => i === idx ? widget : item);
         }
       });
       return widget;
+    }
+    async function resizeWidget(app, file, widgetId, { width, height }) {
+      let updated = null;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+        const idx = existing.findIndex((item) => item?.id === widgetId);
+        if (idx === -1) return;
+        const prev = existing[idx] || {};
+        updated = {
+          ...prev,
+          width: width !== void 0 ? normalizeWidgetDimension(width, 180, 1800) : normalizeWidgetDimension(prev.width, 180, 1800),
+          height: height !== void 0 ? normalizeWidgetDimension(height, 100, 1400) : normalizeWidgetDimension(prev.height, 100, 1400)
+        };
+        existing[idx] = updated;
+        fm.widgets = existing;
+      });
+      return updated;
     }
     async function removeWidget(app, file, widgetId) {
       await app.fileManager.processFrontMatter(file, (fm) => {
@@ -2205,6 +2238,7 @@ var require_data_model = __commonJS({
       removeDatasetEntry,
       addWidget: addWidget2,
       updateWidget,
+      resizeWidget,
       removeWidget,
       moveWidget,
       duplicateWidget,
@@ -3925,24 +3959,41 @@ var require_canvas_editor = __commonJS({
             const subParts = [];
             if (entry.treeTitle) subParts.push(entry.treeTitle);
             if (entry.schedule?.cadenceLabel) subParts.push(entry.schedule.cadenceLabel);
+            if (entry.schedule && !entry.schedule.dueToday && entry.schedule.appearLabel) {
+              subParts.push(entry.schedule.appearLabel);
+            }
             if (subParts.length) {
               main.createSpan({ text: subParts.join(" \xB7 "), cls: "iter-note-nav-path" });
             }
-          } else if (entry.path) {
-            const folder = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "Vault root";
-            const origin = entry.sourceTitle ? `${entry.sourceTitle} \xB7 ${folder}` : folder;
-            main.createSpan({ text: origin, cls: "iter-note-nav-path" });
-          }
-          if (Array.isArray(entry.propsList) && entry.propsList.length > 0) {
-            for (const p of entry.propsList) {
-              const valStr = p.num !== null && p.num !== void 0 ? formatNumber(p.num) : String(p.raw ?? p.value ?? "");
-              itemBtn.createSpan({ text: `${p.key}: ${valStr}`, cls: "iter-note-score-pill" });
+            if (entry.schedule?.streak > 0) {
+              itemBtn.createSpan({
+                text: `${entry.schedule.streak}d`,
+                cls: "iter-habit-streak-pill",
+                attr: { title: `${entry.schedule.streak}-day streak` }
+              });
             }
-          } else if (!isHabitEntry && entry.value !== null && entry.value !== void 0) {
-            itemBtn.createSpan({ text: formatNumber(entry.value), cls: "iter-note-score-pill" });
-          }
-          if (entry.date) {
-            itemBtn.createSpan({ text: entry.date, cls: "iter-note-date-pill" });
+          } else {
+            if (entry.path) {
+              const folder = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "Vault root";
+              const origin = entry.sourceTitle ? `${entry.sourceTitle} \xB7 ${folder}` : folder;
+              main.createSpan({ text: origin, cls: "iter-note-nav-path" });
+            }
+            const hasProps = Array.isArray(entry.propsList) && entry.propsList.length > 0;
+            const hasVal = !hasProps && entry.value !== null && entry.value !== void 0;
+            if (hasProps || hasVal || entry.date) {
+              const metaWrap = itemBtn.createSpan({ cls: "iter-note-nav-meta" });
+              if (hasProps) {
+                for (const p of entry.propsList) {
+                  const valStr = p.num !== null && p.num !== void 0 ? formatNumber(p.num) : String(p.raw ?? p.value ?? "");
+                  metaWrap.createSpan({ text: `${p.key}: ${valStr}`, cls: "iter-note-score-pill" });
+                }
+              } else if (hasVal) {
+                metaWrap.createSpan({ text: formatNumber(entry.value), cls: "iter-note-score-pill" });
+              }
+              if (entry.date) {
+                metaWrap.createSpan({ text: entry.date, cls: "iter-note-date-pill" });
+              }
+            }
           }
           itemBtn.addEventListener("click", () => {
             if (entry.habitFile && onOpenGoal) onOpenGoal(entry.habitFile);
@@ -7377,6 +7428,7 @@ var require_goal_view = __commonJS({
       removeDatasetEntry,
       addWidget: addWidget2,
       updateWidget,
+      resizeWidget,
       removeWidget,
       moveWidget,
       duplicateWidget,
@@ -7797,6 +7849,86 @@ var require_goal_view = __commonJS({
           });
         }
       }
+      applyWidgetDimensions(card, widget) {
+        if (widget?.width && Number.isFinite(widget.width)) {
+          card.style.width = `${widget.width}px`;
+          card.style.flex = `0 0 ${widget.width}px`;
+          card.style.maxWidth = "100%";
+          card.addClass?.("has-custom-width");
+        }
+        if (widget?.height && Number.isFinite(widget.height)) {
+          card.style.height = `${widget.height}px`;
+          card.addClass?.("has-custom-height");
+        }
+      }
+      attachWidgetResizeHandles(card, widget) {
+        if (!widget?.id) return;
+        const handles = [
+          { mode: "e", cls: "iter-widget-resize-handle is-e", title: "Drag right border to resize width (double-click to reset)" },
+          { mode: "s", cls: "iter-widget-resize-handle is-s", title: "Drag bottom border to resize height (double-click to reset)" },
+          { mode: "se", cls: "iter-widget-resize-handle is-se", title: "Drag corner to resize widget (double-click to reset)" }
+        ];
+        for (const h of handles) {
+          const handleEl = card.createDiv({
+            cls: h.cls,
+            attr: { title: h.title, "data-resize-mode": h.mode }
+          });
+          handleEl.addEventListener("dblclick", async (event) => {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            widget.width = null;
+            widget.height = null;
+            await resizeWidget(this.app, this.file, widget.id, { width: null, height: null });
+            this.render();
+          });
+          handleEl.addEventListener("mousedown", (event) => {
+            if (event.button !== void 0 && event.button !== 0) return;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const rect = typeof card.getBoundingClientRect === "function" ? card.getBoundingClientRect() : null;
+            const startW = rect && rect.width > 0 ? rect.width : widget.width || 420;
+            const startH = rect && rect.height > 0 ? rect.height : widget.height || 240;
+            const startX = Number(event.clientX) || 0;
+            const startY = Number(event.clientY) || 0;
+            let nextW = widget.width ?? null;
+            let nextH = widget.height ?? null;
+            let moved = false;
+            card.addClass?.("is-resizing");
+            const onMove = (moveEv) => {
+              const dx = (Number(moveEv.clientX) || 0) - startX;
+              const dy = (Number(moveEv.clientY) || 0) - startY;
+              if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
+              if (h.mode === "e" || h.mode === "se") {
+                nextW = Math.round(Math.max(200, Math.min(1800, startW + dx)));
+                card.style.width = `${nextW}px`;
+                card.style.flex = `0 0 ${nextW}px`;
+                card.style.maxWidth = "100%";
+                card.addClass?.("has-custom-width");
+              }
+              if (h.mode === "s" || h.mode === "se") {
+                nextH = Math.round(Math.max(110, Math.min(1400, startH + dy)));
+                card.style.height = `${nextH}px`;
+                card.addClass?.("has-custom-height");
+              }
+            };
+            const onUp = async () => {
+              if (typeof window !== "undefined" && window?.removeEventListener) {
+                window.removeEventListener("mousemove", onMove);
+                window.removeEventListener("mouseup", onUp);
+              }
+              card.removeClass?.("is-resizing");
+              if (!moved) return;
+              widget.width = nextW;
+              widget.height = nextH;
+              await resizeWidget(this.app, this.file, widget.id, { width: nextW, height: nextH });
+            };
+            if (typeof window !== "undefined" && window?.addEventListener) {
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }
+          });
+        }
+      }
       renderWidgetCard(grid, widget, dataset, doc) {
         const callbacks = {
           onOpenFile: (file) => void this.plugin.openFile(file),
@@ -7815,6 +7947,7 @@ var require_goal_view = __commonJS({
           const card2 = grid.createDiv({
             cls: `iter-widget-card type-${out.displayType} is-pipeline${wide2 ? " is-wide" : ""}`
           });
+          this.applyWidgetDimensions(card2, widget);
           const top2 = card2.createDiv({ cls: "iter-widget-top" });
           top2.createSpan({ text: widget.title || "Custom Flow", cls: "iter-widget-title" });
           const actions2 = top2.createDiv({ cls: "iter-widget-top-actions" });
@@ -7847,12 +7980,15 @@ var require_goal_view = __commonJS({
             this.render();
           });
           renderWidgetDisplayBody(card2, out, callbacks);
+          this.attachWidgetResizeHandles(card2, widget);
           return;
         }
         const wide = widget.type === "chart" || widget.type === "goal_bar" || widget.type === "note_navigator";
         const card = grid.createDiv({
           cls: `iter-widget-card type-${widget.type}${wide ? " is-wide" : ""}`
         });
+        this.applyWidgetDimensions(card, widget);
+        this.attachWidgetResizeHandles(card, widget);
         const top = card.createDiv({ cls: "iter-widget-top" });
         const rawBaseTitle = !dataset ? "Missing dataset" : dataset.name || (widget.relation ? describeRelation(widget.relation, dataset.sources) : "Widget");
         const baseTitle = dataset && widget.metricKey && widget.metricKey !== dataset.metricKey ? `${rawBaseTitle} (${widget.metricKey})` : rawBaseTitle;
@@ -8320,6 +8456,12 @@ var require_goal_view = __commonJS({
         file,
         render: () => {
           if (typeof onRefresh === "function") onRefresh();
+        },
+        applyWidgetDimensions(card, widget) {
+          return GoalView2.prototype.applyWidgetDimensions.call(this, card, widget);
+        },
+        attachWidgetResizeHandles(card, widget) {
+          return GoalView2.prototype.attachWidgetResizeHandles.call(this, card, widget);
         },
         renderWidgetReorderAndDuplicate(actions, widget, d) {
           return GoalView2.prototype.renderWidgetReorderAndDuplicate.call(this, actions, widget, d);
