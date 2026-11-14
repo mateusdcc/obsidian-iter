@@ -2630,3 +2630,44 @@ button.iter-flow-port.is-armed {
 .iter-entry-row:hover .iter-entry-edit {
   opacity: 1;
 }
+
+.iter-smart-suggestions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  border: 1px dashed var(--background-modifier-border);
+}
+
+.iter-smart-suggestions-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
+.iter-smart-suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.iter-smart-suggestion-chip:hover {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
+}

@@ -1150,6 +1150,181 @@ async function removeWidget(app, file, widgetId) {
   });
 }
 
+async function moveWidget(app, file, widgetId, direction) {
+  let moved = false;
+  await app.fileManager.processFrontMatter(file, fm => {
+    const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+    const idx = existing.findIndex(item => item?.id === widgetId);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= existing.length) return;
+    const temp = existing[idx];
+    existing[idx] = existing[targetIdx];
+    existing[targetIdx] = temp;
+    fm.widgets = existing;
+    moved = true;
+  });
+  return moved;
+}
+
+async function duplicateWidget(app, file, widgetId) {
+  let cloned = null;
+  await app.fileManager.processFrontMatter(file, fm => {
+    const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+    const idx = existing.findIndex(item => item?.id === widgetId);
+    if (idx === -1) return;
+    const orig = existing[idx];
+    const baseTitle = typeof orig.title === 'string' && orig.title.trim() ? orig.title.trim() : 'Widget';
+    cloned = JSON.parse(JSON.stringify(orig));
+    cloned.id = generateId('w');
+    cloned.title = `${baseTitle} (copy)`;
+    existing.splice(idx + 1, 0, cloned);
+    fm.widgets = existing;
+  });
+  return cloned;
+}
+
+function buildSmartWidgetSuggestions(app, doc) {
+  if (!doc) return [];
+  const existing = Array.isArray(doc.widgets) ? doc.widgets : [];
+  const hasMatch = (type, datasetId, aggOrMode, metricKey) =>
+    existing.some(w => {
+      if (w.type !== type) return false;
+      if (datasetId && w.datasetId !== datasetId) return false;
+      if (aggOrMode && w.agg !== aggOrMode && w.mode !== aggOrMode) return false;
+      if (metricKey && (w.metricKey || '') !== metricKey) return false;
+      return true;
+    });
+
+  const suggestions = [];
+
+  if (doc.kind === 'habit' && !existing.some(w => w.type === 'streak')) {
+    suggestions.push({
+      label: '+ Habit Streak',
+      icon: 'flame',
+      config: { title: 'Streak', type: 'streak' },
+    });
+  }
+
+  for (const ds of doc.datasets || []) {
+    if (ds.type === 'number_time') {
+      if (!hasMatch('stat', ds.id, 'sum', '')) {
+        suggestions.push({
+          label: `+ Sum of ${ds.name}`,
+          icon: 'sigma',
+          config: { title: `Total ${ds.name}`, type: 'stat', datasetId: ds.id, agg: 'sum', unit: ds.unit || '' },
+        });
+      }
+      if (!hasMatch('goal_bar', ds.id, 'progress', '')) {
+        suggestions.push({
+          label: `+ ${ds.name} Progress Bar`,
+          icon: 'bar-chart-horizontal',
+          config: { title: `${ds.name} Progress`, type: 'goal_bar', datasetId: ds.id, mode: 'progress', unit: ds.unit || '' },
+        });
+      }
+      if (!hasMatch('chart', ds.id, '', '')) {
+        suggestions.push({
+          label: `+ ${ds.name} Time Graph`,
+          icon: 'trending-up',
+          config: { title: `${ds.name} Over Time`, type: 'chart', datasetId: ds.id, variant: 'line', unit: ds.unit || '' },
+        });
+      }
+    } else if (ds.type === 'note' || ds.type === 'note_time') {
+      if (!hasMatch('note_navigator', ds.id, '', '')) {
+        suggestions.push({
+          label: `+ ${ds.name} Navigator`,
+          icon: 'folder-open',
+          config: { title: ds.name, type: 'note_navigator', datasetId: ds.id, metricKey: ds.metricKeys?.[0] || '' },
+        });
+      }
+      for (const key of ds.metricKeys || []) {
+        if (!hasMatch('stat', ds.id, 'sum', key)) {
+          suggestions.push({
+            label: `+ Sum "${key}" (${ds.name})`,
+            icon: 'sigma',
+            config: { title: `Total ${key}`, type: 'stat', datasetId: ds.id, agg: 'sum', metricKey: key },
+          });
+        }
+      }
+    } else if (ds.type === 'text') {
+      if (!hasMatch('stat', ds.id, 'count', '')) {
+        suggestions.push({
+          label: `+ Count ${ds.name}`,
+          icon: 'hash',
+          config: { title: `${ds.name} Count`, type: 'stat', datasetId: ds.id, agg: 'count', unit: ds.unit || '' },
+        });
+      }
+    } else if (ds.type === 'rollup') {
+      if (!hasMatch('stat', ds.id, 'sum', '')) {
+        suggestions.push({
+          label: `+ Sum ${ds.name}`,
+          icon: 'git-merge',
+          config: { title: ds.name, type: 'stat', datasetId: ds.id, agg: 'sum', unit: ds.unit || '' },
+        });
+      }
+    }
+  }
+
+  if (doc.kind === 'tree' && doc.treePath) {
+    const childDs = discoverChildDatasets(app, doc.treePath);
+    if (childDs.length > 0) {
+      const hasTreeTotal = existing.some(w => w.type === 'stat' && w.relation && !w.metricKey);
+      if (!hasTreeTotal) {
+        suggestions.push({
+          label: '+ Sum All Child Counters',
+          icon: 'git-merge',
+          config: {
+            title: 'Tree Total',
+            type: 'stat',
+            agg: 'sum',
+            relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+          },
+        });
+      }
+      const childKeys = new Set();
+      for (const item of childDs) {
+        for (const k of item.dataset.metricKeys || []) {
+          if (k) childKeys.add(k);
+        }
+      }
+      for (const propKey of childKeys) {
+        const alreadyHasProp = existing.some(
+          w => (w.metricKey === propKey || w.relation?.metricKey === propKey) ||
+            (w.type === 'pipeline' && JSON.stringify(w.pipeline || {}).includes(`"${propKey}"`)),
+        );
+        if (!alreadyHasProp) {
+          suggestions.push({
+            label: `+ Tree "${propKey}" Sum`,
+            icon: 'sparkles',
+            config: {
+              title: `Total ${propKey}`,
+              type: 'stat',
+              agg: 'sum',
+              metricKey: propKey,
+              relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all', metricKey: propKey },
+            },
+          });
+        }
+      }
+      const hasNoteChildren = childDs.some(c => c.dataset.type === 'note' || c.dataset.type === 'note_time');
+      const hasTreeNav = existing.some(w => w.type === 'note_navigator' && w.relation);
+      if (hasNoteChildren && !hasTreeNav) {
+        suggestions.push({
+          label: '+ All Tree Notes Navigator',
+          icon: 'book-open',
+          config: {
+            title: 'All Tree Notes',
+            type: 'note_navigator',
+            relation: { mode: 'query', childKinds: 'all', dataFilter: 'note', perChildAgg: 'all' },
+          },
+        });
+      }
+    }
+  }
+
+  return suggestions.slice(0, 6);
+}
+
 module.exports = {
   DATASET_TYPES,
   WIDGET_TYPES,
@@ -1191,4 +1366,7 @@ module.exports = {
   addWidget,
   updateWidget,
   removeWidget,
+  moveWidget,
+  duplicateWidget,
+  buildSmartWidgetSuggestions,
 };

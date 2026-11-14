@@ -13,6 +13,9 @@ const {
   addWidget,
   updateWidget,
   removeWidget,
+  moveWidget,
+  duplicateWidget,
+  buildSmartWidgetSuggestions,
   computeStat,
   computeGoalBar,
   resolveDatasetEntries,
@@ -703,4 +706,21 @@ test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, m
   await updateHabitSchedule(app, hEssays, { frequency: 'weekdays', days: [1, 3, 5] });
   const habitMd = await app.vault.read(hEssays);
   assert.ok(habitMd.includes('Cadence: Mon, Wed, Fri'), 'Markdown body Cadence line should stay synced');
+
+  // duplicateWidget and moveWidget clone and reorder widgets cleanly
+  const clonedWidget = await duplicateWidget(app, treeFile, savedWidget.id);
+  assert.ok(clonedWidget);
+  assert.equal(clonedWidget.title, 'Pages Breakdown (copy)');
+  let docAfterDup = await readGoalDocument(app, treeFile);
+  assert.equal(docAfterDup.widgets.length, 2);
+  assert.equal(docAfterDup.widgets[1].id, clonedWidget.id);
+
+  await moveWidget(app, treeFile, clonedWidget.id, 'up');
+  docAfterDup = await readGoalDocument(app, treeFile);
+  assert.equal(docAfterDup.widgets[0].id, clonedWidget.id);
+
+  // buildSmartWidgetSuggestions discovers 1-click presets for tree and habit documents
+  const treeSugs = buildSmartWidgetSuggestions(app, docAfterDup);
+  assert.ok(treeSugs.length >= 1);
+  assert.ok(treeSugs.some(s => s.label.includes('Sum All Child Counters') || s.label.includes('Tree "chapters" Sum')));
 });

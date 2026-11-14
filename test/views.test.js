@@ -907,6 +907,14 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     await fire(editEntryModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
     assert.equal(editedNumeric.value, 45);
     assert.equal(editedNumeric.date, '2026-04-01');
+
+    // h) GoalView renders 1-click smart suggestion chips and clicking one creates the widget immediately
+    const sugChips = treeView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-smart-suggestion-chip'));
+    assert.ok(sugChips.length >= 1, 'Tree GoalView should render 1-click smart widget suggestions');
+    const widgetsBefore = (await readGoalDocument(app, readingTree)).widgets.length;
+    await fire(sugChips[0], 'click');
+    const widgetsAfter = (await readGoalDocument(app, readingTree)).widgets.length;
+    assert.equal(widgetsAfter, widgetsBefore + 1);
   } finally {
     global.document = prevDocument;
   }

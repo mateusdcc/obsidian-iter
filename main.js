@@ -3456,6 +3456,171 @@ var require_data_model = __commonJS({
         fm.widgets = Array.isArray(fm.widgets) ? fm.widgets.filter((item) => item?.id !== widgetId) : [];
       });
     }
+    async function moveWidget(app, file, widgetId, direction) {
+      let moved = false;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+        const idx = existing.findIndex((item) => item?.id === widgetId);
+        if (idx === -1) return;
+        const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= existing.length) return;
+        const temp = existing[idx];
+        existing[idx] = existing[targetIdx];
+        existing[targetIdx] = temp;
+        fm.widgets = existing;
+        moved = true;
+      });
+      return moved;
+    }
+    async function duplicateWidget(app, file, widgetId) {
+      let cloned = null;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        const existing = Array.isArray(fm.widgets) ? [...fm.widgets] : [];
+        const idx = existing.findIndex((item) => item?.id === widgetId);
+        if (idx === -1) return;
+        const orig = existing[idx];
+        const baseTitle = typeof orig.title === "string" && orig.title.trim() ? orig.title.trim() : "Widget";
+        cloned = JSON.parse(JSON.stringify(orig));
+        cloned.id = generateId("w");
+        cloned.title = `${baseTitle} (copy)`;
+        existing.splice(idx + 1, 0, cloned);
+        fm.widgets = existing;
+      });
+      return cloned;
+    }
+    function buildSmartWidgetSuggestions(app, doc) {
+      if (!doc) return [];
+      const existing = Array.isArray(doc.widgets) ? doc.widgets : [];
+      const hasMatch = (type, datasetId, aggOrMode, metricKey) => existing.some((w) => {
+        if (w.type !== type) return false;
+        if (datasetId && w.datasetId !== datasetId) return false;
+        if (aggOrMode && w.agg !== aggOrMode && w.mode !== aggOrMode) return false;
+        if (metricKey && (w.metricKey || "") !== metricKey) return false;
+        return true;
+      });
+      const suggestions = [];
+      if (doc.kind === "habit" && !existing.some((w) => w.type === "streak")) {
+        suggestions.push({
+          label: "+ Habit Streak",
+          icon: "flame",
+          config: { title: "Streak", type: "streak" }
+        });
+      }
+      for (const ds of doc.datasets || []) {
+        if (ds.type === "number_time") {
+          if (!hasMatch("stat", ds.id, "sum", "")) {
+            suggestions.push({
+              label: `+ Sum of ${ds.name}`,
+              icon: "sigma",
+              config: { title: `Total ${ds.name}`, type: "stat", datasetId: ds.id, agg: "sum", unit: ds.unit || "" }
+            });
+          }
+          if (!hasMatch("goal_bar", ds.id, "progress", "")) {
+            suggestions.push({
+              label: `+ ${ds.name} Progress Bar`,
+              icon: "bar-chart-horizontal",
+              config: { title: `${ds.name} Progress`, type: "goal_bar", datasetId: ds.id, mode: "progress", unit: ds.unit || "" }
+            });
+          }
+          if (!hasMatch("chart", ds.id, "", "")) {
+            suggestions.push({
+              label: `+ ${ds.name} Time Graph`,
+              icon: "trending-up",
+              config: { title: `${ds.name} Over Time`, type: "chart", datasetId: ds.id, variant: "line", unit: ds.unit || "" }
+            });
+          }
+        } else if (ds.type === "note" || ds.type === "note_time") {
+          if (!hasMatch("note_navigator", ds.id, "", "")) {
+            suggestions.push({
+              label: `+ ${ds.name} Navigator`,
+              icon: "folder-open",
+              config: { title: ds.name, type: "note_navigator", datasetId: ds.id, metricKey: ds.metricKeys?.[0] || "" }
+            });
+          }
+          for (const key of ds.metricKeys || []) {
+            if (!hasMatch("stat", ds.id, "sum", key)) {
+              suggestions.push({
+                label: `+ Sum "${key}" (${ds.name})`,
+                icon: "sigma",
+                config: { title: `Total ${key}`, type: "stat", datasetId: ds.id, agg: "sum", metricKey: key }
+              });
+            }
+          }
+        } else if (ds.type === "text") {
+          if (!hasMatch("stat", ds.id, "count", "")) {
+            suggestions.push({
+              label: `+ Count ${ds.name}`,
+              icon: "hash",
+              config: { title: `${ds.name} Count`, type: "stat", datasetId: ds.id, agg: "count", unit: ds.unit || "" }
+            });
+          }
+        } else if (ds.type === "rollup") {
+          if (!hasMatch("stat", ds.id, "sum", "")) {
+            suggestions.push({
+              label: `+ Sum ${ds.name}`,
+              icon: "git-merge",
+              config: { title: ds.name, type: "stat", datasetId: ds.id, agg: "sum", unit: ds.unit || "" }
+            });
+          }
+        }
+      }
+      if (doc.kind === "tree" && doc.treePath) {
+        const childDs = discoverChildDatasets(app, doc.treePath);
+        if (childDs.length > 0) {
+          const hasTreeTotal = existing.some((w) => w.type === "stat" && w.relation && !w.metricKey);
+          if (!hasTreeTotal) {
+            suggestions.push({
+              label: "+ Sum All Child Counters",
+              icon: "git-merge",
+              config: {
+                title: "Tree Total",
+                type: "stat",
+                agg: "sum",
+                relation: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
+              }
+            });
+          }
+          const childKeys = /* @__PURE__ */ new Set();
+          for (const item of childDs) {
+            for (const k of item.dataset.metricKeys || []) {
+              if (k) childKeys.add(k);
+            }
+          }
+          for (const propKey of childKeys) {
+            const alreadyHasProp = existing.some(
+              (w) => w.metricKey === propKey || w.relation?.metricKey === propKey || w.type === "pipeline" && JSON.stringify(w.pipeline || {}).includes(`"${propKey}"`)
+            );
+            if (!alreadyHasProp) {
+              suggestions.push({
+                label: `+ Tree "${propKey}" Sum`,
+                icon: "sparkles",
+                config: {
+                  title: `Total ${propKey}`,
+                  type: "stat",
+                  agg: "sum",
+                  metricKey: propKey,
+                  relation: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all", metricKey: propKey }
+                }
+              });
+            }
+          }
+          const hasNoteChildren = childDs.some((c) => c.dataset.type === "note" || c.dataset.type === "note_time");
+          const hasTreeNav = existing.some((w) => w.type === "note_navigator" && w.relation);
+          if (hasNoteChildren && !hasTreeNav) {
+            suggestions.push({
+              label: "+ All Tree Notes Navigator",
+              icon: "book-open",
+              config: {
+                title: "All Tree Notes",
+                type: "note_navigator",
+                relation: { mode: "query", childKinds: "all", dataFilter: "note", perChildAgg: "all" }
+              }
+            });
+          }
+        }
+      }
+      return suggestions.slice(0, 6);
+    }
     module2.exports = {
       DATASET_TYPES,
       WIDGET_TYPES,
@@ -3496,7 +3661,10 @@ var require_data_model = __commonJS({
       removeDatasetEntry,
       addWidget,
       updateWidget,
-      removeWidget
+      removeWidget,
+      moveWidget,
+      duplicateWidget,
+      buildSmartWidgetSuggestions
     };
   }
 });
@@ -7157,6 +7325,9 @@ var require_goal_view = __commonJS({
       addWidget,
       updateWidget,
       removeWidget,
+      moveWidget,
+      duplicateWidget,
+      buildSmartWidgetSuggestions,
       discoverChildDatasets,
       resolveVirtualDataset,
       resolveWidgetDataset,
@@ -7479,6 +7650,25 @@ var require_goal_view = __commonJS({
             }
           }).open();
         });
+        const suggestions = buildSmartWidgetSuggestions(this.app, doc);
+        if (suggestions.length > 0) {
+          const sugBar = section.createDiv({ cls: "iter-smart-suggestions" });
+          sugBar.createSpan({ text: "Quick add:", cls: "iter-smart-suggestions-label" });
+          for (const sug of suggestions) {
+            const chip = sugBar.createEl("button", {
+              cls: "iter-smart-suggestion-chip",
+              type: "button",
+              attr: { title: `One-click add "${sug.config.title}" widget` }
+            });
+            const iconSpan = chip.createSpan({ cls: "iter-btn-icon" });
+            setIcon(iconSpan, sug.icon || "plus");
+            chip.createSpan({ text: sug.label });
+            chip.addEventListener("click", async () => {
+              await addWidget(this.app, this.file, sug.config);
+              this.render();
+            });
+          }
+        }
         if (!doc.widgets.length) {
           section.createEl("p", {
             text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.kind === "tree" ? "No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
@@ -7491,6 +7681,45 @@ var require_goal_view = __commonJS({
         for (const widget of doc.widgets) {
           const ds = resolveWidgetDataset(this.app, widget, datasetById, doc);
           this.renderWidgetCard(grid, widget, ds, doc);
+        }
+      }
+      renderWidgetReorderAndDuplicate(actions, widget, doc) {
+        const idx = Array.isArray(doc.widgets) ? doc.widgets.findIndex((w) => w.id === widget.id) : -1;
+        if (idx > 0) {
+          const upBtn = actions.createEl("button", {
+            cls: "iter-icon-button iter-widget-move-up",
+            type: "button",
+            attr: { "aria-label": "Move widget earlier", title: "Move widget earlier" }
+          });
+          setIcon(upBtn, "chevron-left");
+          upBtn.addEventListener("click", async () => {
+            await moveWidget(this.app, this.file, widget.id, "up");
+            this.render();
+          });
+        }
+        if (idx !== -1 && idx < doc.widgets.length - 1) {
+          const downBtn = actions.createEl("button", {
+            cls: "iter-icon-button iter-widget-move-down",
+            type: "button",
+            attr: { "aria-label": "Move widget later", title: "Move widget later" }
+          });
+          setIcon(downBtn, "chevron-right");
+          downBtn.addEventListener("click", async () => {
+            await moveWidget(this.app, this.file, widget.id, "down");
+            this.render();
+          });
+        }
+        if (widget.type !== "streak") {
+          const dupBtn = actions.createEl("button", {
+            cls: "iter-icon-button iter-widget-duplicate",
+            type: "button",
+            attr: { "aria-label": "Duplicate widget", title: "Duplicate widget" }
+          });
+          setIcon(dupBtn, "copy");
+          dupBtn.addEventListener("click", async () => {
+            await duplicateWidget(this.app, this.file, widget.id);
+            this.render();
+          });
         }
       }
       renderWidgetCard(grid, widget, dataset, doc) {
@@ -7509,6 +7738,7 @@ var require_goal_view = __commonJS({
           const top2 = card2.createDiv({ cls: "iter-widget-top" });
           top2.createSpan({ text: widget.title || "Custom Flow", cls: "iter-widget-title" });
           const actions2 = top2.createDiv({ cls: "iter-widget-top-actions" });
+          this.renderWidgetReorderAndDuplicate(actions2, widget, doc);
           const editBtn = actions2.createEl("button", {
             cls: "iter-icon-button iter-widget-edit",
             type: "button",
@@ -7549,6 +7779,7 @@ var require_goal_view = __commonJS({
         const defaultTitle = widget.type === "streak" ? "Streak" : !dataset ? "Missing dataset" : widget.type === "stat" ? `${baseTitle} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : baseTitle;
         top.createSpan({ text: widget.title || defaultTitle, cls: "iter-widget-title" });
         const actions = top.createDiv({ cls: "iter-widget-top-actions" });
+        this.renderWidgetReorderAndDuplicate(actions, widget, doc);
         if (widget.type !== "streak") {
           const editBtn = actions.createEl("button", {
             cls: "iter-icon-button iter-widget-edit",

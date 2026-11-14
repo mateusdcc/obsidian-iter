@@ -30,6 +30,9 @@ const {
   addWidget,
   updateWidget,
   removeWidget,
+  moveWidget,
+  duplicateWidget,
+  buildSmartWidgetSuggestions,
   discoverChildDatasets,
   resolveVirtualDataset,
   resolveWidgetDataset,
@@ -412,6 +415,26 @@ class GoalView extends ItemView {
       }).open();
     });
 
+    const suggestions = buildSmartWidgetSuggestions(this.app, doc);
+    if (suggestions.length > 0) {
+      const sugBar = section.createDiv({ cls: 'iter-smart-suggestions' });
+      sugBar.createSpan({ text: 'Quick add:', cls: 'iter-smart-suggestions-label' });
+      for (const sug of suggestions) {
+        const chip = sugBar.createEl('button', {
+          cls: 'iter-smart-suggestion-chip',
+          type: 'button',
+          attr: { title: `One-click add "${sug.config.title}" widget` },
+        });
+        const iconSpan = chip.createSpan({ cls: 'iter-btn-icon' });
+        setIcon(iconSpan, sug.icon || 'plus');
+        chip.createSpan({ text: sug.label });
+        chip.addEventListener('click', async () => {
+          await addWidget(this.app, this.file, sug.config);
+          this.render();
+        });
+      }
+    }
+
     if (!doc.widgets.length) {
       section.createEl('p', {
         text: doc.kind === 'habit'
@@ -434,6 +457,46 @@ class GoalView extends ItemView {
     }
   }
 
+  renderWidgetReorderAndDuplicate(actions, widget, doc) {
+    const idx = Array.isArray(doc.widgets) ? doc.widgets.findIndex(w => w.id === widget.id) : -1;
+    if (idx > 0) {
+      const upBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-move-up',
+        type: 'button',
+        attr: { 'aria-label': 'Move widget earlier', title: 'Move widget earlier' },
+      });
+      setIcon(upBtn, 'chevron-left');
+      upBtn.addEventListener('click', async () => {
+        await moveWidget(this.app, this.file, widget.id, 'up');
+        this.render();
+      });
+    }
+    if (idx !== -1 && idx < doc.widgets.length - 1) {
+      const downBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-move-down',
+        type: 'button',
+        attr: { 'aria-label': 'Move widget later', title: 'Move widget later' },
+      });
+      setIcon(downBtn, 'chevron-right');
+      downBtn.addEventListener('click', async () => {
+        await moveWidget(this.app, this.file, widget.id, 'down');
+        this.render();
+      });
+    }
+    if (widget.type !== 'streak') {
+      const dupBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-duplicate',
+        type: 'button',
+        attr: { 'aria-label': 'Duplicate widget', title: 'Duplicate widget' },
+      });
+      setIcon(dupBtn, 'copy');
+      dupBtn.addEventListener('click', async () => {
+        await duplicateWidget(this.app, this.file, widget.id);
+        this.render();
+      });
+    }
+  }
+
   renderWidgetCard(grid, widget, dataset, doc) {
     const callbacks = {
       onOpenFile: file => void this.plugin.openFile(file),
@@ -453,6 +516,7 @@ class GoalView extends ItemView {
       top.createSpan({ text: widget.title || 'Custom Flow', cls: 'iter-widget-title' });
 
       const actions = top.createDiv({ cls: 'iter-widget-top-actions' });
+      this.renderWidgetReorderAndDuplicate(actions, widget, doc);
       const editBtn = actions.createEl('button', {
         cls: 'iter-icon-button iter-widget-edit',
         type: 'button',
@@ -508,6 +572,7 @@ class GoalView extends ItemView {
     top.createSpan({ text: widget.title || defaultTitle, cls: 'iter-widget-title' });
 
     const actions = top.createDiv({ cls: 'iter-widget-top-actions' });
+    this.renderWidgetReorderAndDuplicate(actions, widget, doc);
     if (widget.type !== 'streak') {
       const editBtn = actions.createEl('button', {
         cls: 'iter-icon-button iter-widget-edit',
