@@ -869,3 +869,100 @@ test('habits automatically expose hidden schedule data for "Habits for Today" wi
   const customEval = evaluatePipeline(app, customAppearFlow, weDoc, wedNow);
   assert.equal(customEval.output.entries.length, 2);
 });
+
+test('Auto-collect note criteria (autoQuery) automatically populates note & note_time datasets, skips folder index notes, and supports overrides & exclusions', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  const readingTree = await createTree(app.vault, { name: 'Reading', module: 'reading' });
+  const hPoems = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Poem', frequency: 'daily' });
+  const hEssay = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Philosophical Essay', frequency: 'daily' });
+
+  // Create vault notes matching the user's real vault structure
+  await app.vault.createFolder('Books');
+  await app.vault.createFolder('Books/As Flores do Mal');
+  await app.vault.create(
+    'Books/As Flores do Mal/As Flores do Mal.md',
+    '---\ntype: book\nauthor: Charles Baudelaire\n---\n# As Flores do Mal\n',
+  );
+  await app.vault.create(
+    'Books/As Flores do Mal/O Albatroz.md',
+    '---\ndate: "2026-11-12"\ntags:\n  - poem\n---\n# O Albatroz\n',
+  );
+  await app.vault.create(
+    'Books/As Flores do Mal/Elevação.md',
+    '---\ndate: "2026-11-13"\ntags:\n  - poem\n---\n# Elevação\n',
+  );
+
+  await app.vault.createFolder('Books/The Agony of Eros');
+  await app.vault.create(
+    'Books/The Agony of Eros/The Agony of Eros.md',
+    '---\ntype: book\nauthor: Byung-Chul Han\n---\n# The Agony of Eros\n',
+  );
+  await app.vault.create(
+    'Books/The Agony of Eros/The Melancholy.md',
+    '---\npages: "8"\ndate: "2026-11-14"\n---\n# The Melancholy\n',
+  );
+  await app.vault.create(
+    'Books/The Agony of Eros/Mere Life.md',
+    '---\npages: "12"\ndate: "2026-11-15"\n---\n# Mere Life\n',
+  );
+
+  // 1) Folder criteria on Read Poem -> auto-collects O Albatroz & Elevação, skips folder index As Flores do Mal.md
+  const poemsDs = await addDataset(app, hPoems, {
+    name: 'Poems Analysis',
+    type: 'note_time',
+    metricKeys: [],
+    autoQuery: { folder: 'Books/As Flores do Mal' },
+  });
+  let docPoems = readGoalDocument(app, hPoems);
+  let resolvedPoems = resolveDatasetEntries(app, docPoems.datasets[0], hPoems.path);
+  assert.equal(resolvedPoems.length, 2);
+  assert.deepEqual(resolvedPoems.map(e => e.label).sort(), ['Elevação', 'O Albatroz']);
+  assert.ok(resolvedPoems.every(e => e.isAuto === true));
+
+  // 2) Folder + where: "pages" criteria on Read Philosophical Essay -> auto-collects chapter notes with pages frontmatter
+  const chaptersDs = await addDataset(app, hEssay, {
+    name: 'Chapters',
+    type: 'note_time',
+    metricKeys: ['pages'],
+    unit: 'pages',
+    autoQuery: { folder: 'Books/The Agony of Eros', where: 'pages' },
+  });
+  let docEssay = readGoalDocument(app, hEssay);
+  let resolvedChapters = resolveDatasetEntries(app, docEssay.datasets[0], hEssay.path);
+  assert.equal(resolvedChapters.length, 2);
+  assert.equal(computeStat(app, docEssay.datasets[0], 'sum', hEssay.path).value, 20);
+
+  // 3) Books dataset with folder: "Books" and where: "type = book" collects the root book notes!
+  const booksDs = await addDataset(app, hEssay, {
+    name: 'Books',
+    type: 'note',
+    autoQuery: { folder: 'Books', where: 'type = book' },
+  });
+  docEssay = readGoalDocument(app, hEssay);
+  const resolvedBooks = resolveDatasetEntries(app, docEssay.datasets.find(d => d.id === booksDs.id), hEssay.path);
+  assert.equal(resolvedBooks.length, 2);
+  assert.deepEqual(resolvedBooks.map(e => e.label).sort(), ['As Flores do Mal', 'The Agony of Eros']);
+
+  // 4) Editing an auto-collected note (entryIndex = -1) saves a custom override in dataset.entries
+  await updateDatasetEntry(app, hEssay, chaptersDs.id, -1, {
+    path: 'Books/The Agony of Eros/The Melancholy.md',
+    date: '2026-11-20',
+    props: { rating: 9 },
+  });
+  docEssay = readGoalDocument(app, hEssay);
+  resolvedChapters = resolveDatasetEntries(app, docEssay.datasets.find(d => d.id === chaptersDs.id), hEssay.path);
+  assert.equal(resolvedChapters.length, 2);
+  const editedMelancholy = resolvedChapters.find(e => e.label === 'The Melancholy');
+  assert.equal(editedMelancholy.date, '2026-11-20');
+  assert.equal(editedMelancholy.fields.rating, 9);
+  assert.equal(editedMelancholy.isAuto, false);
+
+  // 5) Removing an auto-collected note adds it to excludedPaths so it stays excluded
+  await removeDatasetEntry(app, hPoems, poemsDs.id, -1, 'Books/As Flores do Mal/O Albatroz.md');
+  docPoems = readGoalDocument(app, hPoems);
+  resolvedPoems = resolveDatasetEntries(app, docPoems.datasets[0], hPoems.path);
+  assert.equal(resolvedPoems.length, 1);
+  assert.equal(resolvedPoems[0].label, 'Elevação');
+});
+

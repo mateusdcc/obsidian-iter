@@ -243,6 +243,35 @@ function normalizeRelation(raw) {
   };
 }
 
+function normalizeAutoQuery(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const folder = typeof raw.folder === 'string'
+    ? raw.folder.split(',').map(s => s.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean).join(', ')
+    : '';
+  const tag = typeof raw.tag === 'string' ? raw.tag.trim() : '';
+  const where = typeof raw.where === 'string' ? raw.where.trim() : '';
+  const nameMatch = typeof raw.nameMatch === 'string' ? raw.nameMatch.trim() : '';
+  if (!folder && !tag && !where && !nameMatch) return null;
+  const excludeIndex = raw.excludeIndex !== undefined ? Boolean(raw.excludeIndex) : true;
+  return {
+    folder,
+    tag,
+    where,
+    nameMatch,
+    excludeIndex,
+  };
+}
+
+function describeAutoQuery(autoQuery) {
+  if (!autoQuery) return '';
+  const parts = [];
+  if (autoQuery.folder) parts.push(`folder "${autoQuery.folder}"`);
+  if (autoQuery.tag) parts.push(`tag ${autoQuery.tag.startsWith('#') ? autoQuery.tag : `#${autoQuery.tag}`}`);
+  if (autoQuery.where) parts.push(`where ${autoQuery.where}`);
+  if (autoQuery.nameMatch) parts.push(`name "${autoQuery.nameMatch}"`);
+  return parts.length ? `Auto: ${parts.join(' · ')}` : '';
+}
+
 function normalizeDataset(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = typeof raw.name === 'string' ? raw.name.trim() : '';
@@ -251,6 +280,10 @@ function normalizeDataset(raw) {
   const relation = type === 'rollup'
     ? (normalizeRelation(raw.relation) || normalizeRelation({ mode: 'query' }))
     : null;
+  const autoQuery = (type === 'note' || type === 'note_time') ? normalizeAutoQuery(raw.autoQuery) : null;
+  const excludedPaths = Array.isArray(raw.excludedPaths)
+    ? raw.excludedPaths.map(p => (typeof p === 'string' ? p.trim() : '')).filter(Boolean)
+    : [];
   const metricKeys = normalizeMetricKeys(raw.metricKeys, raw.metricKey, type);
   const entries = type === 'rollup'
     ? []
@@ -263,6 +296,8 @@ function normalizeDataset(raw) {
     metricKey: metricKeys[0] || '',
     metricKeys,
     relation,
+    autoQuery,
+    excludedPaths,
     entries,
   };
 }
@@ -511,6 +546,217 @@ function resolveNoteEntryFields(app, entry, dataset, sourcePath = '', metricOver
   };
 }
 
+function collectVaultMarkdownFiles(app, folderPrefixes = []) {
+  if (typeof app?.vault?.getMarkdownFiles === 'function') {
+    const all = app.vault.getMarkdownFiles() || [];
+    if (!folderPrefixes.length) return all;
+    return all.filter(f => folderPrefixes.some(prefix => f.path === `${prefix}.md` || f.path.startsWith(`${prefix}/`)));
+  }
+  const acc = [];
+  const seen = new Set();
+  const walk = node => {
+    if (!node) return;
+    if (isFolder(node)) {
+      for (const child of node.children || []) {
+        if (!child?.name || child.name.startsWith('.')) continue;
+        walk(child);
+      }
+    } else if (node.extension === 'md' && !seen.has(node.path)) {
+      seen.add(node.path);
+      acc.push(node);
+    }
+  };
+  if (folderPrefixes.length) {
+    for (const prefix of folderPrefixes) {
+      const folder = app?.vault?.getAbstractFileByPath?.(prefix);
+      if (folder) walk(folder);
+    }
+    return acc;
+  }
+  const root = app?.vault?.getRoot?.() || app?.vault?.getAbstractFileByPath?.('') || app?.vault?.getAbstractFileByPath?.('/');
+  if (root) walk(root);
+  return acc;
+}
+
+function discoverVaultFolders(app) {
+  const files = collectVaultMarkdownFiles(app, []);
+  const folders = new Set();
+  for (const f of files) {
+    if (!f?.path || f.path.startsWith(`${ROOT}/`) || f.path.startsWith('.')) continue;
+    const slashIdx = f.path.lastIndexOf('/');
+    if (slashIdx > 0) {
+      const dir = f.path.slice(0, slashIdx);
+      if (!dir.split('/').some(seg => seg.startsWith('_') || seg.startsWith('.'))) {
+        folders.add(dir);
+      }
+    }
+  }
+  return [...folders].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function matchesWhereClause(fields, fm, rawClause) {
+  const clause = String(rawClause || '').trim();
+  if (!clause) return true;
+
+  const opMatch = clause.match(/^([a-zA-Z0-9_.-]+)\s*(!=|>=|<=|>|<|=|:)\s*(.*)$/);
+  if (opMatch) {
+    const key = opMatch[1].trim();
+    const op = opMatch[2];
+    const targetRaw = opMatch[3].trim().replace(/^["']|["']$/g, '');
+    const actual = lookupNoteField(fields, key) ?? fm?.[key];
+    const actualNum = toFiniteNumber(actual);
+    const targetNum = toFiniteNumber(targetRaw);
+
+    if (op === '!=') {
+      if (actual === undefined || actual === null) return targetRaw !== '';
+      if (actualNum !== null && targetNum !== null) return actualNum !== targetNum;
+      return String(actual).trim().toLowerCase() !== targetRaw.toLowerCase();
+    }
+    if (op === '>' || op === '>=' || op === '<' || op === '<=') {
+      if (actualNum === null || targetNum === null) return false;
+      if (op === '>') return actualNum > targetNum;
+      if (op === '>=') return actualNum >= targetNum;
+      if (op === '<') return actualNum < targetNum;
+      return actualNum <= targetNum;
+    }
+    // '=' or ':'
+    if (actual === undefined || actual === null) return false;
+    if (actualNum !== null && targetNum !== null) return actualNum === targetNum;
+    return String(actual).trim().toLowerCase() === targetRaw.toLowerCase();
+  }
+
+  if (clause.startsWith('!')) {
+    const key = clause.slice(1).trim();
+    const val = lookupNoteField(fields, key) ?? fm?.[key];
+    return val === undefined || val === null || String(val).trim() === '';
+  }
+
+  const val = lookupNoteField(fields, clause) ?? fm?.[clause];
+  return val !== undefined && val !== null && String(val).trim() !== '';
+}
+
+function inferNoteDate(file, fm, fields) {
+  for (const key of ['date', 'created', 'completed', 'read_date']) {
+    const raw = fields[key] ?? fm?.[key];
+    if (typeof raw === 'string' && raw.trim()) {
+      const prefix = raw.trim().slice(0, 10);
+      if (parseDateKey(prefix)) return prefix;
+    }
+  }
+  const ts = file?.stat?.mtime || file?.stat?.ctime;
+  if (Number.isFinite(ts) && ts > 0) {
+    return toDateKey(new Date(ts));
+  }
+  return toDateKey();
+}
+
+function discoverAutoQueryNotes(app, rawQuery, sourcePath = '') {
+  const query = normalizeAutoQuery(rawQuery);
+  if (!query || !app?.vault) return [];
+
+  const folderPrefixes = query.folder
+    ? query.folder.split(',').map(s => s.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean)
+    : [];
+  const candidates = collectVaultMarkdownFiles(app, folderPrefixes);
+
+  const requiredTags = query.tag
+    ? query.tag
+        .split(',')
+        .map(t => t.trim().replace(/^#/, '').toLowerCase())
+        .filter(Boolean)
+    : [];
+  const whereClauses = query.where
+    ? query.where
+        .split(/\s*(?:,|\bAND\b)\s*/i)
+        .map(s => s.trim())
+        .filter(Boolean)
+    : [];
+  const nameTokens = query.nameMatch
+    ? query.nameMatch.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const whereMentionsBook = /\btype\s*(=|:)\s*["']?book\b/i.test(query.where || '');
+
+  const matched = [];
+  for (const file of candidates) {
+    if (!file?.path || file.path === sourcePath) continue;
+    if (file.path.startsWith(`${ROOT}/`) || file.name.startsWith('_') || file.name.startsWith('.')) continue;
+
+    if (folderPrefixes.length > 0) {
+      const inFolder = folderPrefixes.some(prefix => file.path.startsWith(`${prefix}/`));
+      if (!inFolder) continue;
+    }
+
+    const cache = app.metadataCache?.getFileCache?.(file) || {};
+    const fm = cache.frontmatter || {};
+    const fields = extractNoteScalarFields(fm);
+    const baseName = stripMd(file.name);
+
+    if (query.excludeIndex !== false && folderPrefixes.length > 0 && !whereMentionsBook) {
+      const parentFolder = file.path.includes('/')
+        ? file.path.slice(0, file.path.lastIndexOf('/')).split('/').pop()
+        : '';
+      if (parentFolder && baseName.toLowerCase() === parentFolder.toLowerCase()) continue;
+      if (typeof fm.type === 'string' && (fm.type.trim().toLowerCase() === 'book' || fm.type.trim().toLowerCase() === 'index')) {
+        continue;
+      }
+    }
+
+    if (requiredTags.length > 0) {
+      const fileTags = new Set();
+      const rawFmTags = fm.tags ?? fm.tag;
+      if (Array.isArray(rawFmTags)) {
+        for (const t of rawFmTags) fileTags.add(String(t).trim().replace(/^#/, '').toLowerCase());
+      } else if (typeof rawFmTags === 'string') {
+        for (const t of rawFmTags.split(/[,\s]+/)) fileTags.add(t.trim().replace(/^#/, '').toLowerCase());
+      }
+      if (Array.isArray(cache.tags)) {
+        for (const tObj of cache.tags) {
+          if (tObj?.tag) fileTags.add(String(tObj.tag).trim().replace(/^#/, '').toLowerCase());
+        }
+      }
+      if (!requiredTags.every(req => fileTags.has(req))) continue;
+    }
+
+    if (whereClauses.length > 0) {
+      if (!whereClauses.every(clause => matchesWhereClause(fields, fm, clause))) continue;
+    }
+
+    if (nameTokens.length > 0) {
+      const titleStr = (typeof fm.title === 'string' && fm.title.trim() ? fm.title.trim() : baseName).toLowerCase();
+      const baseLower = baseName.toLowerCase();
+      let nameOk = true;
+      for (const tok of nameTokens) {
+        if (tok.startsWith('!')) {
+          const neg = tok.slice(1).trim().toLowerCase();
+          if (neg && (baseLower.includes(neg) || titleStr.includes(neg))) {
+            nameOk = false;
+            break;
+          }
+        } else {
+          const pos = tok.toLowerCase();
+          if (pos && !baseLower.includes(pos) && !titleStr.includes(pos)) {
+            nameOk = false;
+            break;
+          }
+        }
+      }
+      if (!nameOk) continue;
+    }
+
+    matched.push({
+      file,
+      path: file.path,
+      date: inferNoteDate(file, fm, fields),
+    });
+  }
+
+  matched.sort((a, b) =>
+    (a.date || '').localeCompare(b.date || '') ||
+    a.path.localeCompare(b.path, undefined, { sensitivity: 'base', numeric: true }),
+  );
+  return matched;
+}
+
 function resolveDatasetEntries(app, dataset, sourcePath = '', metricOverride = '') {
   if (dataset?.isVirtual && Array.isArray(dataset.resolvedEntries)) {
     if (!metricOverride || metricOverride === dataset.metricKey) {
@@ -521,10 +767,13 @@ function resolveDatasetEntries(app, dataset, sourcePath = '', metricOverride = '
       return { ...item, value: nextVal };
     });
   }
-  return dataset.entries.map((entry, index) => {
+  const manualEntries = Array.isArray(dataset?.entries) ? dataset.entries : [];
+  const results = manualEntries.map((entry, index) => {
     if (dataset.type === 'number_time') {
       return {
         index,
+        entryIndex: index,
+        isAuto: false,
         date: entry.date,
         value: entry.value,
         noteFile: null,
@@ -536,6 +785,8 @@ function resolveDatasetEntries(app, dataset, sourcePath = '', metricOverride = '
     if (dataset.type === 'text') {
       return {
         index,
+        entryIndex: index,
+        isAuto: false,
         date: entry.date ?? null,
         value: null,
         noteFile: null,
@@ -548,11 +799,35 @@ function resolveDatasetEntries(app, dataset, sourcePath = '', metricOverride = '
       const resolved = resolveNoteEntryFields(app, entry, dataset, sourcePath, metricOverride);
       return {
         index,
+        entryIndex: index,
+        isAuto: false,
         ...resolved,
       };
     }
-    return { index, date: null, value: null, noteFile: null, label: '', fields: {}, propsList: [] };
+    return { index, entryIndex: index, isAuto: false, date: null, value: null, noteFile: null, label: '', fields: {}, propsList: [] };
   });
+
+  if ((dataset?.type === 'note' || dataset?.type === 'note_time') && dataset.autoQuery && app?.vault) {
+    const existingPaths = new Set(results.map(r => r.path).filter(Boolean));
+    const excluded = new Set(Array.isArray(dataset.excludedPaths) ? dataset.excludedPaths : []);
+    const autoNotes = discoverAutoQueryNotes(app, dataset.autoQuery, sourcePath);
+    for (const autoItem of autoNotes) {
+      if (existingPaths.has(autoItem.path) || excluded.has(autoItem.path)) continue;
+      existingPaths.add(autoItem.path);
+      const syntheticEntry = dataset.type === 'note_time'
+        ? { path: autoItem.path, date: autoItem.date }
+        : { path: autoItem.path };
+      const resolved = resolveNoteEntryFields(app, syntheticEntry, dataset, sourcePath, metricOverride);
+      results.push({
+        index: results.length,
+        entryIndex: -1,
+        isAuto: true,
+        ...resolved,
+      });
+    }
+  }
+
+  return results;
 }
 
 function resolveNumericSeries(app, dataset, sourcePath = '', metricOverride = '') {
@@ -1157,7 +1432,7 @@ function describeRelation(relation, sources = null) {
   return parts.join(' · ');
 }
 
-async function addDataset(app, file, { name, type, unit = '', metricKey, metricKeys, relation = null }) {
+async function addDataset(app, file, { name, type, unit = '', metricKey, metricKeys, relation = null, autoQuery = null }) {
   const cleanName = typeof name === 'string' ? name.trim() : '';
   if (!cleanName) throw new Error('Dataset name is required.');
   const dsType = normalizeDatasetType(type);
@@ -1168,6 +1443,7 @@ async function addDataset(app, file, { name, type, unit = '', metricKey, metricK
       throw new Error('Select at least one child data list.');
     }
   }
+  const cleanAutoQuery = (dsType === 'note' || dsType === 'note_time') ? normalizeAutoQuery(autoQuery) : null;
   const cleanKeys = normalizeMetricKeys(metricKeys, metricKey, dsType);
   const dataset = {
     id: generateId('ds'),
@@ -1177,6 +1453,8 @@ async function addDataset(app, file, { name, type, unit = '', metricKey, metricK
     metricKey: cleanKeys[0] || '',
     metricKeys: cleanKeys,
     relation: cleanRelation,
+    autoQuery: cleanAutoQuery,
+    excludedPaths: [],
     entries: [],
   };
   await app.fileManager.processFrontMatter(file, fm => {
@@ -1186,7 +1464,7 @@ async function addDataset(app, file, { name, type, unit = '', metricKey, metricK
   return dataset;
 }
 
-async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation }) {
+async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation, autoQuery }) {
   const cleanName = typeof name === 'string' ? name.trim() : '';
   if (!cleanName) throw new Error('Dataset name is required.');
   let updated = null;
@@ -1203,6 +1481,9 @@ async function updateDataset(app, file, datasetId, { name, type, unit, metricKey
         throw new Error('Select at least one child data list.');
       }
     }
+    const cleanAutoQuery = (nextType === 'note' || nextType === 'note_time')
+      ? normalizeAutoQuery(autoQuery !== undefined ? autoQuery : current.autoQuery)
+      : null;
     const cleanKeys = (metricKeys !== undefined || metricKey !== undefined)
       ? normalizeMetricKeys(metricKeys, metricKey, nextType)
       : (current.metricKeys || []);
@@ -1214,6 +1495,8 @@ async function updateDataset(app, file, datasetId, { name, type, unit, metricKey
       metricKey: cleanKeys[0] || '',
       metricKeys: cleanKeys,
       relation: cleanRelation,
+      autoQuery: cleanAutoQuery,
+      excludedPaths: Array.isArray(current.excludedPaths) ? current.excludedPaths : [],
       entries: nextType === 'rollup' ? [] : (current.entries || []),
     };
     fm.datasets[idx] = updated;
@@ -1245,6 +1528,9 @@ async function addDatasetEntry(app, file, datasetId, rawEntry) {
     const entry = normalizeEntry(dsType, rawEntry);
     if (!entry) throw new Error('Invalid entry value.');
     if (!Array.isArray(ds.entries)) ds.entries = [];
+    if (Array.isArray(ds.excludedPaths) && entry.path) {
+      ds.excludedPaths = ds.excludedPaths.filter(p => p !== entry.path);
+    }
     ds.entries.push(entry);
     added = entry;
   });
@@ -1256,26 +1542,41 @@ async function updateDatasetEntry(app, file, datasetId, entryIndex, rawEntry) {
   await app.fileManager.processFrontMatter(file, fm => {
     if (!Array.isArray(fm.datasets)) throw new Error('No datasets found on this goal.');
     const ds = fm.datasets.find(item => item?.id === datasetId);
-    if (!ds || !Array.isArray(ds.entries)) throw new Error('Dataset not found.');
-    if (entryIndex < 0 || entryIndex >= ds.entries.length) {
-      throw new Error('Entry index out of range.');
-    }
+    if (!ds) throw new Error('Dataset not found.');
+    if (!Array.isArray(ds.entries)) ds.entries = [];
     const dsType = normalizeDatasetType(ds.type);
     const entry = normalizeEntry(dsType, rawEntry);
     if (!entry) throw new Error('Invalid entry value.');
+    if (entryIndex === -1 && entry.path) {
+      const existingIdx = ds.entries.findIndex(e => e?.path === entry.path);
+      if (existingIdx >= 0) ds.entries[existingIdx] = entry;
+      else ds.entries.push(entry);
+      updated = entry;
+      return;
+    }
+    if (entryIndex < 0 || entryIndex >= ds.entries.length) {
+      throw new Error('Entry index out of range.');
+    }
     ds.entries[entryIndex] = entry;
     updated = entry;
   });
   return updated;
 }
 
-async function removeDatasetEntry(app, file, datasetId, entryIndex) {
+async function removeDatasetEntry(app, file, datasetId, entryIndex, entryPath = '') {
   await app.fileManager.processFrontMatter(file, fm => {
     if (!Array.isArray(fm.datasets)) return;
     const ds = fm.datasets.find(item => item?.id === datasetId);
-    if (!ds || !Array.isArray(ds.entries)) return;
+    if (!ds) return;
+    if (!Array.isArray(ds.entries)) ds.entries = [];
     if (entryIndex >= 0 && entryIndex < ds.entries.length) {
       ds.entries.splice(entryIndex, 1);
+    } else if (entryPath) {
+      const cleanPath = String(entryPath).trim();
+      if (!Array.isArray(ds.excludedPaths)) ds.excludedPaths = [];
+      if (cleanPath && !ds.excludedPaths.includes(cleanPath)) {
+        ds.excludedPaths.push(cleanPath);
+      }
     }
   });
 }
@@ -1606,6 +1907,10 @@ module.exports = {
   extractNoteScalarFields,
   normalizeEntry,
   normalizeRelation,
+  normalizeAutoQuery,
+  describeAutoQuery,
+  discoverVaultFolders,
+  discoverAutoQueryNotes,
   normalizePipelineRef,
   readGoalDocument,
   discoverHabits,

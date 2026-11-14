@@ -970,6 +970,33 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     // k) Every widget card renders border/corner resize handles (is-e, is-s, is-se)
     const resizeHandles = gardenView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-widget-resize-handle'));
     assert.equal(resizeHandles.length, 3, 'Widget card should render right, bottom, and corner resize handles');
+
+    // l) AddDatasetModal exposes Auto-collect note criteria box and folder chips for note/note_time datasets
+    await app.vault.createFolder('Books');
+    await app.vault.createFolder('Books/As Flores do Mal');
+    await app.vault.create('Books/As Flores do Mal/O Albatroz.md', '---\ndate: "2026-11-12"\n---\n# O Albatroz\n');
+    let submittedAutoDs = null;
+    const autoDsModal = new AddDatasetModal(app, {
+      onSubmit: async cfg => {
+        submittedAutoDs = cfg;
+      },
+    });
+    autoDsModal.contentEl = createMockElement('div');
+    autoDsModal.onOpen();
+    const dsTypeSelect = autoDsModal.contentEl.findAll(el => el.tagName === 'SELECT')[0];
+    dsTypeSelect.value = 'note_time';
+    await fire(dsTypeSelect, 'change');
+    const autoBox = autoDsModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-auto-query-box'))[0];
+    assert.ok(autoBox && autoBox.style.display !== 'none', 'Auto-query box should be visible for note_time');
+    const folderChips = autoBox.findAll(el => el.className.split(/\s+/).includes('iter-folder-chip'));
+    const floresChip = folderChips.find(c => c.textContent === 'Books/As Flores do Mal');
+    assert.ok(floresChip, 'Vault folder chip Books/As Flores do Mal should be offered');
+    await fire(floresChip, 'click');
+    const dsNameInput = autoDsModal.contentEl.findAll(el => el.tagName === 'INPUT')[0];
+    dsNameInput.value = 'Poems Analysis';
+    await fire(autoDsModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.ok(submittedAutoDs?.autoQuery);
+    assert.equal(submittedAutoDs.autoQuery.folder, 'Books/As Flores do Mal');
   } finally {
     global.document = prevDocument;
   }

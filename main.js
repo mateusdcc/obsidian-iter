@@ -992,12 +992,39 @@ var require_data_model = __commonJS({
         refs: mode === "pick" ? normalizeRelationRefs(raw.refs) : []
       };
     }
+    function normalizeAutoQuery(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const folder = typeof raw.folder === "string" ? raw.folder.split(",").map((s) => s.trim().replace(/^\/+|\/+$/g, "")).filter(Boolean).join(", ") : "";
+      const tag = typeof raw.tag === "string" ? raw.tag.trim() : "";
+      const where = typeof raw.where === "string" ? raw.where.trim() : "";
+      const nameMatch = typeof raw.nameMatch === "string" ? raw.nameMatch.trim() : "";
+      if (!folder && !tag && !where && !nameMatch) return null;
+      const excludeIndex = raw.excludeIndex !== void 0 ? Boolean(raw.excludeIndex) : true;
+      return {
+        folder,
+        tag,
+        where,
+        nameMatch,
+        excludeIndex
+      };
+    }
+    function describeAutoQuery(autoQuery) {
+      if (!autoQuery) return "";
+      const parts = [];
+      if (autoQuery.folder) parts.push(`folder "${autoQuery.folder}"`);
+      if (autoQuery.tag) parts.push(`tag ${autoQuery.tag.startsWith("#") ? autoQuery.tag : `#${autoQuery.tag}`}`);
+      if (autoQuery.where) parts.push(`where ${autoQuery.where}`);
+      if (autoQuery.nameMatch) parts.push(`name "${autoQuery.nameMatch}"`);
+      return parts.length ? `Auto: ${parts.join(" \xB7 ")}` : "";
+    }
     function normalizeDataset(raw) {
       if (!raw || typeof raw !== "object") return null;
       const name = typeof raw.name === "string" ? raw.name.trim() : "";
       if (!name) return null;
       const type = normalizeDatasetType(raw.type);
       const relation = type === "rollup" ? normalizeRelation(raw.relation) || normalizeRelation({ mode: "query" }) : null;
+      const autoQuery = type === "note" || type === "note_time" ? normalizeAutoQuery(raw.autoQuery) : null;
+      const excludedPaths = Array.isArray(raw.excludedPaths) ? raw.excludedPaths.map((p) => typeof p === "string" ? p.trim() : "").filter(Boolean) : [];
       const metricKeys = normalizeMetricKeys(raw.metricKeys, raw.metricKey, type);
       const entries = type === "rollup" ? [] : Array.isArray(raw.entries) ? raw.entries.map((item) => normalizeEntry(type, item)).filter(Boolean) : [];
       return {
@@ -1008,6 +1035,8 @@ var require_data_model = __commonJS({
         metricKey: metricKeys[0] || "",
         metricKeys,
         relation,
+        autoQuery,
+        excludedPaths,
         entries
       };
     }
@@ -1224,6 +1253,179 @@ var require_data_model = __commonJS({
         propsList
       };
     }
+    function collectVaultMarkdownFiles(app, folderPrefixes = []) {
+      if (typeof app?.vault?.getMarkdownFiles === "function") {
+        const all = app.vault.getMarkdownFiles() || [];
+        if (!folderPrefixes.length) return all;
+        return all.filter((f) => folderPrefixes.some((prefix) => f.path === `${prefix}.md` || f.path.startsWith(`${prefix}/`)));
+      }
+      const acc = [];
+      const seen = /* @__PURE__ */ new Set();
+      const walk = (node) => {
+        if (!node) return;
+        if (isFolder(node)) {
+          for (const child of node.children || []) {
+            if (!child?.name || child.name.startsWith(".")) continue;
+            walk(child);
+          }
+        } else if (node.extension === "md" && !seen.has(node.path)) {
+          seen.add(node.path);
+          acc.push(node);
+        }
+      };
+      if (folderPrefixes.length) {
+        for (const prefix of folderPrefixes) {
+          const folder = app?.vault?.getAbstractFileByPath?.(prefix);
+          if (folder) walk(folder);
+        }
+        return acc;
+      }
+      const root = app?.vault?.getRoot?.() || app?.vault?.getAbstractFileByPath?.("") || app?.vault?.getAbstractFileByPath?.("/");
+      if (root) walk(root);
+      return acc;
+    }
+    function discoverVaultFolders(app) {
+      const files = collectVaultMarkdownFiles(app, []);
+      const folders = /* @__PURE__ */ new Set();
+      for (const f of files) {
+        if (!f?.path || f.path.startsWith(`${ROOT}/`) || f.path.startsWith(".")) continue;
+        const slashIdx = f.path.lastIndexOf("/");
+        if (slashIdx > 0) {
+          const dir = f.path.slice(0, slashIdx);
+          if (!dir.split("/").some((seg) => seg.startsWith("_") || seg.startsWith("."))) {
+            folders.add(dir);
+          }
+        }
+      }
+      return [...folders].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }));
+    }
+    function matchesWhereClause(fields, fm, rawClause) {
+      const clause = String(rawClause || "").trim();
+      if (!clause) return true;
+      const opMatch = clause.match(/^([a-zA-Z0-9_.-]+)\s*(!=|>=|<=|>|<|=|:)\s*(.*)$/);
+      if (opMatch) {
+        const key = opMatch[1].trim();
+        const op = opMatch[2];
+        const targetRaw = opMatch[3].trim().replace(/^["']|["']$/g, "");
+        const actual = lookupNoteField(fields, key) ?? fm?.[key];
+        const actualNum = toFiniteNumber(actual);
+        const targetNum = toFiniteNumber(targetRaw);
+        if (op === "!=") {
+          if (actual === void 0 || actual === null) return targetRaw !== "";
+          if (actualNum !== null && targetNum !== null) return actualNum !== targetNum;
+          return String(actual).trim().toLowerCase() !== targetRaw.toLowerCase();
+        }
+        if (op === ">" || op === ">=" || op === "<" || op === "<=") {
+          if (actualNum === null || targetNum === null) return false;
+          if (op === ">") return actualNum > targetNum;
+          if (op === ">=") return actualNum >= targetNum;
+          if (op === "<") return actualNum < targetNum;
+          return actualNum <= targetNum;
+        }
+        if (actual === void 0 || actual === null) return false;
+        if (actualNum !== null && targetNum !== null) return actualNum === targetNum;
+        return String(actual).trim().toLowerCase() === targetRaw.toLowerCase();
+      }
+      if (clause.startsWith("!")) {
+        const key = clause.slice(1).trim();
+        const val2 = lookupNoteField(fields, key) ?? fm?.[key];
+        return val2 === void 0 || val2 === null || String(val2).trim() === "";
+      }
+      const val = lookupNoteField(fields, clause) ?? fm?.[clause];
+      return val !== void 0 && val !== null && String(val).trim() !== "";
+    }
+    function inferNoteDate(file, fm, fields) {
+      for (const key of ["date", "created", "completed", "read_date"]) {
+        const raw = fields[key] ?? fm?.[key];
+        if (typeof raw === "string" && raw.trim()) {
+          const prefix = raw.trim().slice(0, 10);
+          if (parseDateKey(prefix)) return prefix;
+        }
+      }
+      const ts = file?.stat?.mtime || file?.stat?.ctime;
+      if (Number.isFinite(ts) && ts > 0) {
+        return toDateKey(new Date(ts));
+      }
+      return toDateKey();
+    }
+    function discoverAutoQueryNotes(app, rawQuery, sourcePath = "") {
+      const query = normalizeAutoQuery(rawQuery);
+      if (!query || !app?.vault) return [];
+      const folderPrefixes = query.folder ? query.folder.split(",").map((s) => s.trim().replace(/^\/+|\/+$/g, "")).filter(Boolean) : [];
+      const candidates = collectVaultMarkdownFiles(app, folderPrefixes);
+      const requiredTags = query.tag ? query.tag.split(",").map((t) => t.trim().replace(/^#/, "").toLowerCase()).filter(Boolean) : [];
+      const whereClauses = query.where ? query.where.split(/\s*(?:,|\bAND\b)\s*/i).map((s) => s.trim()).filter(Boolean) : [];
+      const nameTokens = query.nameMatch ? query.nameMatch.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const whereMentionsBook = /\btype\s*(=|:)\s*["']?book\b/i.test(query.where || "");
+      const matched = [];
+      for (const file of candidates) {
+        if (!file?.path || file.path === sourcePath) continue;
+        if (file.path.startsWith(`${ROOT}/`) || file.name.startsWith("_") || file.name.startsWith(".")) continue;
+        if (folderPrefixes.length > 0) {
+          const inFolder = folderPrefixes.some((prefix) => file.path.startsWith(`${prefix}/`));
+          if (!inFolder) continue;
+        }
+        const cache = app.metadataCache?.getFileCache?.(file) || {};
+        const fm = cache.frontmatter || {};
+        const fields = extractNoteScalarFields(fm);
+        const baseName = stripMd(file.name);
+        if (query.excludeIndex !== false && folderPrefixes.length > 0 && !whereMentionsBook) {
+          const parentFolder = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")).split("/").pop() : "";
+          if (parentFolder && baseName.toLowerCase() === parentFolder.toLowerCase()) continue;
+          if (typeof fm.type === "string" && (fm.type.trim().toLowerCase() === "book" || fm.type.trim().toLowerCase() === "index")) {
+            continue;
+          }
+        }
+        if (requiredTags.length > 0) {
+          const fileTags = /* @__PURE__ */ new Set();
+          const rawFmTags = fm.tags ?? fm.tag;
+          if (Array.isArray(rawFmTags)) {
+            for (const t of rawFmTags) fileTags.add(String(t).trim().replace(/^#/, "").toLowerCase());
+          } else if (typeof rawFmTags === "string") {
+            for (const t of rawFmTags.split(/[,\s]+/)) fileTags.add(t.trim().replace(/^#/, "").toLowerCase());
+          }
+          if (Array.isArray(cache.tags)) {
+            for (const tObj of cache.tags) {
+              if (tObj?.tag) fileTags.add(String(tObj.tag).trim().replace(/^#/, "").toLowerCase());
+            }
+          }
+          if (!requiredTags.every((req) => fileTags.has(req))) continue;
+        }
+        if (whereClauses.length > 0) {
+          if (!whereClauses.every((clause) => matchesWhereClause(fields, fm, clause))) continue;
+        }
+        if (nameTokens.length > 0) {
+          const titleStr = (typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : baseName).toLowerCase();
+          const baseLower = baseName.toLowerCase();
+          let nameOk = true;
+          for (const tok of nameTokens) {
+            if (tok.startsWith("!")) {
+              const neg = tok.slice(1).trim().toLowerCase();
+              if (neg && (baseLower.includes(neg) || titleStr.includes(neg))) {
+                nameOk = false;
+                break;
+              }
+            } else {
+              const pos = tok.toLowerCase();
+              if (pos && !baseLower.includes(pos) && !titleStr.includes(pos)) {
+                nameOk = false;
+                break;
+              }
+            }
+          }
+          if (!nameOk) continue;
+        }
+        matched.push({
+          file,
+          path: file.path,
+          date: inferNoteDate(file, fm, fields)
+        });
+      }
+      matched.sort(
+        (a, b) => (a.date || "").localeCompare(b.date || "") || a.path.localeCompare(b.path, void 0, { sensitivity: "base", numeric: true })
+      );
+      return matched;
+    }
     function resolveDatasetEntries(app, dataset, sourcePath = "", metricOverride = "") {
       if (dataset?.isVirtual && Array.isArray(dataset.resolvedEntries)) {
         if (!metricOverride || metricOverride === dataset.metricKey) {
@@ -1234,10 +1436,13 @@ var require_data_model = __commonJS({
           return { ...item, value: nextVal };
         });
       }
-      return dataset.entries.map((entry, index) => {
+      const manualEntries = Array.isArray(dataset?.entries) ? dataset.entries : [];
+      const results = manualEntries.map((entry, index) => {
         if (dataset.type === "number_time") {
           return {
             index,
+            entryIndex: index,
+            isAuto: false,
             date: entry.date,
             value: entry.value,
             noteFile: null,
@@ -1249,6 +1454,8 @@ var require_data_model = __commonJS({
         if (dataset.type === "text") {
           return {
             index,
+            entryIndex: index,
+            isAuto: false,
             date: entry.date ?? null,
             value: null,
             noteFile: null,
@@ -1261,11 +1468,31 @@ var require_data_model = __commonJS({
           const resolved = resolveNoteEntryFields(app, entry, dataset, sourcePath, metricOverride);
           return {
             index,
+            entryIndex: index,
+            isAuto: false,
             ...resolved
           };
         }
-        return { index, date: null, value: null, noteFile: null, label: "", fields: {}, propsList: [] };
+        return { index, entryIndex: index, isAuto: false, date: null, value: null, noteFile: null, label: "", fields: {}, propsList: [] };
       });
+      if ((dataset?.type === "note" || dataset?.type === "note_time") && dataset.autoQuery && app?.vault) {
+        const existingPaths = new Set(results.map((r) => r.path).filter(Boolean));
+        const excluded = new Set(Array.isArray(dataset.excludedPaths) ? dataset.excludedPaths : []);
+        const autoNotes = discoverAutoQueryNotes(app, dataset.autoQuery, sourcePath);
+        for (const autoItem of autoNotes) {
+          if (existingPaths.has(autoItem.path) || excluded.has(autoItem.path)) continue;
+          existingPaths.add(autoItem.path);
+          const syntheticEntry = dataset.type === "note_time" ? { path: autoItem.path, date: autoItem.date } : { path: autoItem.path };
+          const resolved = resolveNoteEntryFields(app, syntheticEntry, dataset, sourcePath, metricOverride);
+          results.push({
+            index: results.length,
+            entryIndex: -1,
+            isAuto: true,
+            ...resolved
+          });
+        }
+      }
+      return results;
     }
     function resolveNumericSeries(app, dataset, sourcePath = "", metricOverride = "") {
       const effectiveDataset = metricOverride ? { ...dataset, metricKey: metricOverride } : dataset;
@@ -1806,7 +2033,7 @@ var require_data_model = __commonJS({
       }
       return parts.join(" \xB7 ");
     }
-    async function addDataset(app, file, { name, type, unit = "", metricKey, metricKeys, relation = null }) {
+    async function addDataset(app, file, { name, type, unit = "", metricKey, metricKeys, relation = null, autoQuery = null }) {
       const cleanName = typeof name === "string" ? name.trim() : "";
       if (!cleanName) throw new Error("Dataset name is required.");
       const dsType = normalizeDatasetType(type);
@@ -1817,6 +2044,7 @@ var require_data_model = __commonJS({
           throw new Error("Select at least one child data list.");
         }
       }
+      const cleanAutoQuery = dsType === "note" || dsType === "note_time" ? normalizeAutoQuery(autoQuery) : null;
       const cleanKeys = normalizeMetricKeys(metricKeys, metricKey, dsType);
       const dataset = {
         id: generateId("ds"),
@@ -1826,6 +2054,8 @@ var require_data_model = __commonJS({
         metricKey: cleanKeys[0] || "",
         metricKeys: cleanKeys,
         relation: cleanRelation,
+        autoQuery: cleanAutoQuery,
+        excludedPaths: [],
         entries: []
       };
       await app.fileManager.processFrontMatter(file, (fm) => {
@@ -1834,7 +2064,7 @@ var require_data_model = __commonJS({
       });
       return dataset;
     }
-    async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation }) {
+    async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation, autoQuery }) {
       const cleanName = typeof name === "string" ? name.trim() : "";
       if (!cleanName) throw new Error("Dataset name is required.");
       let updated = null;
@@ -1851,6 +2081,7 @@ var require_data_model = __commonJS({
             throw new Error("Select at least one child data list.");
           }
         }
+        const cleanAutoQuery = nextType === "note" || nextType === "note_time" ? normalizeAutoQuery(autoQuery !== void 0 ? autoQuery : current.autoQuery) : null;
         const cleanKeys = metricKeys !== void 0 || metricKey !== void 0 ? normalizeMetricKeys(metricKeys, metricKey, nextType) : current.metricKeys || [];
         updated = {
           ...current,
@@ -1860,6 +2091,8 @@ var require_data_model = __commonJS({
           metricKey: cleanKeys[0] || "",
           metricKeys: cleanKeys,
           relation: cleanRelation,
+          autoQuery: cleanAutoQuery,
+          excludedPaths: Array.isArray(current.excludedPaths) ? current.excludedPaths : [],
           entries: nextType === "rollup" ? [] : current.entries || []
         };
         fm.datasets[idx] = updated;
@@ -1887,6 +2120,9 @@ var require_data_model = __commonJS({
         const entry = normalizeEntry(dsType, rawEntry);
         if (!entry) throw new Error("Invalid entry value.");
         if (!Array.isArray(ds.entries)) ds.entries = [];
+        if (Array.isArray(ds.excludedPaths) && entry.path) {
+          ds.excludedPaths = ds.excludedPaths.filter((p) => p !== entry.path);
+        }
         ds.entries.push(entry);
         added = entry;
       });
@@ -1897,25 +2133,40 @@ var require_data_model = __commonJS({
       await app.fileManager.processFrontMatter(file, (fm) => {
         if (!Array.isArray(fm.datasets)) throw new Error("No datasets found on this goal.");
         const ds = fm.datasets.find((item) => item?.id === datasetId);
-        if (!ds || !Array.isArray(ds.entries)) throw new Error("Dataset not found.");
-        if (entryIndex < 0 || entryIndex >= ds.entries.length) {
-          throw new Error("Entry index out of range.");
-        }
+        if (!ds) throw new Error("Dataset not found.");
+        if (!Array.isArray(ds.entries)) ds.entries = [];
         const dsType = normalizeDatasetType(ds.type);
         const entry = normalizeEntry(dsType, rawEntry);
         if (!entry) throw new Error("Invalid entry value.");
+        if (entryIndex === -1 && entry.path) {
+          const existingIdx = ds.entries.findIndex((e) => e?.path === entry.path);
+          if (existingIdx >= 0) ds.entries[existingIdx] = entry;
+          else ds.entries.push(entry);
+          updated = entry;
+          return;
+        }
+        if (entryIndex < 0 || entryIndex >= ds.entries.length) {
+          throw new Error("Entry index out of range.");
+        }
         ds.entries[entryIndex] = entry;
         updated = entry;
       });
       return updated;
     }
-    async function removeDatasetEntry(app, file, datasetId, entryIndex) {
+    async function removeDatasetEntry(app, file, datasetId, entryIndex, entryPath = "") {
       await app.fileManager.processFrontMatter(file, (fm) => {
         if (!Array.isArray(fm.datasets)) return;
         const ds = fm.datasets.find((item) => item?.id === datasetId);
-        if (!ds || !Array.isArray(ds.entries)) return;
+        if (!ds) return;
+        if (!Array.isArray(ds.entries)) ds.entries = [];
         if (entryIndex >= 0 && entryIndex < ds.entries.length) {
           ds.entries.splice(entryIndex, 1);
+        } else if (entryPath) {
+          const cleanPath = String(entryPath).trim();
+          if (!Array.isArray(ds.excludedPaths)) ds.excludedPaths = [];
+          if (cleanPath && !ds.excludedPaths.includes(cleanPath)) {
+            ds.excludedPaths.push(cleanPath);
+          }
         }
       });
     }
@@ -2215,6 +2466,10 @@ var require_data_model = __commonJS({
       extractNoteScalarFields,
       normalizeEntry,
       normalizeRelation,
+      normalizeAutoQuery,
+      describeAutoQuery,
+      discoverVaultFolders,
+      discoverAutoQueryNotes,
       normalizePipelineRef,
       readGoalDocument: readGoalDocument2,
       discoverHabits,
@@ -6406,6 +6661,9 @@ var require_goal_modals = __commonJS({
       toFiniteNumber,
       datasetMatchesFilter,
       resolveDatasetEntries,
+      normalizeAutoQuery,
+      discoverVaultFolders,
+      discoverAutoQueryNotes,
       stripMd
     } = require_data_model();
     function refKey(filePath, datasetId) {
@@ -6667,10 +6925,112 @@ var require_goal_modals = __commonJS({
         }
         const rollupSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         let rollupControls = null;
+        const autoQuerySlot = form.createDiv({ cls: "iter-modal-dynamic" });
+        let getAutoQuery = () => null;
+        const renderAutoQuerySection = () => {
+          autoQuerySlot.empty();
+          const initQ = this.initialDataset?.autoQuery || null;
+          const box = autoQuerySlot.createDiv({ cls: "iter-auto-query-box" });
+          const head = box.createDiv({ cls: "iter-auto-query-head" });
+          head.createSpan({ text: "Auto-collect notes matching criteria (optional)", cls: "iter-modal-label" });
+          const previewBadge = head.createSpan({ cls: "iter-auto-query-preview" });
+          const grid = box.createDiv({ cls: "iter-modal-row" });
+          const folderField = grid.createDiv({ cls: "iter-modal-field" });
+          folderField.createEl("label", { text: "Folder path(s)", cls: "iter-micro-label" });
+          const folderInput = folderField.createEl("input", {
+            type: "text",
+            placeholder: "e.g. Books/As Flores do Mal",
+            cls: "iter-modal-input iter-auto-folder-input"
+          });
+          if (initQ?.folder) folderInput.value = initQ.folder;
+          const whereField = grid.createDiv({ cls: "iter-modal-field" });
+          whereField.createEl("label", { text: "Frontmatter filter", cls: "iter-micro-label" });
+          const whereInput = whereField.createEl("input", {
+            type: "text",
+            placeholder: "e.g. pages, type = book, score >= 80",
+            cls: "iter-modal-input iter-auto-where-input"
+          });
+          if (initQ?.where) whereInput.value = initQ.where;
+          const vaultFolders = discoverVaultFolders(this.app);
+          if (vaultFolders.length > 0) {
+            const chipsWrap = box.createDiv({ cls: "iter-chip-suggestions" });
+            for (const dir of vaultFolders.slice(0, 8)) {
+              const chip = chipsWrap.createEl("button", {
+                text: dir,
+                type: "button",
+                cls: "iter-suggest-chip iter-folder-chip"
+              });
+              chip.addEventListener("click", () => {
+                folderInput.value = dir;
+                refreshPreview();
+              });
+            }
+          }
+          const row2 = box.createDiv({ cls: "iter-modal-row" });
+          const tagField = row2.createDiv({ cls: "iter-modal-field" });
+          tagField.createEl("label", { text: "Tag filter", cls: "iter-micro-label" });
+          const tagInput = tagField.createEl("input", {
+            type: "text",
+            placeholder: "e.g. #poem, #essay",
+            cls: "iter-modal-input iter-auto-tag-input"
+          });
+          if (initQ?.tag) tagInput.value = initQ.tag;
+          const nameField2 = row2.createDiv({ cls: "iter-modal-field" });
+          nameField2.createEl("label", { text: "Title / filename filter", cls: "iter-micro-label" });
+          const matchInput = nameField2.createEl("input", {
+            type: "text",
+            placeholder: "e.g. Mock Exam, !Index",
+            cls: "iter-modal-input iter-auto-name-input"
+          });
+          if (initQ?.nameMatch) matchInput.value = initQ.nameMatch;
+          let excludeIndex = initQ?.excludeIndex !== void 0 ? Boolean(initQ.excludeIndex) : true;
+          const skipIndexRow = box.createDiv({ cls: "iter-auto-query-toggle-row" });
+          const skipBtn = skipIndexRow.createEl("button", {
+            type: "button",
+            cls: `iter-suggest-chip${excludeIndex ? " is-active" : ""}`,
+            text: excludeIndex ? "\u2713 Skip folder index / book root notes" : "Include folder index / book root notes"
+          });
+          skipBtn.addEventListener("click", () => {
+            excludeIndex = !excludeIndex;
+            skipBtn.textContent = excludeIndex ? "\u2713 Skip folder index / book root notes" : "Include folder index / book root notes";
+            if (excludeIndex) skipBtn.addClass?.("is-active");
+            else skipBtn.removeClass?.("is-active");
+            refreshPreview();
+          });
+          const buildDraft = () => normalizeAutoQuery({
+            folder: folderInput.value,
+            where: whereInput.value,
+            tag: tagInput.value,
+            nameMatch: matchInput.value,
+            excludeIndex
+          });
+          const refreshPreview = () => {
+            const q = buildDraft();
+            if (!q) {
+              previewBadge.textContent = "Manual list (or fill any rule below to auto-collect)";
+              return;
+            }
+            const matched = discoverAutoQueryNotes(this.app, q);
+            if (!matched.length) {
+              previewBadge.textContent = "0 notes match right now";
+            } else {
+              const sample = matched.slice(0, 3).map((m) => stripMd(m.file.name)).join(", ");
+              previewBadge.textContent = `${matched.length} ${matched.length === 1 ? "note matches" : "notes match"}: ${sample}${matched.length > 3 ? "\u2026" : ""}`;
+            }
+          };
+          for (const inp of [folderInput, whereInput, tagInput, matchInput]) {
+            inp.addEventListener("input", refreshPreview);
+          }
+          refreshPreview();
+          getAutoQuery = buildDraft;
+        };
         const syncExtra = () => {
           const t = typeSelect.value;
           if (t === "rollup") {
             extraField.style.display = "none";
+            autoQuerySlot.empty();
+            autoQuerySlot.style.display = "none";
+            getAutoQuery = () => null;
             rollupSlot.style.display = "";
             if (!rollupControls) {
               rollupControls = renderRelationConfigPanel(rollupSlot, {
@@ -6689,16 +7049,26 @@ var require_goal_modals = __commonJS({
             extraField.style.display = "";
             extraLabel.textContent = "Unit (optional)";
             extraInput.placeholder = "e.g. kg, words, kcal";
+            autoQuerySlot.empty();
+            autoQuerySlot.style.display = "none";
+            getAutoQuery = () => null;
           } else if (t === "note_time") {
             extraField.style.display = "";
             extraLabel.textContent = "Frontmatter properties (optional, comma-separated)";
             extraInput.placeholder = "score (or multiple: chapters, pages)";
+            autoQuerySlot.style.display = "";
+            renderAutoQuerySection();
           } else if (t === "note") {
             extraField.style.display = "";
             extraLabel.textContent = "Frontmatter properties (optional, comma-separated)";
             extraInput.placeholder = "e.g. chapters, pages, author (leave blank for plain notes)";
+            autoQuerySlot.style.display = "";
+            renderAutoQuerySection();
           } else {
             extraField.style.display = "none";
+            autoQuerySlot.empty();
+            autoQuerySlot.style.display = "none";
+            getAutoQuery = () => null;
           }
         };
         typeSelect.addEventListener("change", syncExtra);
@@ -6727,13 +7097,15 @@ var require_goal_modals = __commonJS({
             }
             const parsedKeys = parseMetricKeysInput(extraInput.value);
             const metricKeys = type === "note_time" ? parsedKeys.length ? parsedKeys : ["score"] : type === "note" ? parsedKeys : [];
+            const autoQuery = type === "note" || type === "note_time" ? getAutoQuery() : null;
             await this.onSubmit({
               name: nameInput.value,
               type,
               unit: type === "rollup" ? rollupControls?.getUnit() ?? "" : type === "number_time" ? extraInput.value : "",
               metricKey: metricKeys[0] || "",
               metricKeys,
-              relation
+              relation,
+              autoQuery
             });
             this.close();
           } catch (error) {
@@ -7436,7 +7808,8 @@ var require_goal_view = __commonJS({
       discoverChildDatasets,
       resolveVirtualDataset,
       resolveWidgetDataset,
-      describeRelation
+      describeRelation,
+      describeAutoQuery
     } = require_data_model();
     var { evaluatePipeline, buildPipelineFromSimpleConfig } = require_pipeline();
     var { WorkflowEditorModal: WorkflowEditorModal2, renderWidgetDisplayBody } = require_canvas_editor();
@@ -8188,13 +8561,14 @@ var require_goal_view = __commonJS({
         const isRollup = dataset.type === "rollup";
         const virtual = isRollup ? resolveVirtualDataset(this.app, dataset, this.file.path, doc?.treePath || "") : null;
         const sources = virtual?.sources || [];
+        const resolved = !isRollup ? resolveDatasetEntries(this.app, dataset, this.file.path) : [];
         const card = container.createDiv({ cls: "iter-dataset-card" });
         const top = card.createDiv({ cls: "iter-dataset-top" });
         const left = top.createDiv({ cls: "iter-dataset-title-wrap" });
         left.createSpan({ text: dataset.name, cls: "iter-dataset-title" });
         left.createSpan({ text: TYPE_LABELS[dataset.type] || dataset.type, cls: "iter-module-pill" });
         left.createSpan({
-          text: String(isRollup ? virtual.resolvedEntries.length : dataset.entries.length),
+          text: String(isRollup ? virtual.resolvedEntries.length : resolved.length),
           cls: "iter-dataset-count"
         });
         const right = top.createDiv({ cls: "iter-dataset-actions" });
@@ -8322,15 +8696,25 @@ var require_goal_view = __commonJS({
           });
           setTimeout(() => primaryInput?.focus(), 0);
         }
-        const resolved = resolveDatasetEntries(this.app, dataset, this.file.path);
+        if (dataset.autoQuery) {
+          const autoText = describeAutoQuery(dataset.autoQuery);
+          if (autoText) {
+            const autoRow = card.createDiv({ cls: "iter-rollup-badge iter-auto-query-badge" });
+            autoRow.createSpan({ text: autoText });
+          }
+        }
         if (!resolved.length) {
-          card.createEl("p", { text: "No entries yet. Click + to add one.", cls: "iter-dataset-empty" });
+          card.createEl("p", {
+            text: dataset.autoQuery ? "No notes match the auto-collect criteria yet, or click + to add one manually." : "No entries yet. Click + to add one.",
+            cls: "iter-dataset-empty"
+          });
           return;
         }
         const displayOrder = dataset.type === "number_time" || dataset.type === "note_time" ? [...resolved].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.index - a.index) : [...resolved].reverse();
         const rowsEl = card.createDiv({ cls: "iter-entry-list" });
         for (const item of displayOrder) {
           const row = rowsEl.createDiv({ cls: "iter-entry-row" });
+          const entryIdx = item.entryIndex !== void 0 ? item.entryIndex : item.index;
           if (dataset.type === "note" || dataset.type === "note_time") {
             const linkBtn = row.createEl("button", { cls: "iter-entry-note-btn", type: "button" });
             const icon = linkBtn.createSpan({ cls: "iter-btn-icon" });
@@ -8340,6 +8724,9 @@ var require_goal_view = __commonJS({
               if (item.noteFile) void this.plugin.openFile(item.noteFile);
               else new Notice2(`Note not found: ${item.path}`);
             });
+            if (item.isAuto) {
+              row.createSpan({ text: "auto", cls: "iter-entry-auto-pill", attr: { title: "Auto-collected via criteria" } });
+            }
             if (Array.isArray(item.propsList) && item.propsList.length > 0) {
               const pills = row.createDiv({ cls: "iter-prop-pills" });
               for (const p of item.propsList) {
@@ -8372,19 +8759,19 @@ var require_goal_view = __commonJS({
                 path: item.path,
                 showDate: dataset.type === "note_time",
                 metricKeys: mergedKeys,
-                initialEntry: dataset.entries[item.index],
+                initialEntry: entryIdx >= 0 ? dataset.entries[entryIdx] : { path: item.path, date: item.date },
                 syncToNote: true,
                 onSubmit: async (updated) => {
-                  await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+                  await updateDatasetEntry(this.app, this.file, dataset.id, entryIdx, updated);
                   this.render();
                 }
               }).open();
             } else {
               new EditEntryModal(this.app, {
                 dataset,
-                entry: dataset.entries[item.index],
+                entry: dataset.entries[entryIdx],
                 onSubmit: async (updated) => {
-                  await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+                  await updateDatasetEntry(this.app, this.file, dataset.id, entryIdx, updated);
                   this.render();
                 }
               }).open();
@@ -8393,11 +8780,14 @@ var require_goal_view = __commonJS({
           const delBtn = row.createEl("button", {
             cls: "iter-icon-button iter-entry-del",
             type: "button",
-            attr: { "aria-label": "Remove entry", title: "Remove entry" }
+            attr: {
+              "aria-label": item.isAuto ? "Exclude auto-collected note" : "Remove entry",
+              title: item.isAuto ? "Exclude from auto-collect list" : "Remove entry"
+            }
           });
           setIcon(delBtn, "x");
           delBtn.addEventListener("click", async () => {
-            await removeDatasetEntry(this.app, this.file, dataset.id, item.index);
+            await removeDatasetEntry(this.app, this.file, dataset.id, entryIdx, item.path);
             this.render();
           });
         }

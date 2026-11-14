@@ -38,6 +38,7 @@ const {
   resolveVirtualDataset,
   resolveWidgetDataset,
   describeRelation,
+  describeAutoQuery,
 } = require('./data-model');
 const { evaluatePipeline, buildPipelineFromSimpleConfig } = require('./pipeline');
 const { WorkflowEditorModal, renderWidgetDisplayBody } = require('./canvas-editor');
@@ -925,6 +926,7 @@ class GoalView extends ItemView {
       ? resolveVirtualDataset(this.app, dataset, this.file.path, doc?.treePath || '')
       : null;
     const sources = virtual?.sources || [];
+    const resolved = !isRollup ? resolveDatasetEntries(this.app, dataset, this.file.path) : [];
 
     const card = container.createDiv({ cls: 'iter-dataset-card' });
 
@@ -933,7 +935,7 @@ class GoalView extends ItemView {
     left.createSpan({ text: dataset.name, cls: 'iter-dataset-title' });
     left.createSpan({ text: TYPE_LABELS[dataset.type] || dataset.type, cls: 'iter-module-pill' });
     left.createSpan({
-      text: String(isRollup ? virtual.resolvedEntries.length : dataset.entries.length),
+      text: String(isRollup ? virtual.resolvedEntries.length : resolved.length),
       cls: 'iter-dataset-count',
     });
 
@@ -1075,9 +1077,21 @@ class GoalView extends ItemView {
       setTimeout(() => primaryInput?.focus(), 0);
     }
 
-    const resolved = resolveDatasetEntries(this.app, dataset, this.file.path);
+    if (dataset.autoQuery) {
+      const autoText = describeAutoQuery(dataset.autoQuery);
+      if (autoText) {
+        const autoRow = card.createDiv({ cls: 'iter-rollup-badge iter-auto-query-badge' });
+        autoRow.createSpan({ text: autoText });
+      }
+    }
+
     if (!resolved.length) {
-      card.createEl('p', { text: 'No entries yet. Click + to add one.', cls: 'iter-dataset-empty' });
+      card.createEl('p', {
+        text: dataset.autoQuery
+          ? 'No notes match the auto-collect criteria yet, or click + to add one manually.'
+          : 'No entries yet. Click + to add one.',
+        cls: 'iter-dataset-empty',
+      });
       return;
     }
 
@@ -1088,6 +1102,7 @@ class GoalView extends ItemView {
     const rowsEl = card.createDiv({ cls: 'iter-entry-list' });
     for (const item of displayOrder) {
       const row = rowsEl.createDiv({ cls: 'iter-entry-row' });
+      const entryIdx = item.entryIndex !== undefined ? item.entryIndex : item.index;
 
       if (dataset.type === 'note' || dataset.type === 'note_time') {
         const linkBtn = row.createEl('button', { cls: 'iter-entry-note-btn', type: 'button' });
@@ -1098,6 +1113,9 @@ class GoalView extends ItemView {
           if (item.noteFile) void this.plugin.openFile(item.noteFile);
           else new Notice(`Note not found: ${item.path}`);
         });
+        if (item.isAuto) {
+          row.createSpan({ text: 'auto', cls: 'iter-entry-auto-pill', attr: { title: 'Auto-collected via criteria' } });
+        }
         if (Array.isArray(item.propsList) && item.propsList.length > 0) {
           const pills = row.createDiv({ cls: 'iter-prop-pills' });
           for (const p of item.propsList) {
@@ -1134,19 +1152,19 @@ class GoalView extends ItemView {
             path: item.path,
             showDate: dataset.type === 'note_time',
             metricKeys: mergedKeys,
-            initialEntry: dataset.entries[item.index],
+            initialEntry: entryIdx >= 0 ? dataset.entries[entryIdx] : { path: item.path, date: item.date },
             syncToNote: true,
             onSubmit: async updated => {
-              await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+              await updateDatasetEntry(this.app, this.file, dataset.id, entryIdx, updated);
               this.render();
             },
           }).open();
         } else {
           new EditEntryModal(this.app, {
             dataset,
-            entry: dataset.entries[item.index],
+            entry: dataset.entries[entryIdx],
             onSubmit: async updated => {
-              await updateDatasetEntry(this.app, this.file, dataset.id, item.index, updated);
+              await updateDatasetEntry(this.app, this.file, dataset.id, entryIdx, updated);
               this.render();
             },
           }).open();
@@ -1156,11 +1174,14 @@ class GoalView extends ItemView {
       const delBtn = row.createEl('button', {
         cls: 'iter-icon-button iter-entry-del',
         type: 'button',
-        attr: { 'aria-label': 'Remove entry', title: 'Remove entry' },
+        attr: {
+          'aria-label': item.isAuto ? 'Exclude auto-collected note' : 'Remove entry',
+          title: item.isAuto ? 'Exclude from auto-collect list' : 'Remove entry',
+        },
       });
       setIcon(delBtn, 'x');
       delBtn.addEventListener('click', async () => {
-        await removeDatasetEntry(this.app, this.file, dataset.id, item.index);
+        await removeDatasetEntry(this.app, this.file, dataset.id, entryIdx, item.path);
         this.render();
       });
     }

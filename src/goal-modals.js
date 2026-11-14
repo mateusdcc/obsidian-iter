@@ -13,6 +13,9 @@ const {
   toFiniteNumber,
   datasetMatchesFilter,
   resolveDatasetEntries,
+  normalizeAutoQuery,
+  discoverVaultFolders,
+  discoverAutoQueryNotes,
   stripMd,
 } = require('./data-model');
 
@@ -306,10 +309,127 @@ class AddDatasetModal extends Modal {
     const rollupSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
     let rollupControls = null;
 
+    const autoQuerySlot = form.createDiv({ cls: 'iter-modal-dynamic' });
+    let getAutoQuery = () => null;
+
+    const renderAutoQuerySection = () => {
+      autoQuerySlot.empty();
+      const initQ = this.initialDataset?.autoQuery || null;
+      const box = autoQuerySlot.createDiv({ cls: 'iter-auto-query-box' });
+      const head = box.createDiv({ cls: 'iter-auto-query-head' });
+      head.createSpan({ text: 'Auto-collect notes matching criteria (optional)', cls: 'iter-modal-label' });
+      const previewBadge = head.createSpan({ cls: 'iter-auto-query-preview' });
+
+      const grid = box.createDiv({ cls: 'iter-modal-row' });
+
+      const folderField = grid.createDiv({ cls: 'iter-modal-field' });
+      folderField.createEl('label', { text: 'Folder path(s)', cls: 'iter-micro-label' });
+      const folderInput = folderField.createEl('input', {
+        type: 'text',
+        placeholder: 'e.g. Books/As Flores do Mal',
+        cls: 'iter-modal-input iter-auto-folder-input',
+      });
+      if (initQ?.folder) folderInput.value = initQ.folder;
+
+      const whereField = grid.createDiv({ cls: 'iter-modal-field' });
+      whereField.createEl('label', { text: 'Frontmatter filter', cls: 'iter-micro-label' });
+      const whereInput = whereField.createEl('input', {
+        type: 'text',
+        placeholder: 'e.g. pages, type = book, score >= 80',
+        cls: 'iter-modal-input iter-auto-where-input',
+      });
+      if (initQ?.where) whereInput.value = initQ.where;
+
+      const vaultFolders = discoverVaultFolders(this.app);
+      if (vaultFolders.length > 0) {
+        const chipsWrap = box.createDiv({ cls: 'iter-chip-suggestions' });
+        for (const dir of vaultFolders.slice(0, 8)) {
+          const chip = chipsWrap.createEl('button', {
+            text: dir,
+            type: 'button',
+            cls: 'iter-suggest-chip iter-folder-chip',
+          });
+          chip.addEventListener('click', () => {
+            folderInput.value = dir;
+            refreshPreview();
+          });
+        }
+      }
+
+      const row2 = box.createDiv({ cls: 'iter-modal-row' });
+      const tagField = row2.createDiv({ cls: 'iter-modal-field' });
+      tagField.createEl('label', { text: 'Tag filter', cls: 'iter-micro-label' });
+      const tagInput = tagField.createEl('input', {
+        type: 'text',
+        placeholder: 'e.g. #poem, #essay',
+        cls: 'iter-modal-input iter-auto-tag-input',
+      });
+      if (initQ?.tag) tagInput.value = initQ.tag;
+
+      const nameField = row2.createDiv({ cls: 'iter-modal-field' });
+      nameField.createEl('label', { text: 'Title / filename filter', cls: 'iter-micro-label' });
+      const matchInput = nameField.createEl('input', {
+        type: 'text',
+        placeholder: 'e.g. Mock Exam, !Index',
+        cls: 'iter-modal-input iter-auto-name-input',
+      });
+      if (initQ?.nameMatch) matchInput.value = initQ.nameMatch;
+
+      let excludeIndex = initQ?.excludeIndex !== undefined ? Boolean(initQ.excludeIndex) : true;
+      const skipIndexRow = box.createDiv({ cls: 'iter-auto-query-toggle-row' });
+      const skipBtn = skipIndexRow.createEl('button', {
+        type: 'button',
+        cls: `iter-suggest-chip${excludeIndex ? ' is-active' : ''}`,
+        text: excludeIndex ? '✓ Skip folder index / book root notes' : 'Include folder index / book root notes',
+      });
+      skipBtn.addEventListener('click', () => {
+        excludeIndex = !excludeIndex;
+        skipBtn.textContent = excludeIndex
+          ? '✓ Skip folder index / book root notes'
+          : 'Include folder index / book root notes';
+        if (excludeIndex) skipBtn.addClass?.('is-active');
+        else skipBtn.removeClass?.('is-active');
+        refreshPreview();
+      });
+
+      const buildDraft = () =>
+        normalizeAutoQuery({
+          folder: folderInput.value,
+          where: whereInput.value,
+          tag: tagInput.value,
+          nameMatch: matchInput.value,
+          excludeIndex,
+        });
+
+      const refreshPreview = () => {
+        const q = buildDraft();
+        if (!q) {
+          previewBadge.textContent = 'Manual list (or fill any rule below to auto-collect)';
+          return;
+        }
+        const matched = discoverAutoQueryNotes(this.app, q);
+        if (!matched.length) {
+          previewBadge.textContent = '0 notes match right now';
+        } else {
+          const sample = matched.slice(0, 3).map(m => stripMd(m.file.name)).join(', ');
+          previewBadge.textContent = `${matched.length} ${matched.length === 1 ? 'note matches' : 'notes match'}: ${sample}${matched.length > 3 ? '…' : ''}`;
+        }
+      };
+
+      for (const inp of [folderInput, whereInput, tagInput, matchInput]) {
+        inp.addEventListener('input', refreshPreview);
+      }
+      refreshPreview();
+      getAutoQuery = buildDraft;
+    };
+
     const syncExtra = () => {
       const t = typeSelect.value;
       if (t === 'rollup') {
         extraField.style.display = 'none';
+        autoQuerySlot.empty();
+        autoQuerySlot.style.display = 'none';
+        getAutoQuery = () => null;
         rollupSlot.style.display = '';
         if (!rollupControls) {
           rollupControls = renderRelationConfigPanel(rollupSlot, {
@@ -332,16 +452,26 @@ class AddDatasetModal extends Modal {
         extraField.style.display = '';
         extraLabel.textContent = 'Unit (optional)';
         extraInput.placeholder = 'e.g. kg, words, kcal';
+        autoQuerySlot.empty();
+        autoQuerySlot.style.display = 'none';
+        getAutoQuery = () => null;
       } else if (t === 'note_time') {
         extraField.style.display = '';
         extraLabel.textContent = 'Frontmatter properties (optional, comma-separated)';
         extraInput.placeholder = 'score (or multiple: chapters, pages)';
+        autoQuerySlot.style.display = '';
+        renderAutoQuerySection();
       } else if (t === 'note') {
         extraField.style.display = '';
         extraLabel.textContent = 'Frontmatter properties (optional, comma-separated)';
         extraInput.placeholder = 'e.g. chapters, pages, author (leave blank for plain notes)';
+        autoQuerySlot.style.display = '';
+        renderAutoQuerySection();
       } else {
         extraField.style.display = 'none';
+        autoQuerySlot.empty();
+        autoQuerySlot.style.display = 'none';
+        getAutoQuery = () => null;
       }
     };
     typeSelect.addEventListener('change', syncExtra);
@@ -376,6 +506,7 @@ class AddDatasetModal extends Modal {
           : type === 'note'
             ? parsedKeys
             : [];
+        const autoQuery = (type === 'note' || type === 'note_time') ? getAutoQuery() : null;
         await this.onSubmit({
           name: nameInput.value,
           type,
@@ -385,6 +516,7 @@ class AddDatasetModal extends Modal {
           metricKey: metricKeys[0] || '',
           metricKeys,
           relation,
+          autoQuery,
         });
         this.close();
       } catch (error) {
