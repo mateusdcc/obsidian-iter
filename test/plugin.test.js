@@ -37,6 +37,7 @@ test('IterPlugin onload ensures Iter structure and registers views and commands'
 
   assert.ok(plugin.views.has('iter-panel'));
   assert.ok(plugin.views.has('iter-garden'));
+  assert.ok(plugin.views.has('iter-goal'));
 
   const commandNames = plugin.commands.map(c => c.name);
   assert.ok(commandNames.includes('Create tree'));
@@ -44,6 +45,7 @@ test('IterPlugin onload ensures Iter structure and registers views and commands'
   assert.ok(commandNames.includes('Create habit'));
   assert.ok(commandNames.includes('Open Iter panel'));
   assert.ok(commandNames.includes('Open We garden'));
+  assert.ok(commandNames.includes('Open goal view'));
 
   plugin.onunload();
 });

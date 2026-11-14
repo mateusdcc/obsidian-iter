@@ -3,7 +3,8 @@
    ========================================================================== */
 
 .iter-panel,
-.iter-garden {
+.iter-garden,
+.iter-goal-view {
   --iter-sage-1: color-mix(in srgb, #6f9678 72%, var(--text-normal));
   --iter-sage-2: color-mix(in srgb, #52785c 76%, var(--background-primary));
   --iter-sage-3: color-mix(in srgb, #8eb393 68%, var(--text-normal));
@@ -931,4 +932,734 @@ button.iter-water-action.is-watered {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
+}
+
+
+/* ---------- Goal Custom View ---------- */
+
+.iter-goal-view {
+  overflow-y: auto;
+  background: var(--background-primary);
+}
+
+.iter-goal-view button.iter-icon-button,
+.iter-goal-view button.iter-crumb-btn,
+.iter-goal-view button.iter-note-nav-item,
+.iter-goal-view button.iter-entry-note-btn,
+.iter-goal-view button.iter-tree-link-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.iter-goal-view button.iter-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+}
+
+.iter-goal-view button.iter-icon-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.iter-goal-view button.iter-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.iter-goal-shell {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 32px 64px;
+}
+
+.iter-goal-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 64px 24px;
+  color: var(--text-muted);
+}
+
+.iter-goal-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.iter-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iter-goal-view button.iter-crumb-btn {
+  height: auto;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.iter-goal-view button.iter-crumb-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.iter-crumb-sep {
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+.iter-kind-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.iter-goal-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button.iter-primary-pill.is-done {
+  border-color: color-mix(in srgb, var(--iter-sage-1) 55%, transparent);
+  background: color-mix(in srgb, var(--iter-sage-1) 14%, transparent);
+  color: var(--iter-sage-1);
+}
+
+.iter-goal-title {
+  margin: 0 0 20px;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+/* Overview: Description + Expected completion */
+
+.iter-goal-overview {
+  display: grid;
+  grid-template-columns: 1fr 250px;
+  gap: 20px;
+  padding: 18px 20px;
+  margin-bottom: 32px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-secondary) 50%, var(--background-primary));
+}
+
+@media (max-width: 700px) {
+  .iter-goal-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+.iter-goal-desc-wrap,
+.iter-goal-due-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iter-micro-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+textarea.iter-goal-desc-input {
+  width: 100%;
+  min-height: 50px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+textarea.iter-goal-desc-input:hover {
+  border-color: var(--background-modifier-border);
+}
+
+textarea.iter-goal-desc-input:focus {
+  border-color: var(--interactive-accent);
+  background: var(--background-primary);
+  outline: none;
+}
+
+.iter-due-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+input.iter-due-input {
+  width: 100%;
+  font-size: var(--font-ui-small);
+}
+
+.iter-due-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.iter-due-badge.is-soon,
+.iter-due-badge.is-today {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+.iter-due-badge.is-overdue {
+  color: var(--text-error);
+  border-color: color-mix(in srgb, var(--text-error) 45%, transparent);
+}
+
+.iter-due-empty {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Goal Sections */
+
+.iter-goal-section {
+  margin-bottom: 32px;
+}
+
+.iter-section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.iter-section-heading {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.iter-section-hint {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+/* ---------- Widgets ---------- */
+
+.iter-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.iter-widget-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+}
+
+.iter-widget-card.is-wide {
+  grid-column: span 2;
+}
+
+@media (max-width: 600px) {
+  .iter-widget-card.is-wide {
+    grid-column: span 1;
+  }
+}
+
+.iter-widget-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-widget-title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-widget-remove {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.iter-widget-card:is(:hover, :focus-within) .iter-widget-remove {
+  opacity: 1;
+}
+
+.iter-widget-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Stat widget */
+
+.iter-stat-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.iter-stat-number {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text-normal);
+}
+
+.iter-stat-unit {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.iter-stat-sub {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Goal bar widget */
+
+.iter-bar-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-bar-numbers {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.iter-bar-percent {
+  font-size: var(--font-ui-small);
+  color: var(--interactive-accent);
+  font-weight: var(--font-medium);
+}
+
+.iter-bar-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  overflow: hidden;
+}
+
+.iter-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--iter-sage-1), var(--interactive-accent));
+  transition: width 240ms ease;
+}
+
+/* Chart widget */
+
+.iter-chart-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.iter-delta-up {
+  color: var(--iter-sage-1);
+}
+
+.iter-delta-down {
+  color: var(--text-muted);
+}
+
+.iter-chart-host {
+  width: 100%;
+}
+
+.iter-chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.iter-chart-axis {
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+}
+
+.iter-chart-grid {
+  stroke: var(--background-modifier-border);
+  stroke-width: 0.75;
+  stroke-dasharray: 2 3;
+  opacity: 0.55;
+}
+
+.iter-chart-label {
+  fill: var(--text-faint);
+  font-size: 9px;
+}
+
+.iter-chart-label.is-y {
+  text-anchor: end;
+}
+
+.iter-chart-label.is-x-start {
+  text-anchor: start;
+}
+
+.iter-chart-label.is-x-end {
+  text-anchor: end;
+}
+
+.iter-chart-line {
+  fill: none;
+  stroke: var(--iter-sage-1);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.iter-chart-area {
+  fill: var(--iter-sage-1);
+  opacity: 0.12;
+}
+
+.iter-chart-dot {
+  fill: var(--background-primary);
+  stroke: var(--interactive-accent);
+  stroke-width: 2;
+}
+
+.iter-chart-bar {
+  fill: var(--iter-sage-1);
+  opacity: 0.85;
+}
+
+.iter-chart-bar:hover,
+.iter-chart-dot:hover {
+  opacity: 1;
+}
+
+.iter-chart-dot.is-clickable,
+.iter-chart-bar.is-clickable {
+  cursor: pointer;
+}
+
+/* Note navigator widget */
+
+.iter-note-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.iter-goal-view button.iter-note-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  text-align: left;
+}
+
+.iter-goal-view button.iter-note-nav-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.iter-note-nav-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.iter-note-nav-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.iter-note-nav-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.iter-note-nav-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-note-nav-path {
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-note-score-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+  color: var(--interactive-accent);
+  font-size: 11px;
+  font-weight: var(--font-medium);
+}
+
+.iter-note-date-pill {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* ---------- Custom Data Lists ---------- */
+
+.iter-dataset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.iter-dataset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-secondary) 55%, var(--background-primary));
+}
+
+.iter-dataset-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-dataset-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.iter-dataset-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-dataset-count {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-dataset-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.iter-dataset-remove-btn {
+  opacity: 0;
+}
+
+.iter-dataset-card:is(:hover, :focus-within) .iter-dataset-remove-btn {
+  opacity: 1;
+}
+
+.iter-inline-entry-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.iter-inline-input {
+  min-width: 0;
+  font-size: var(--font-ui-small);
+}
+
+.iter-inline-input.is-number {
+  width: 90px;
+  flex: 1 1 80px;
+}
+
+.iter-inline-input.is-text {
+  flex: 1 1 auto;
+}
+
+.iter-inline-input.is-date {
+  width: 128px;
+  flex: 0 0 auto;
+}
+
+.iter-dataset-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.iter-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+}
+
+.iter-entry-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.iter-goal-view button.iter-entry-note-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  color: var(--text-normal);
+  text-align: left;
+}
+
+.iter-goal-view button.iter-entry-note-btn:hover {
+  color: var(--text-accent);
+}
+
+.iter-entry-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-entry-date {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.iter-entry-del {
+  opacity: 0;
+}
+
+.iter-entry-row:is(:hover, :focus-within) .iter-entry-del {
+  opacity: 1;
+}
+
+/* Tree linked subgoals & habits inside Tree GoalView */
+
+.iter-tree-links-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.iter-goal-view button.iter-tree-link-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-secondary);
+  text-align: left;
+}
+
+.iter-goal-view button.iter-tree-link-card:hover {
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-modifier-hover);
+}
+
+.iter-goal-view button.iter-tree-link-card.is-done .iter-tree-link-name {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.iter-goal-view button.iter-tree-link-card.is-watered .iter-btn-icon {
+  color: var(--iter-water);
+}
+
+.iter-tree-link-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-tree-link-kind {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: capitalize;
 }

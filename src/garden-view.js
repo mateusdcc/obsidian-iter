@@ -270,9 +270,9 @@ class GardenView extends ItemView {
     if (tree.indexFile) {
       const noteBtn = topActions.createEl('button', { cls: 'iter-ghost-action', type: 'button' });
       const noteIcon = noteBtn.createSpan({ cls: 'iter-btn-icon' });
-      setIcon(noteIcon, 'file-text');
-      noteBtn.createSpan({ text: 'Open note' });
-      noteBtn.addEventListener('click', () => void this.plugin.openFile(tree.indexFile));
+      setIcon(noteIcon, 'target');
+      noteBtn.createSpan({ text: 'Open goal' });
+      noteBtn.addEventListener('click', () => void this.plugin.openGoal(tree.indexFile));
     }
     const closeBtn = topActions.createEl('button', {
       cls: 'iter-icon-button',
@@ -337,7 +337,7 @@ class GardenView extends ItemView {
         const textBtn = row.createEl('button', { cls: 'iter-detail-link', type: 'button' });
         textBtn.createSpan({ text: sub.title, cls: 'iter-detail-title' });
         if (sub.target) textBtn.createSpan({ text: sub.target, cls: 'iter-detail-sub' });
-        textBtn.addEventListener('click', () => void this.plugin.openFile(sub.file));
+        textBtn.addEventListener('click', () => void this.plugin.openGoal(sub.file));
       }
     }
 
@@ -364,7 +364,7 @@ class GardenView extends ItemView {
         if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
         if (habit.target) subMeta.push(habit.target);
         textBtn.createSpan({ text: subMeta.join(' · '), cls: 'iter-detail-sub' });
-        textBtn.addEventListener('click', () => void this.plugin.openFile(habit.file));
+        textBtn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
 
         const waterBtn = row.createEl('button', {
           cls: `iter-water-action${habit.wateredInPeriod ? ' is-watered' : ''}`,

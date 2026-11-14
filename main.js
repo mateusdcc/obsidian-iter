@@ -854,8 +854,13 @@ var require_panel_view = __commonJS({
         }, 90);
       }
       isActiveFile(file) {
+        if (!file) return false;
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        if (recent?.view?.getViewType?.() === this.plugin.goalViewType && recent.view.file?.path === file.path) {
+          return true;
+        }
         const active = this.app.workspace.getActiveFile?.();
-        return Boolean(file && active && active.path === file.path);
+        return Boolean(active && active.path === file.path);
       }
       isGardenActive() {
         const recent = this.app.workspace.getMostRecentLeaf?.();
@@ -930,8 +935,25 @@ var require_panel_view = __commonJS({
         );
         if (tree.indexFile) {
           menu.addItem(
-            (item) => item.setTitle("Open tree note").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
+            (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(tree.indexFile))
           );
+          menu.addItem(
+            (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
+          );
+        }
+        menu.showAtMouseEvent(event);
+      }
+      showGoalItemMenu(event, file, extraLabel, extraIcon, extraAction) {
+        const menu = new Menu();
+        menu.addItem(
+          (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
+        );
+        menu.addItem(
+          (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
+        );
+        if (extraAction) {
+          menu.addSeparator();
+          menu.addItem((item) => item.setTitle(extraLabel).setIcon(extraIcon).onClick(extraAction));
         }
         menu.showAtMouseEvent(event);
       }
@@ -946,7 +968,7 @@ var require_panel_view = __commonJS({
         setIcon(iconEl, MODULE_ICONS[tree.module] || "trees");
         titleBtn.createSpan({ text: tree.title, cls: "iter-row-name" });
         titleBtn.addEventListener("click", () => {
-          if (tree.indexFile) void this.plugin.openFile(tree.indexFile);
+          if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
           else void this.plugin.openGarden(tree.path);
         });
         row.addEventListener("contextmenu", (event) => {
@@ -1007,7 +1029,20 @@ var require_panel_view = __commonJS({
         titleBtn.setAttribute("title", subgoal.target ? `${subgoal.title} \xB7 ${subgoal.target}` : subgoal.title);
         if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute("aria-current", "page");
         titleBtn.createSpan({ text: subgoal.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openFile(subgoal.file));
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          this.showGoalItemMenu(
+            event,
+            subgoal.file,
+            subgoal.done ? "Mark incomplete" : "Mark done",
+            subgoal.done ? "circle" : "check-circle-2",
+            async () => {
+              await toggleSubgoal(this.app, subgoal.file);
+              this.plugin.scheduleRefresh();
+            }
+          );
+        });
       }
       renderHabit(parent, habit) {
         const row = parent.createDiv({
@@ -1033,7 +1068,20 @@ var require_panel_view = __commonJS({
         titleBtn.setAttribute("title", habit.target ? `${habit.title} (${habit.frequency}) \xB7 ${habit.target}` : `${habit.title} (${habit.frequency})`);
         if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
         titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openFile(habit.file));
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          this.showGoalItemMenu(
+            event,
+            habit.file,
+            habit.wateredToday ? "Undo today's watering" : "Water now",
+            "droplet",
+            async () => {
+              await waterHabit(this.app, habit.file);
+              this.plugin.scheduleRefresh();
+            }
+          );
+        });
         row.createSpan({
           text: CADENCE_SHORT[habit.frequency] || "D",
           cls: "iter-cadence-badge",
@@ -1681,9 +1729,9 @@ var require_garden_view = __commonJS({
         if (tree.indexFile) {
           const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
           const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(noteIcon, "file-text");
-          noteBtn.createSpan({ text: "Open note" });
-          noteBtn.addEventListener("click", () => void this.plugin.openFile(tree.indexFile));
+          setIcon(noteIcon, "target");
+          noteBtn.createSpan({ text: "Open goal" });
+          noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
         }
         const closeBtn = topActions.createEl("button", {
           cls: "iter-icon-button",
@@ -1741,7 +1789,7 @@ var require_garden_view = __commonJS({
             const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
             textBtn.createSpan({ text: sub.title, cls: "iter-detail-title" });
             if (sub.target) textBtn.createSpan({ text: sub.target, cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openFile(sub.file));
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
           }
         }
         const habCol = columns.createDiv({ cls: "iter-inspector-section" });
@@ -1764,7 +1812,7 @@ var require_garden_view = __commonJS({
             if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
             if (habit.target) subMeta.push(habit.target);
             textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openFile(habit.file));
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
             const waterBtn = row.createEl("button", {
               cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}`,
               type: "button",
@@ -1793,6 +1841,1454 @@ var require_garden_view = __commonJS({
   }
 });
 
+// src/data-model.js
+var require_data_model = __commonJS({
+  "src/data-model.js"(exports2, module2) {
+    var { ROOT, parseDateKey, toDateKey } = require_storage();
+    var DATASET_TYPES = [
+      { id: "number_time", label: "Number & Time" },
+      { id: "text", label: "Text List" },
+      { id: "note", label: "Notes" },
+      { id: "note_time", label: "Notes & Time" }
+    ];
+    var WIDGET_TYPES = [
+      { id: "stat", label: "Metric Stat" },
+      { id: "goal_bar", label: "Goal Comparison Bar" },
+      { id: "chart", label: "Time Graph" },
+      { id: "note_navigator", label: "Note Navigator" }
+    ];
+    var STAT_AGGS = [
+      { id: "count", label: "Count" },
+      { id: "sum", label: "Sum" },
+      { id: "average", label: "Average" },
+      { id: "latest", label: "Latest" },
+      { id: "max", label: "Max" },
+      { id: "min", label: "Min" }
+    ];
+    var BAR_MODES = [
+      { id: "latest", label: "Latest entry" },
+      { id: "max", label: "Best / Max" },
+      { id: "sum", label: "Total sum" },
+      { id: "count", label: "Entry count" }
+    ];
+    var CHART_VARIANTS = [
+      { id: "line", label: "Line" },
+      { id: "bar", label: "Bar" }
+    ];
+    function generateId(prefix = "id") {
+      return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    }
+    function stripMd(name) {
+      return typeof name === "string" && name.endsWith(".md") ? name.slice(0, -3) : String(name || "");
+    }
+    function normalizeDatasetType(type) {
+      return DATASET_TYPES.some((item) => item.id === type) ? type : "number_time";
+    }
+    function normalizeWidgetType(type) {
+      return WIDGET_TYPES.some((item) => item.id === type) ? type : "stat";
+    }
+    function normalizeStatAgg(agg) {
+      return STAT_AGGS.some((item) => item.id === agg) ? agg : "latest";
+    }
+    function normalizeBarMode(mode) {
+      return BAR_MODES.some((item) => item.id === mode) ? mode : "latest";
+    }
+    function normalizeChartVariant(variant) {
+      return CHART_VARIANTS.some((item) => item.id === variant) ? variant : "line";
+    }
+    function toFiniteNumber(raw) {
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+      if (typeof raw === "string" && raw.trim() !== "") {
+        const n = Number(raw.trim());
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+    function normalizeEntry(type, raw) {
+      if (raw === null || raw === void 0) return null;
+      if (type === "number_time") {
+        if (typeof raw !== "object") return null;
+        const value = toFiniteNumber(raw.value);
+        const date = typeof raw.date === "string" && parseDateKey(raw.date) ? raw.date.trim() : toDateKey();
+        if (value === null) return null;
+        return { value, date };
+      }
+      if (type === "text") {
+        const value = typeof raw === "string" ? raw.trim() : typeof raw?.value === "string" ? raw.value.trim() : "";
+        if (!value) return null;
+        const date = typeof raw?.date === "string" && parseDateKey(raw.date) ? raw.date.trim() : null;
+        return date ? { value, date } : { value };
+      }
+      if (type === "note") {
+        const path = typeof raw === "string" ? raw.trim() : typeof raw?.path === "string" ? raw.path.trim() : "";
+        if (!path) return null;
+        return { path };
+      }
+      if (type === "note_time") {
+        if (typeof raw !== "object") return null;
+        const path = typeof raw.path === "string" ? raw.path.trim() : "";
+        if (!path) return null;
+        const date = typeof raw.date === "string" && parseDateKey(raw.date) ? raw.date.trim() : toDateKey();
+        const value = toFiniteNumber(raw.value);
+        return value !== null ? { path, date, value } : { path, date };
+      }
+      return null;
+    }
+    function normalizeDataset(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const name = typeof raw.name === "string" ? raw.name.trim() : "";
+      if (!name) return null;
+      const type = normalizeDatasetType(raw.type);
+      const entries = Array.isArray(raw.entries) ? raw.entries.map((item) => normalizeEntry(type, item)).filter(Boolean) : [];
+      return {
+        id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : generateId("ds"),
+        name,
+        type,
+        unit: typeof raw.unit === "string" ? raw.unit.trim() : "",
+        metricKey: typeof raw.metricKey === "string" && raw.metricKey.trim() ? raw.metricKey.trim() : "score",
+        entries
+      };
+    }
+    function normalizeWidget(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const datasetId = typeof raw.datasetId === "string" ? raw.datasetId.trim() : "";
+      if (!datasetId) return null;
+      const type = normalizeWidgetType(raw.type);
+      const title = typeof raw.title === "string" ? raw.title.trim() : "";
+      return {
+        id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : generateId("w"),
+        title,
+        type,
+        datasetId,
+        agg: normalizeStatAgg(raw.agg),
+        mode: normalizeBarMode(raw.mode),
+        target: toFiniteNumber(raw.target),
+        variant: normalizeChartVariant(raw.variant),
+        metricKey: typeof raw.metricKey === "string" && raw.metricKey.trim() ? raw.metricKey.trim() : ""
+      };
+    }
+    function resolveGoalKind(file, fm) {
+      if (file?.name === "_tree.md") return "tree";
+      if (file?.path?.includes("/subgoals/")) return "subgoal";
+      if (file?.path?.includes("/habits/")) return "habit";
+      const type = typeof fm?.type === "string" ? fm.type.trim() : "";
+      if (type === "tree" || type === "subgoal" || type === "habit") return type;
+      return "goal";
+    }
+    function resolveParentTreePath(filePath) {
+      if (typeof filePath !== "string" || !filePath.startsWith(`${ROOT}/`)) return null;
+      const rest = filePath.slice(ROOT.length + 1);
+      const treeName = rest.split("/")[0];
+      if (!treeName || treeName.startsWith("_")) return null;
+      return `${ROOT}/${treeName}`;
+    }
+    function readGoalDocument(app, file) {
+      const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+      const kind = resolveGoalKind(file, fm);
+      const treePath = resolveParentTreePath(file?.path);
+      const parentTreeFile = treePath ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+      const title = typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
+      const description = typeof fm.description === "string" && fm.description.trim() ? fm.description.trim() : typeof fm.goal === "string" ? fm.goal.trim() : "";
+      const due = typeof fm.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "";
+      const target = typeof fm.target === "string" ? fm.target.trim() : "";
+      const datasets = Array.isArray(fm.datasets) ? fm.datasets.map(normalizeDataset).filter(Boolean) : [];
+      const widgets = Array.isArray(fm.widgets) ? fm.widgets.map(normalizeWidget).filter(Boolean) : [];
+      return {
+        file,
+        kind,
+        treePath,
+        parentTreeFile: parentTreeFile && parentTreeFile.path !== file.path ? parentTreeFile : null,
+        title,
+        description,
+        due,
+        target,
+        done: Boolean(fm.done),
+        frequency: typeof fm.frequency === "string" ? fm.frequency : "daily",
+        module: typeof fm.module === "string" ? fm.module : "general",
+        datasets,
+        widgets
+      };
+    }
+    function resolveNoteFile(app, pathOrLink, sourcePath = "") {
+      if (!pathOrLink) return null;
+      const direct = app.vault.getAbstractFileByPath(pathOrLink);
+      if (direct && !Array.isArray(direct.children)) return direct;
+      return app.metadataCache.getFirstLinkpathDest?.(pathOrLink, sourcePath) ?? null;
+    }
+    function resolveDatasetEntries(app, dataset, sourcePath = "") {
+      return dataset.entries.map((entry, index) => {
+        if (dataset.type === "number_time") {
+          return { index, date: entry.date, value: entry.value, noteFile: null, label: `${entry.value}${dataset.unit ? ` ${dataset.unit}` : ""}` };
+        }
+        if (dataset.type === "text") {
+          return { index, date: entry.date ?? null, value: null, noteFile: null, label: entry.value };
+        }
+        if (dataset.type === "note") {
+          const noteFile = resolveNoteFile(app, entry.path, sourcePath);
+          const name = noteFile ? stripMd(noteFile.name) : stripMd(entry.path.split("/").pop());
+          return { index, date: null, value: null, noteFile, path: noteFile?.path ?? entry.path, label: name };
+        }
+        if (dataset.type === "note_time") {
+          const noteFile = resolveNoteFile(app, entry.path, sourcePath);
+          const fm = noteFile ? app.metadataCache.getFileCache(noteFile)?.frontmatter : null;
+          const key = dataset.metricKey || "score";
+          const fmVal = toFiniteNumber(fm?.[key]);
+          const value = fmVal !== null ? fmVal : toFiniteNumber(entry.value);
+          const name = noteFile ? stripMd(noteFile.name) : stripMd(entry.path.split("/").pop());
+          return { index, date: entry.date, value, noteFile, path: noteFile?.path ?? entry.path, label: name };
+        }
+        return { index, date: null, value: null, noteFile: null, label: "" };
+      });
+    }
+    function resolveNumericSeries(app, dataset, sourcePath = "", metricOverride = "") {
+      const effectiveDataset = metricOverride ? { ...dataset, metricKey: metricOverride } : dataset;
+      const resolved = resolveDatasetEntries(app, effectiveDataset, sourcePath);
+      const timed = resolved.filter((item) => item.value !== null && Number.isFinite(item.value));
+      if (dataset.type === "number_time" || dataset.type === "note_time") {
+        timed.sort((a, b) => (a.date || "").localeCompare(b.date || "") || a.index - b.index);
+      }
+      return timed;
+    }
+    function formatNumber(num) {
+      if (!Number.isFinite(num)) return "\u2014";
+      const rounded = Math.round(num * 100) / 100;
+      return Number.isInteger(rounded) ? rounded.toLocaleString() : rounded.toLocaleString(void 0, { maximumFractionDigits: 2 });
+    }
+    function computeStat(app, dataset, agg, sourcePath = "", metricOverride = "") {
+      const normalizedAgg = normalizeStatAgg(agg);
+      if (normalizedAgg === "count") {
+        return {
+          value: dataset.entries.length,
+          display: formatNumber(dataset.entries.length),
+          unit: "",
+          count: dataset.entries.length
+        };
+      }
+      const points = resolveNumericSeries(app, dataset, sourcePath, metricOverride);
+      if (!points.length) {
+        return { value: null, display: "\u2014", unit: dataset.unit, count: 0 };
+      }
+      let value = null;
+      if (normalizedAgg === "sum") value = points.reduce((acc, p) => acc + p.value, 0);
+      else if (normalizedAgg === "average") value = points.reduce((acc, p) => acc + p.value, 0) / points.length;
+      else if (normalizedAgg === "latest") value = points[points.length - 1].value;
+      else if (normalizedAgg === "max") value = Math.max(...points.map((p) => p.value));
+      else if (normalizedAgg === "min") value = Math.min(...points.map((p) => p.value));
+      return {
+        value,
+        display: formatNumber(value),
+        unit: dataset.unit,
+        count: points.length
+      };
+    }
+    function computeGoalBar(app, dataset, mode, target, sourcePath = "", metricOverride = "") {
+      const normalizedMode = normalizeBarMode(mode);
+      const stat = computeStat(app, dataset, normalizedMode, sourcePath, metricOverride);
+      const current = stat.value ?? 0;
+      const numericTarget = toFiniteNumber(target);
+      const ratio = numericTarget && numericTarget > 0 ? current / numericTarget : 0;
+      const rawPercent = numericTarget && numericTarget > 0 ? Math.round(ratio * 100) : 0;
+      const fillPercent = Math.max(0, Math.min(100, rawPercent));
+      const unit = normalizedMode === "count" ? "" : dataset.unit;
+      return {
+        current: stat.value,
+        currentDisplay: stat.value === null ? "\u2014" : formatNumber(stat.value),
+        target: numericTarget,
+        targetDisplay: numericTarget === null ? "\u2014" : formatNumber(numericTarget),
+        rawPercent,
+        fillPercent,
+        unit
+      };
+    }
+    function formatDueStatus(due, now = /* @__PURE__ */ new Date()) {
+      const parsedDue = parseDateKey(due);
+      if (!parsedDue) return null;
+      const todayStr = toDateKey(now);
+      const parsedToday = parseDateKey(todayStr);
+      const diffDays = Math.round((parsedDue.getTime() - parsedToday.getTime()) / 864e5);
+      const formatted = parsedDue.toLocaleDateString(void 0, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+      if (diffDays < 0) return { formatted, badge: `${Math.abs(diffDays)}d overdue`, tone: "overdue" };
+      if (diffDays === 0) return { formatted, badge: "Due today", tone: "today" };
+      if (diffDays <= 7) return { formatted, badge: `${diffDays}d left`, tone: "soon" };
+      return { formatted, badge: `${diffDays}d left`, tone: "calm" };
+    }
+    async function updateGoalMeta(app, file, { description, due }) {
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        if (description !== void 0) {
+          const clean = String(description).trim();
+          fm.description = clean;
+          if (file.name === "_tree.md") fm.goal = clean;
+        }
+        if (due !== void 0) {
+          const cleanDue = String(due).trim();
+          fm.due = parseDateKey(cleanDue) ? cleanDue : "";
+        }
+      });
+    }
+    async function addDataset(app, file, { name, type, unit = "", metricKey = "score" }) {
+      const cleanName = typeof name === "string" ? name.trim() : "";
+      if (!cleanName) throw new Error("Dataset name is required.");
+      const dataset = {
+        id: generateId("ds"),
+        name: cleanName,
+        type: normalizeDatasetType(type),
+        unit: typeof unit === "string" ? unit.trim() : "",
+        metricKey: typeof metricKey === "string" && metricKey.trim() ? metricKey.trim() : "score",
+        entries: []
+      };
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        const existing = Array.isArray(fm.datasets) ? fm.datasets : [];
+        fm.datasets = [...existing, dataset];
+      });
+      return dataset;
+    }
+    async function removeDataset(app, file, datasetId) {
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        fm.datasets = Array.isArray(fm.datasets) ? fm.datasets.filter((item) => item?.id !== datasetId) : [];
+        if (Array.isArray(fm.widgets)) {
+          fm.widgets = fm.widgets.filter((w) => w?.datasetId !== datasetId);
+        }
+      });
+    }
+    async function addDatasetEntry(app, file, datasetId, rawEntry) {
+      let added = null;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        if (!Array.isArray(fm.datasets)) throw new Error("No datasets found on this goal.");
+        const ds = fm.datasets.find((item) => item?.id === datasetId);
+        if (!ds) throw new Error("Dataset not found.");
+        const entry = normalizeEntry(normalizeDatasetType(ds.type), rawEntry);
+        if (!entry) throw new Error("Invalid entry value.");
+        if (!Array.isArray(ds.entries)) ds.entries = [];
+        ds.entries.push(entry);
+        added = entry;
+      });
+      return added;
+    }
+    async function removeDatasetEntry(app, file, datasetId, entryIndex) {
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        if (!Array.isArray(fm.datasets)) return;
+        const ds = fm.datasets.find((item) => item?.id === datasetId);
+        if (!ds || !Array.isArray(ds.entries)) return;
+        if (entryIndex >= 0 && entryIndex < ds.entries.length) {
+          ds.entries.splice(entryIndex, 1);
+        }
+      });
+    }
+    async function addWidget(app, file, { title = "", type, datasetId, agg = "latest", mode = "latest", target = null, variant = "line", metricKey = "" }) {
+      if (!datasetId) throw new Error("Select a data list to link this widget to.");
+      const widget = {
+        id: generateId("w"),
+        title: typeof title === "string" ? title.trim() : "",
+        type: normalizeWidgetType(type),
+        datasetId,
+        agg: normalizeStatAgg(agg),
+        mode: normalizeBarMode(mode),
+        target: toFiniteNumber(target),
+        variant: normalizeChartVariant(variant),
+        metricKey: typeof metricKey === "string" ? metricKey.trim() : ""
+      };
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
+        fm.widgets = [...existing, widget];
+      });
+      return widget;
+    }
+    async function removeWidget(app, file, widgetId) {
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        fm.widgets = Array.isArray(fm.widgets) ? fm.widgets.filter((item) => item?.id !== widgetId) : [];
+      });
+    }
+    module2.exports = {
+      DATASET_TYPES,
+      WIDGET_TYPES,
+      STAT_AGGS,
+      BAR_MODES,
+      CHART_VARIANTS,
+      generateId,
+      stripMd,
+      normalizeEntry,
+      readGoalDocument,
+      resolveDatasetEntries,
+      resolveNumericSeries,
+      formatNumber,
+      computeStat,
+      computeGoalBar,
+      formatDueStatus,
+      updateGoalMeta,
+      addDataset,
+      removeDataset,
+      addDatasetEntry,
+      removeDatasetEntry,
+      addWidget,
+      removeWidget
+    };
+  }
+});
+
+// src/widget-art.js
+var require_widget_art = __commonJS({
+  "src/widget-art.js"(exports2, module2) {
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    function svgEl(tag, attrs = {}) {
+      const node = document.createElementNS(SVG_NS, tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
+      }
+      return node;
+    }
+    function round(num) {
+      return Math.round(num * 10) / 10;
+    }
+    function computeChartGeometry(points, options = {}) {
+      const width = options.width ?? 420;
+      const height = options.height ?? 140;
+      const pad = options.pad ?? { top: 14, right: 14, bottom: 24, left: 38 };
+      const plotW = Math.max(40, width - pad.left - pad.right);
+      const plotH = Math.max(30, height - pad.top - pad.bottom);
+      if (!points.length) {
+        return { width, height, pad, plotW, plotH, minVal: 0, maxVal: 0, coords: [] };
+      }
+      const values = points.map((p) => p.value);
+      let minVal = Math.min(...values);
+      let maxVal = Math.max(...values);
+      if (options.variant === "bar") {
+        minVal = Math.min(0, minVal);
+      }
+      if (minVal === maxVal) {
+        const delta = minVal === 0 ? 1 : Math.abs(minVal) * 0.2;
+        minVal = Math.max(0, minVal - delta);
+        maxVal = maxVal + delta;
+      }
+      const span = maxVal - minVal || 1;
+      const count = points.length;
+      const coords = points.map((point, index) => {
+        const xRatio = count === 1 ? 0.5 : index / (count - 1);
+        const x = options.variant === "bar" ? pad.left + (index + 0.5) / count * plotW : pad.left + xRatio * plotW;
+        const yRatio = (point.value - minVal) / span;
+        const y = pad.top + plotH - yRatio * plotH;
+        return {
+          ...point,
+          x: round(x),
+          y: round(y)
+        };
+      });
+      return { width, height, pad, plotW, plotH, minVal, maxVal, coords };
+    }
+    function formatAxisVal(val) {
+      if (!Number.isFinite(val)) return "";
+      if (Math.abs(val) >= 1e3) return `${Math.round(val / 100) / 10}k`;
+      return Number.isInteger(val) ? String(val) : String(Math.round(val * 10) / 10);
+    }
+    function renderChartSvg(container, points, { variant = "line", unit = "", onPointClick } = {}) {
+      const geo = computeChartGeometry(points, { variant });
+      const { width, height, pad, plotW, plotH, minVal, maxVal, coords } = geo;
+      const svg = svgEl("svg", {
+        viewBox: `0 0 ${width} ${height}`,
+        class: `iter-chart-svg is-${variant}`,
+        role: "img",
+        "aria-label": `Progress ${variant} chart`
+      });
+      const baselineY = pad.top + plotH;
+      for (const ratio of [0, 0.5, 1]) {
+        const y = round(pad.top + plotH * (1 - ratio));
+        svg.appendChild(svgEl("line", {
+          x1: pad.left,
+          y1: y,
+          x2: pad.left + plotW,
+          y2: y,
+          class: ratio === 0 ? "iter-chart-axis" : "iter-chart-grid"
+        }));
+      }
+      const minLabel = svgEl("text", { x: pad.left - 6, y: baselineY + 3, class: "iter-chart-label is-y" });
+      minLabel.textContent = formatAxisVal(minVal);
+      svg.appendChild(minLabel);
+      const maxLabel = svgEl("text", { x: pad.left - 6, y: pad.top + 4, class: "iter-chart-label is-y" });
+      maxLabel.textContent = formatAxisVal(maxVal);
+      svg.appendChild(maxLabel);
+      if (!coords.length) return svg;
+      if (variant === "bar") {
+        const slotW = plotW / coords.length;
+        const barW = Math.min(28, Math.max(6, slotW * 0.58));
+        for (const pt of coords) {
+          const barH = Math.max(3, baselineY - pt.y);
+          const rect = svgEl("rect", {
+            x: round(pt.x - barW / 2),
+            y: round(baselineY - barH),
+            width: round(barW),
+            height: round(barH),
+            rx: Math.min(4, round(barW / 3)),
+            class: `iter-chart-bar${pt.noteFile ? " is-clickable" : ""}`
+          });
+          const tip = svgEl("title");
+          tip.textContent = `${pt.date || ""}: ${pt.value}${unit ? ` ${unit}` : ""}${pt.noteFile ? ` (${pt.label})` : ""}`;
+          rect.appendChild(tip);
+          if (pt.noteFile && onPointClick) {
+            rect.addEventListener("click", () => onPointClick(pt));
+          }
+          svg.appendChild(rect);
+        }
+      } else {
+        if (coords.length > 1) {
+          const linePoints = coords.map((c) => `${c.x},${c.y}`).join(" ");
+          const areaPoints = `${coords[0].x},${baselineY} ${linePoints} ${coords[coords.length - 1].x},${baselineY}`;
+          svg.appendChild(svgEl("polygon", { points: areaPoints, class: "iter-chart-area" }));
+          svg.appendChild(svgEl("polyline", { points: linePoints, class: "iter-chart-line" }));
+        }
+        for (const pt of coords) {
+          const circle = svgEl("circle", {
+            cx: pt.x,
+            cy: pt.y,
+            r: coords.length === 1 ? 4.5 : 3.5,
+            class: `iter-chart-dot${pt.noteFile ? " is-clickable" : ""}`
+          });
+          const tip = svgEl("title");
+          tip.textContent = `${pt.date || ""}: ${pt.value}${unit ? ` ${unit}` : ""}${pt.noteFile ? ` (${pt.label})` : ""}`;
+          circle.appendChild(tip);
+          if (pt.noteFile && onPointClick) {
+            circle.addEventListener("click", () => onPointClick(pt));
+          }
+          svg.appendChild(circle);
+        }
+      }
+      const firstDate = coords[0]?.date;
+      const lastDate = coords[coords.length - 1]?.date;
+      if (firstDate) {
+        const leftText = svgEl("text", { x: pad.left, y: height - 5, class: "iter-chart-label is-x-start" });
+        leftText.textContent = firstDate;
+        svg.appendChild(leftText);
+      }
+      if (lastDate && lastDate !== firstDate) {
+        const rightText = svgEl("text", { x: pad.left + plotW, y: height - 5, class: "iter-chart-label is-x-end" });
+        rightText.textContent = lastDate;
+        svg.appendChild(rightText);
+      }
+      container.appendChild(svg);
+      return svg;
+    }
+    module2.exports = {
+      computeChartGeometry,
+      renderChartSvg
+    };
+  }
+});
+
+// src/goal-modals.js
+var require_goal_modals = __commonJS({
+  "src/goal-modals.js"(exports2, module2) {
+    var { Modal, FuzzySuggestModal, Notice: Notice2 } = require("obsidian");
+    var { toDateKey } = require_storage();
+    var {
+      DATASET_TYPES,
+      WIDGET_TYPES,
+      STAT_AGGS,
+      BAR_MODES,
+      CHART_VARIANTS,
+      stripMd
+    } = require_data_model();
+    var AddDatasetModal = class extends Modal {
+      constructor(app, { onSubmit }) {
+        super(app);
+        this.onSubmit = onSubmit;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: "Add data list", cls: "iter-modal-title" });
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const nameField = form.createDiv({ cls: "iter-modal-field" });
+        nameField.createEl("label", { text: "Name", cls: "iter-modal-label" });
+        const nameInput = nameField.createEl("input", {
+          type: "text",
+          placeholder: "e.g. Benching PRs, Words learnt, Mock Exams Done",
+          cls: "iter-modal-input"
+        });
+        nameInput.required = true;
+        const typeField = form.createDiv({ cls: "iter-modal-field" });
+        typeField.createEl("label", { text: "Data type", cls: "iter-modal-label" });
+        const typeSelect = typeField.createEl("select", { cls: "iter-modal-select" });
+        for (const item of DATASET_TYPES) {
+          typeSelect.createEl("option", { value: item.id, text: item.label });
+        }
+        const extraField = form.createDiv({ cls: "iter-modal-field" });
+        const extraLabel = extraField.createEl("label", { text: "Unit (optional)", cls: "iter-modal-label" });
+        const extraInput = extraField.createEl("input", {
+          type: "text",
+          placeholder: "e.g. kg, words, reps",
+          cls: "iter-modal-input"
+        });
+        const syncExtra = () => {
+          const t = typeSelect.value;
+          if (t === "number_time") {
+            extraField.style.display = "";
+            extraLabel.textContent = "Unit (optional)";
+            extraInput.placeholder = "e.g. kg, words, kcal";
+          } else if (t === "note_time") {
+            extraField.style.display = "";
+            extraLabel.textContent = "Frontmatter metric property (optional)";
+            extraInput.placeholder = "score (reads score from linked notes)";
+          } else {
+            extraField.style.display = "none";
+          }
+        };
+        typeSelect.addEventListener("change", syncExtra);
+        syncExtra();
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Add data list", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            const type = typeSelect.value;
+            await this.onSubmit({
+              name: nameInput.value,
+              type,
+              unit: type === "number_time" ? extraInput.value : "",
+              metricKey: type === "note_time" ? extraInput.value.trim() || "score" : "score"
+            });
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+            nameInput.focus();
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+        nameInput.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    var AddWidgetModal = class extends Modal {
+      constructor(app, { datasets, onSubmit }) {
+        super(app);
+        this.datasets = datasets;
+        this.onSubmit = onSubmit;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: "Add widget", cls: "iter-modal-title" });
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const row = form.createDiv({ cls: "iter-modal-row" });
+        const typeField = row.createDiv({ cls: "iter-modal-field" });
+        typeField.createEl("label", { text: "Widget type", cls: "iter-modal-label" });
+        const typeSelect = typeField.createEl("select", { cls: "iter-modal-select" });
+        for (const item of WIDGET_TYPES) {
+          typeSelect.createEl("option", { value: item.id, text: item.label });
+        }
+        const dsField = row.createDiv({ cls: "iter-modal-field" });
+        dsField.createEl("label", { text: "Linked data", cls: "iter-modal-label" });
+        const dsSelect = dsField.createEl("select", { cls: "iter-modal-select" });
+        for (const ds of this.datasets) {
+          dsSelect.createEl("option", { value: ds.id, text: ds.name });
+        }
+        const titleField = form.createDiv({ cls: "iter-modal-field" });
+        titleField.createEl("label", { text: "Widget title (optional)", cls: "iter-modal-label" });
+        const titleInput = titleField.createEl("input", {
+          type: "text",
+          placeholder: "Auto-named from data if left blank",
+          cls: "iter-modal-input"
+        });
+        const dynamicSlot = form.createDiv({ cls: "iter-modal-dynamic" });
+        let aggSelect = null;
+        let modeSelect = null;
+        let targetInput = null;
+        let variantSelect = null;
+        const rebuildOptions = () => {
+          dynamicSlot.empty();
+          aggSelect = null;
+          modeSelect = null;
+          targetInput = null;
+          variantSelect = null;
+          const wType = typeSelect.value;
+          if (wType === "stat") {
+            const field = dynamicSlot.createDiv({ cls: "iter-modal-field" });
+            field.createEl("label", { text: "Calculation", cls: "iter-modal-label" });
+            aggSelect = field.createEl("select", { cls: "iter-modal-select" });
+            for (const item of STAT_AGGS) {
+              aggSelect.createEl("option", { value: item.id, text: item.label });
+            }
+          } else if (wType === "goal_bar") {
+            const barRow = dynamicSlot.createDiv({ cls: "iter-modal-row" });
+            const modeField = barRow.createDiv({ cls: "iter-modal-field" });
+            modeField.createEl("label", { text: "Compare value", cls: "iter-modal-label" });
+            modeSelect = modeField.createEl("select", { cls: "iter-modal-select" });
+            for (const item of BAR_MODES) {
+              modeSelect.createEl("option", { value: item.id, text: item.label });
+            }
+            const tField = barRow.createDiv({ cls: "iter-modal-field" });
+            tField.createEl("label", { text: "Goal target number", cls: "iter-modal-label" });
+            targetInput = tField.createEl("input", {
+              type: "number",
+              step: "any",
+              placeholder: "e.g. 100",
+              cls: "iter-modal-input"
+            });
+            targetInput.required = true;
+          } else if (wType === "chart") {
+            const field = dynamicSlot.createDiv({ cls: "iter-modal-field" });
+            field.createEl("label", { text: "Graph style", cls: "iter-modal-label" });
+            variantSelect = field.createEl("select", { cls: "iter-modal-select" });
+            for (const item of CHART_VARIANTS) {
+              variantSelect.createEl("option", { value: item.id, text: item.label });
+            }
+          } else if (wType === "note_navigator") {
+            const currentDs = this.datasets.find((d) => d.id === dsSelect.value);
+            if (currentDs && currentDs.type !== "note" && currentDs.type !== "note_time") {
+              const noteDs = this.datasets.find((d) => d.type === "note" || d.type === "note_time");
+              if (noteDs) dsSelect.value = noteDs.id;
+            }
+          }
+        };
+        typeSelect.addEventListener("change", rebuildOptions);
+        rebuildOptions();
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Add widget", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            await this.onSubmit({
+              type: typeSelect.value,
+              datasetId: dsSelect.value,
+              title: titleInput.value,
+              agg: aggSelect?.value ?? "latest",
+              mode: modeSelect?.value ?? "latest",
+              target: targetInput?.value ?? null,
+              variant: variantSelect?.value ?? "line"
+            });
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+        titleInput.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    var NotePickerModal = class extends FuzzySuggestModal {
+      constructor(app, onChoose) {
+        super(app);
+        this.onChoose = onChoose;
+        this.setPlaceholder("Search Obsidian notes\u2026");
+      }
+      getItems() {
+        const files = this.app.vault.getMarkdownFiles();
+        return [...files].sort((a, b) => (b.stat?.mtime ?? 0) - (a.stat?.mtime ?? 0));
+      }
+      getItemText(file) {
+        return file.path.endsWith(".md") ? file.path.slice(0, -3) : file.path;
+      }
+      onChooseItem(file) {
+        void this.onChoose(file);
+      }
+    };
+    var NoteTimeMetaModal = class extends Modal {
+      constructor(app, { noteFile, metricKey = "score", onSubmit }) {
+        super(app);
+        this.noteFile = noteFile;
+        this.metricKey = metricKey;
+        this.onSubmit = onSubmit;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: `Add "${stripMd(this.noteFile.name)}"`, cls: "iter-modal-title" });
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const row = form.createDiv({ cls: "iter-modal-row" });
+        const dateField = row.createDiv({ cls: "iter-modal-field" });
+        dateField.createEl("label", { text: "Date", cls: "iter-modal-label" });
+        const dateInput = dateField.createEl("input", { type: "date", cls: "iter-modal-input" });
+        dateInput.value = toDateKey();
+        dateInput.required = true;
+        const scoreField = row.createDiv({ cls: "iter-modal-field" });
+        scoreField.createEl("label", { text: `${this.metricKey} (optional)`, cls: "iter-modal-label" });
+        const scoreInput = scoreField.createEl("input", {
+          type: "number",
+          step: "any",
+          placeholder: `Reads "${this.metricKey}" frontmatter if blank`,
+          cls: "iter-modal-input"
+        });
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Add note", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            await this.onSubmit({
+              path: this.noteFile.path,
+              date: dateInput.value,
+              value: scoreInput.value === "" ? null : Number(scoreInput.value)
+            });
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+        scoreInput.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    module2.exports = {
+      AddDatasetModal,
+      AddWidgetModal,
+      NotePickerModal,
+      NoteTimeMetaModal
+    };
+  }
+});
+
+// src/goal-view.js
+var require_goal_view = __commonJS({
+  "src/goal-view.js"(exports2, module2) {
+    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
+    var { ROOT, toDateKey, toggleSubgoal, waterHabit } = require_storage();
+    var { listGarden: listGarden2 } = require_catalog();
+    var {
+      DATASET_TYPES,
+      readGoalDocument,
+      resolveDatasetEntries,
+      resolveNumericSeries,
+      computeStat,
+      computeGoalBar,
+      formatDueStatus,
+      formatNumber,
+      updateGoalMeta,
+      addDataset,
+      removeDataset,
+      addDatasetEntry,
+      removeDatasetEntry,
+      addWidget,
+      removeWidget
+    } = require_data_model();
+    var { renderChartSvg } = require_widget_art();
+    var {
+      AddDatasetModal,
+      AddWidgetModal,
+      NotePickerModal,
+      NoteTimeMetaModal
+    } = require_goal_modals();
+    var GOAL_VIEW2 = "iter-goal";
+    var TYPE_LABELS = Object.fromEntries(DATASET_TYPES.map((t) => [t.id, t.label]));
+    var KIND_LABELS = {
+      tree: "Tree",
+      subgoal: "Subgoal",
+      habit: "Habit",
+      goal: "Goal"
+    };
+    var AGG_LABELS = {
+      count: "Count",
+      sum: "Total",
+      average: "Average",
+      latest: "Latest",
+      max: "Max",
+      min: "Min"
+    };
+    var GoalView2 = class extends ItemView {
+      constructor(leaf, plugin) {
+        super(leaf);
+        this.plugin = plugin;
+        this.file = null;
+        this.filePath = null;
+        this.openAddForDataset = null;
+        this.renderTimer = null;
+      }
+      getViewType() {
+        return GOAL_VIEW2;
+      }
+      getDisplayText() {
+        if (!this.file) return "Goal";
+        const doc = readGoalDocument(this.app, this.file);
+        return doc.title || "Goal";
+      }
+      getIcon() {
+        if (!this.file) return "target";
+        const doc = readGoalDocument(this.app, this.file);
+        if (doc.kind === "tree") return "trees";
+        if (doc.kind === "habit") return "droplet";
+        return "target";
+      }
+      getState() {
+        return { file: this.file?.path ?? this.filePath ?? null };
+      }
+      async setState(state, result) {
+        const nextPath = typeof state?.file === "string" ? state.file : null;
+        this.filePath = nextPath;
+        const abstract = nextPath ? this.app.vault.getAbstractFileByPath(nextPath) : null;
+        this.file = abstract && !Array.isArray(abstract.children) ? abstract : null;
+        this.openAddForDataset = null;
+        this.render();
+        this.leaf?.updateHeader?.();
+        await super.setState(state, result);
+      }
+      async onOpen() {
+        this.contentEl.addClass("iter-goal-view");
+        const shouldRefresh = (changedFile) => {
+          if (!this.file) return false;
+          if (!changedFile) return true;
+          if (changedFile.path === this.file.path) return true;
+          if (changedFile.path.startsWith(`${ROOT}/`)) return true;
+          const doc = readGoalDocument(this.app, this.file);
+          return doc.datasets.some(
+            (ds) => (ds.type === "note" || ds.type === "note_time") && ds.entries.some((e) => e.path === changedFile.path)
+          );
+        };
+        for (const event of ["modify", "delete"]) {
+          this.registerEvent(this.app.vault.on(event, (file) => {
+            if (event === "delete" && file?.path === this.filePath) {
+              this.file = null;
+              this.render();
+              return;
+            }
+            if (shouldRefresh(file)) this.scheduleRender();
+          }));
+        }
+        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+          if (oldPath === this.filePath) {
+            this.file = file;
+            this.filePath = file.path;
+            this.leaf?.updateHeader?.();
+            this.scheduleRender();
+          } else if (shouldRefresh(file)) {
+            this.scheduleRender();
+          }
+        }));
+        this.registerEvent(this.app.metadataCache.on("changed", (file) => {
+          if (shouldRefresh(file)) this.scheduleRender();
+        }));
+        this.render();
+      }
+      async onClose() {
+        if (this.renderTimer !== null) {
+          clearTimeout(this.renderTimer);
+          this.renderTimer = null;
+        }
+      }
+      scheduleRender() {
+        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
+        this.renderTimer = setTimeout(() => {
+          this.renderTimer = null;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          if (active && this.contentEl.contains?.(active) && (active.tagName === "TEXTAREA" || active.tagName === "INPUT")) {
+            return;
+          }
+          this.render();
+          this.leaf?.updateHeader?.();
+        }, 90);
+      }
+      render() {
+        const container = this.contentEl;
+        container.empty();
+        if (!this.file) {
+          const missing = container.createDiv({ cls: "iter-goal-missing" });
+          missing.createEl("p", { text: "Goal note not found." });
+          const backBtn = missing.createEl("button", { text: "Open We garden", cls: "iter-primary-pill", type: "button" });
+          backBtn.addEventListener("click", () => void this.plugin.openGarden());
+          return;
+        }
+        const doc = readGoalDocument(this.app, this.file);
+        const shell = container.createDiv({ cls: "iter-goal-shell" });
+        this.renderHeader(shell, doc);
+        this.renderOverview(shell, doc);
+        this.renderWidgetsSection(shell, doc);
+        this.renderDatasetsSection(shell, doc);
+        if (doc.kind === "tree" && doc.treePath) {
+          this.renderTreeChildrenSection(shell, doc);
+        }
+      }
+      renderHeader(shell, doc) {
+        const topBar = shell.createDiv({ cls: "iter-goal-topbar" });
+        const crumbs = topBar.createDiv({ cls: "iter-breadcrumbs" });
+        const weBtn = crumbs.createEl("button", { text: "We", cls: "iter-crumb-btn", type: "button" });
+        weBtn.addEventListener("click", () => void this.plugin.openGarden(doc.treePath));
+        if (doc.parentTreeFile) {
+          crumbs.createSpan({ text: "/", cls: "iter-crumb-sep" });
+          const treeName = doc.treePath ? doc.treePath.split("/").pop() : "Tree";
+          const parentBtn = crumbs.createEl("button", { text: treeName, cls: "iter-crumb-btn", type: "button" });
+          parentBtn.addEventListener("click", () => void this.plugin.openGoal(doc.parentTreeFile));
+        }
+        crumbs.createSpan({ text: KIND_LABELS[doc.kind] || "Goal", cls: "iter-kind-pill" });
+        const actions = topBar.createDiv({ cls: "iter-goal-top-actions" });
+        if (doc.kind === "subgoal") {
+          const doneBtn = actions.createEl("button", {
+            cls: `iter-primary-pill${doc.done ? " is-done" : ""}`,
+            type: "button"
+          });
+          const icon = doneBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(icon, doc.done ? "check-circle-2" : "circle");
+          doneBtn.createSpan({ text: doc.done ? "Done" : "Mark done" });
+          doneBtn.addEventListener("click", async () => {
+            await toggleSubgoal(this.app, this.file);
+            this.render();
+            this.plugin.scheduleRefresh();
+          });
+        } else if (doc.kind === "habit") {
+          const garden = listGarden2(this.app);
+          const tree = garden.trees.find((t) => t.path === doc.treePath);
+          const habit = tree?.habits?.find((h) => h.file.path === this.file.path);
+          const watered = habit?.wateredInPeriod ?? false;
+          const wateredToday = habit?.wateredToday ?? false;
+          const waterBtn = actions.createEl("button", {
+            cls: `iter-water-action${watered ? " is-watered" : ""}`,
+            type: "button"
+          });
+          const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(drop, "droplet");
+          waterBtn.createSpan({
+            text: wateredToday ? "Watered today" : watered ? `Watered (${doc.frequency})` : `Water (${doc.frequency})`
+          });
+          waterBtn.addEventListener("click", async () => {
+            const res = await waterHabit(this.app, this.file);
+            new Notice2(res ? `Watered ${doc.title}` : `Unwatered ${doc.title} for today`);
+            this.render();
+            this.plugin.scheduleRefresh();
+          });
+        }
+        const mdBtn = actions.createEl("button", {
+          cls: "iter-ghost-action",
+          type: "button",
+          attr: { title: "Open underlying Markdown file" }
+        });
+        const mdIcon = mdBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(mdIcon, "file-text");
+        mdBtn.createSpan({ text: "Markdown" });
+        mdBtn.addEventListener("click", () => void this.plugin.openFile(this.file));
+        shell.createEl("h1", { text: doc.title, cls: "iter-goal-title" });
+      }
+      renderOverview(shell, doc) {
+        const overview = shell.createDiv({ cls: "iter-goal-overview" });
+        const descWrap = overview.createDiv({ cls: "iter-goal-desc-wrap" });
+        descWrap.createEl("label", { text: "Description", cls: "iter-micro-label" });
+        const descInput = descWrap.createEl("textarea", {
+          cls: "iter-goal-desc-input",
+          placeholder: "Describe this goal, why it matters, and what success looks like\u2026"
+        });
+        descInput.rows = 2;
+        descInput.value = doc.description;
+        let savedDesc = doc.description;
+        descInput.addEventListener("blur", async () => {
+          const next = descInput.value.trim();
+          if (next === savedDesc) return;
+          savedDesc = next;
+          await updateGoalMeta(this.app, this.file, { description: next });
+          this.plugin.scheduleRefresh();
+        });
+        const dueWrap = overview.createDiv({ cls: "iter-goal-due-wrap" });
+        dueWrap.createEl("label", { text: "Expected completion", cls: "iter-micro-label" });
+        const dueRow = dueWrap.createDiv({ cls: "iter-due-row" });
+        const dueInput = dueRow.createEl("input", { type: "date", cls: "iter-due-input" });
+        dueInput.value = doc.due;
+        const status = formatDueStatus(doc.due);
+        if (status) {
+          dueRow.createSpan({
+            text: status.badge,
+            cls: `iter-due-badge is-${status.tone}`
+          });
+        } else {
+          dueRow.createSpan({ text: "No target date", cls: "iter-due-empty" });
+        }
+        dueInput.addEventListener("change", async () => {
+          await updateGoalMeta(this.app, this.file, { due: dueInput.value });
+          this.render();
+          this.plugin.scheduleRefresh();
+        });
+      }
+      renderWidgetsSection(shell, doc) {
+        const section = shell.createDiv({ cls: "iter-goal-section" });
+        const header = section.createDiv({ cls: "iter-section-bar" });
+        header.createEl("h2", { text: "Widgets", cls: "iter-section-heading" });
+        const addBtn = header.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const plus = addBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(plus, "plus");
+        addBtn.createSpan({ text: "Add widget" });
+        addBtn.addEventListener("click", () => {
+          if (!doc.datasets.length) {
+            new Notice2("Add a data list first, then link a widget to it.");
+            return;
+          }
+          new AddWidgetModal(this.app, {
+            datasets: doc.datasets,
+            onSubmit: async (config) => {
+              await addWidget(this.app, this.file, config);
+              this.render();
+            }
+          }).open();
+        });
+        if (!doc.widgets.length) {
+          section.createEl("p", {
+            text: doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
+            cls: "iter-section-hint"
+          });
+          return;
+        }
+        const grid = section.createDiv({ cls: "iter-widget-grid" });
+        const datasetById = new Map(doc.datasets.map((d) => [d.id, d]));
+        for (const widget of doc.widgets) {
+          const ds = datasetById.get(widget.datasetId);
+          this.renderWidgetCard(grid, widget, ds);
+        }
+      }
+      renderWidgetCard(grid, widget, dataset) {
+        const wide = widget.type === "chart" || widget.type === "goal_bar" || widget.type === "note_navigator";
+        const card = grid.createDiv({
+          cls: `iter-widget-card type-${widget.type}${wide ? " is-wide" : ""}`
+        });
+        const top = card.createDiv({ cls: "iter-widget-top" });
+        const defaultTitle = !dataset ? "Missing dataset" : widget.type === "stat" ? `${dataset.name} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : dataset.name;
+        top.createSpan({ text: widget.title || defaultTitle, cls: "iter-widget-title" });
+        const removeBtn = top.createEl("button", {
+          cls: "iter-icon-button iter-widget-remove",
+          type: "button",
+          attr: { "aria-label": "Remove widget", title: "Remove widget" }
+        });
+        setIcon(removeBtn, "x");
+        removeBtn.addEventListener("click", async () => {
+          await removeWidget(this.app, this.file, widget.id);
+          this.render();
+        });
+        if (!dataset) {
+          card.createEl("p", { text: "Linked data list was removed.", cls: "iter-widget-empty" });
+          return;
+        }
+        if (widget.type === "stat") {
+          const res = computeStat(this.app, dataset, widget.agg, this.file.path, widget.metricKey);
+          const valRow = card.createDiv({ cls: "iter-stat-value-row" });
+          valRow.createSpan({ text: res.display, cls: "iter-stat-number" });
+          if (res.unit && widget.agg !== "count") {
+            valRow.createSpan({ text: res.unit, cls: "iter-stat-unit" });
+          }
+          const subLabel = widget.agg === "count" ? `${res.count} ${res.count === 1 ? "entry" : "entries"}` : `${AGG_LABELS[widget.agg] || widget.agg} \xB7 ${res.count} ${res.count === 1 ? "point" : "points"}`;
+          card.createDiv({ text: subLabel, cls: "iter-stat-sub" });
+          return;
+        }
+        if (widget.type === "goal_bar") {
+          const bar = computeGoalBar(this.app, dataset, widget.mode, widget.target, this.file.path, widget.metricKey);
+          const headerRow = card.createDiv({ cls: "iter-bar-meta" });
+          const unitSuffix = bar.unit ? ` ${bar.unit}` : "";
+          headerRow.createSpan({
+            text: `${bar.currentDisplay}${unitSuffix} / ${bar.targetDisplay}${unitSuffix}`,
+            cls: "iter-bar-numbers"
+          });
+          headerRow.createSpan({ text: `${bar.rawPercent}%`, cls: "iter-bar-percent" });
+          const track = card.createDiv({ cls: "iter-bar-track" });
+          const fill = track.createDiv({ cls: "iter-bar-fill" });
+          fill.style.width = `${bar.fillPercent}%`;
+          return;
+        }
+        if (widget.type === "chart") {
+          const points = resolveNumericSeries(this.app, dataset, this.file.path, widget.metricKey);
+          if (!points.length) {
+            card.createEl("p", {
+              text: dataset.type === "note_time" ? `Add notes with a "${dataset.metricKey || "score"}" property (or inline value) to plot.` : "Add numeric entries to plot progress over time.",
+              cls: "iter-widget-empty"
+            });
+            return;
+          }
+          const latest = points[points.length - 1];
+          const delta = points.length > 1 ? latest.value - points[0].value : null;
+          const summary = card.createDiv({ cls: "iter-chart-summary" });
+          summary.createSpan({
+            text: `Latest: ${formatNumber(latest.value)}${dataset.unit ? ` ${dataset.unit}` : ""}`
+          });
+          if (delta !== null) {
+            const sign = delta > 0 ? "+" : "";
+            summary.createSpan({
+              text: `${sign}${formatNumber(delta)} overall`,
+              cls: delta >= 0 ? "iter-delta-up" : "iter-delta-down"
+            });
+          }
+          const host = card.createDiv({ cls: "iter-chart-host" });
+          renderChartSvg(host, points, {
+            variant: widget.variant,
+            unit: dataset.unit,
+            onPointClick: (pt) => {
+              if (pt.noteFile) void this.plugin.openFile(pt.noteFile);
+            }
+          });
+          return;
+        }
+        if (widget.type === "note_navigator") {
+          const entries = resolveDatasetEntries(this.app, dataset, this.file.path);
+          if (!entries.length) {
+            card.createEl("p", { text: "No linked notes yet.", cls: "iter-widget-empty" });
+            return;
+          }
+          const navList = card.createDiv({ cls: "iter-note-nav-list" });
+          const ordered = dataset.type === "note_time" ? [...entries].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.index - a.index) : entries;
+          for (const entry of ordered) {
+            const itemBtn = navList.createEl("button", { cls: "iter-note-nav-item", type: "button" });
+            const icon = itemBtn.createSpan({ cls: "iter-note-nav-icon" });
+            setIcon(icon, "file-text");
+            const main = itemBtn.createSpan({ cls: "iter-note-nav-main" });
+            main.createSpan({ text: entry.label, cls: "iter-note-nav-title" });
+            if (entry.path) {
+              const folder = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "Vault root";
+              main.createSpan({ text: folder, cls: "iter-note-nav-path" });
+            }
+            if (entry.value !== null) {
+              itemBtn.createSpan({ text: formatNumber(entry.value), cls: "iter-note-score-pill" });
+            }
+            if (entry.date) {
+              itemBtn.createSpan({ text: entry.date, cls: "iter-note-date-pill" });
+            }
+            itemBtn.addEventListener("click", () => {
+              if (entry.noteFile) void this.plugin.openFile(entry.noteFile);
+              else new Notice2(`Note not found: ${entry.path}`);
+            });
+          }
+        }
+      }
+      renderDatasetsSection(shell, doc) {
+        const section = shell.createDiv({ cls: "iter-goal-section" });
+        const header = section.createDiv({ cls: "iter-section-bar" });
+        header.createEl("h2", { text: "Data", cls: "iter-section-heading" });
+        const addBtn = header.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const plus = addBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(plus, "plus");
+        addBtn.createSpan({ text: "Add data" });
+        addBtn.addEventListener("click", () => {
+          new AddDatasetModal(this.app, {
+            onSubmit: async (config) => {
+              const created = await addDataset(this.app, this.file, config);
+              if (created.type === "number_time" || created.type === "text") {
+                this.openAddForDataset = created.id;
+              }
+              this.render();
+            }
+          }).open();
+        });
+        if (!doc.datasets.length) {
+          section.createEl("p", {
+            text: 'Create custom data lists like "Benching PRs" (number & date), "Words learnt" (text), or "Mock Exams Done" (notes & date).',
+            cls: "iter-section-hint"
+          });
+          return;
+        }
+        const list = section.createDiv({ cls: "iter-dataset-grid" });
+        for (const dataset of doc.datasets) {
+          this.renderDatasetCard(list, dataset);
+        }
+      }
+      triggerDatasetAdd(dataset) {
+        if (dataset.type === "note") {
+          new NotePickerModal(this.app, async (noteFile) => {
+            await addDatasetEntry(this.app, this.file, dataset.id, { path: noteFile.path });
+            this.render();
+          }).open();
+          return;
+        }
+        if (dataset.type === "note_time") {
+          new NotePickerModal(this.app, (noteFile) => {
+            new NoteTimeMetaModal(this.app, {
+              noteFile,
+              metricKey: dataset.metricKey || "score",
+              onSubmit: async (entry) => {
+                await addDatasetEntry(this.app, this.file, dataset.id, entry);
+                this.render();
+              }
+            }).open();
+          }).open();
+          return;
+        }
+        this.openAddForDataset = this.openAddForDataset === dataset.id ? null : dataset.id;
+        this.render();
+      }
+      renderDatasetCard(container, dataset) {
+        const card = container.createDiv({ cls: "iter-dataset-card" });
+        const top = card.createDiv({ cls: "iter-dataset-top" });
+        const left = top.createDiv({ cls: "iter-dataset-title-wrap" });
+        left.createSpan({ text: dataset.name, cls: "iter-dataset-title" });
+        left.createSpan({ text: TYPE_LABELS[dataset.type] || dataset.type, cls: "iter-module-pill" });
+        left.createSpan({ text: String(dataset.entries.length), cls: "iter-dataset-count" });
+        const right = top.createDiv({ cls: "iter-dataset-actions" });
+        const addEntryBtn = right.createEl("button", {
+          cls: "iter-icon-button iter-dataset-add-btn",
+          type: "button",
+          attr: { "aria-label": `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` }
+        });
+        setIcon(addEntryBtn, "plus");
+        addEntryBtn.addEventListener("click", () => this.triggerDatasetAdd(dataset));
+        const removeDsBtn = right.createEl("button", {
+          cls: "iter-icon-button iter-dataset-remove-btn",
+          type: "button",
+          attr: { "aria-label": `Delete ${dataset.name}`, title: `Delete ${dataset.name}` }
+        });
+        setIcon(removeDsBtn, "trash-2");
+        removeDsBtn.addEventListener("click", async () => {
+          await removeDataset(this.app, this.file, dataset.id);
+          if (this.openAddForDataset === dataset.id) this.openAddForDataset = null;
+          this.render();
+        });
+        if (this.openAddForDataset === dataset.id && (dataset.type === "number_time" || dataset.type === "text")) {
+          const form = card.createEl("form", { cls: "iter-inline-entry-form" });
+          let primaryInput = null;
+          let dateInput = null;
+          if (dataset.type === "number_time") {
+            primaryInput = form.createEl("input", {
+              type: "number",
+              step: "any",
+              placeholder: dataset.unit ? `Value (${dataset.unit})` : "Value",
+              cls: "iter-inline-input is-number"
+            });
+            primaryInput.required = true;
+            dateInput = form.createEl("input", { type: "date", cls: "iter-inline-input is-date" });
+            dateInput.value = toDateKey();
+            dateInput.required = true;
+          } else {
+            primaryInput = form.createEl("input", {
+              type: "text",
+              placeholder: "Add item\u2026",
+              cls: "iter-inline-input is-text"
+            });
+            primaryInput.required = true;
+          }
+          const saveBtn = form.createEl("button", { text: "Add", type: "submit", cls: "iter-primary-pill" });
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            saveBtn.disabled = true;
+            try {
+              if (dataset.type === "number_time") {
+                await addDatasetEntry(this.app, this.file, dataset.id, {
+                  value: Number(primaryInput.value),
+                  date: dateInput.value
+                });
+              } else {
+                await addDatasetEntry(this.app, this.file, dataset.id, {
+                  value: primaryInput.value
+                });
+              }
+              this.openAddForDataset = null;
+              this.render();
+            } catch (error) {
+              new Notice2(error instanceof Error ? error.message : String(error));
+              saveBtn.disabled = false;
+            }
+          });
+          setTimeout(() => primaryInput?.focus(), 0);
+        }
+        const resolved = resolveDatasetEntries(this.app, dataset, this.file.path);
+        if (!resolved.length) {
+          card.createEl("p", { text: "No entries yet. Click + to add one.", cls: "iter-dataset-empty" });
+          return;
+        }
+        const displayOrder = dataset.type === "number_time" || dataset.type === "note_time" ? [...resolved].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.index - a.index) : [...resolved].reverse();
+        const rowsEl = card.createDiv({ cls: "iter-entry-list" });
+        for (const item of displayOrder) {
+          const row = rowsEl.createDiv({ cls: "iter-entry-row" });
+          if (dataset.type === "note" || dataset.type === "note_time") {
+            const linkBtn = row.createEl("button", { cls: "iter-entry-note-btn", type: "button" });
+            const icon = linkBtn.createSpan({ cls: "iter-btn-icon" });
+            setIcon(icon, "file-text");
+            linkBtn.createSpan({ text: item.label, cls: "iter-entry-main" });
+            linkBtn.addEventListener("click", () => {
+              if (item.noteFile) void this.plugin.openFile(item.noteFile);
+              else new Notice2(`Note not found: ${item.path}`);
+            });
+            if (item.value !== null) {
+              row.createSpan({ text: formatNumber(item.value), cls: "iter-note-score-pill" });
+            }
+          } else {
+            row.createSpan({ text: item.label, cls: "iter-entry-main" });
+          }
+          if (item.date) {
+            row.createSpan({ text: item.date, cls: "iter-entry-date" });
+          }
+          const delBtn = row.createEl("button", {
+            cls: "iter-icon-button iter-entry-del",
+            type: "button",
+            attr: { "aria-label": "Remove entry", title: "Remove entry" }
+          });
+          setIcon(delBtn, "x");
+          delBtn.addEventListener("click", async () => {
+            await removeDatasetEntry(this.app, this.file, dataset.id, item.index);
+            this.render();
+          });
+        }
+      }
+      renderTreeChildrenSection(shell, doc) {
+        const garden = listGarden2(this.app);
+        const tree = garden.trees.find((t) => t.path === doc.treePath);
+        if (!tree) return;
+        const section = shell.createDiv({ cls: "iter-goal-section" });
+        const header = section.createDiv({ cls: "iter-section-bar" });
+        header.createEl("h2", { text: "Subgoals & Habits", cls: "iter-section-heading" });
+        const actions = header.createDiv({ cls: "iter-goal-top-actions" });
+        const addSubBtn = actions.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const p1 = addSubBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(p1, "plus");
+        addSubBtn.createSpan({ text: "Subgoal" });
+        addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
+        const addHabBtn = actions.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const p2 = addHabBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(p2, "plus");
+        addHabBtn.createSpan({ text: "Habit" });
+        addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
+        if (!tree.subgoals.length && !tree.habits.length) {
+          section.createEl("p", { text: "No subgoals or habits under this tree yet.", cls: "iter-section-hint" });
+          return;
+        }
+        const chipGrid = section.createDiv({ cls: "iter-tree-links-grid" });
+        for (const sub of tree.subgoals) {
+          const btn = chipGrid.createEl("button", {
+            cls: `iter-tree-link-card${sub.done ? " is-done" : ""}`,
+            type: "button"
+          });
+          const icon = btn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(icon, sub.done ? "check-circle-2" : "target");
+          btn.createSpan({ text: sub.title, cls: "iter-tree-link-name" });
+          btn.createSpan({ text: "Subgoal", cls: "iter-tree-link-kind" });
+          btn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
+        }
+        for (const habit of tree.habits) {
+          const btn = chipGrid.createEl("button", {
+            cls: `iter-tree-link-card${habit.wateredInPeriod ? " is-watered" : ""}`,
+            type: "button"
+          });
+          const icon = btn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(icon, "droplet");
+          btn.createSpan({ text: habit.title, cls: "iter-tree-link-name" });
+          btn.createSpan({ text: habit.frequency, cls: "iter-tree-link-kind" });
+          btn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+        }
+      }
+    };
+    module2.exports = {
+      GoalView: GoalView2,
+      GOAL_VIEW: GOAL_VIEW2
+    };
+  }
+});
+
 // src/plugin.js
 var { Plugin, Notice } = require("obsidian");
 var { ensureStructure, createTree, createSubgoal, createHabit } = require_storage();
@@ -1800,14 +3296,17 @@ var { listGarden, findTreeContext } = require_catalog();
 var { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require_modals();
 var { IterPanelView, PANEL_VIEW } = require_panel_view();
 var { GardenView, GARDEN_VIEW } = require_garden_view();
+var { GoalView, GOAL_VIEW } = require_goal_view();
 var IterPlugin = class extends Plugin {
   async onload() {
     this.alive = true;
     this.refreshTimer = null;
     this.gardenViewType = GARDEN_VIEW;
+    this.goalViewType = GOAL_VIEW;
     await ensureStructure(this.app.vault);
     this.registerView(PANEL_VIEW, (leaf) => new IterPanelView(leaf, this));
     this.registerView(GARDEN_VIEW, (leaf) => new GardenView(leaf, this));
+    this.registerView(GOAL_VIEW, (leaf) => new GoalView(leaf, this));
     this.addRibbonIcon("sprout", "Open Iter panel", () => {
       void this.activatePanel(true);
     });
@@ -1840,6 +3339,16 @@ var IterPlugin = class extends Plugin {
         void this.openGarden();
       }
     });
+    this.addCommand({
+      id: "open-goal-view",
+      name: "Open goal view",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile?.();
+        if (!file || !findTreeContext(this.app, file)) return false;
+        if (!checking) void this.openGoal(file);
+        return true;
+      }
+    });
     const onReady = () => {
       if (!this.alive) return;
       void ensureStructure(this.app.vault).then(() => this.activatePanel(false)).catch((error) => console.error("Iter init:", error));
@@ -1859,6 +3368,7 @@ var IterPlugin = class extends Plugin {
     }
     this.app.workspace.detachLeavesOfType(PANEL_VIEW);
     this.app.workspace.detachLeavesOfType(GARDEN_VIEW);
+    this.app.workspace.detachLeavesOfType(GOAL_VIEW);
   }
   scheduleRefresh() {
     if (!this.alive) return;
@@ -1870,6 +3380,9 @@ var IterPlugin = class extends Plugin {
       }
       for (const leaf of this.app.workspace.getLeavesOfType(GARDEN_VIEW)) {
         leaf.view?.render?.();
+      }
+      for (const leaf of this.app.workspace.getLeavesOfType(GOAL_VIEW)) {
+        leaf.view?.scheduleRender?.();
       }
     }, 80);
   }
@@ -1915,11 +3428,26 @@ var IterPlugin = class extends Plugin {
     this.scheduleRefresh();
     return leaf;
   }
+  async openGoal(file) {
+    if (!file) return;
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(GOAL_VIEW).find((item) => item.view?.file?.path === file.path);
+    if (existing) {
+      await workspace.revealLeaf(existing);
+      return existing;
+    }
+    const active = workspace.getMostRecentLeaf?.();
+    const leaf = active?.view?.getViewType?.() === GARDEN_VIEW ? workspace.getLeaf("tab") : workspace.getLeaf(false);
+    await leaf.setViewState({ type: GOAL_VIEW, state: { file: file.path }, active: true });
+    await workspace.revealLeaf(leaf);
+    return leaf;
+  }
   async openFile(file) {
     if (!file) return;
     const { workspace } = this.app;
     const active = workspace.getMostRecentLeaf?.();
-    const leaf = active?.view?.getViewType?.() === GARDEN_VIEW ? workspace.getLeaf("tab") : workspace.getLeaf(false);
+    const activeType = active?.view?.getViewType?.();
+    const leaf = activeType === GARDEN_VIEW || activeType === GOAL_VIEW ? workspace.getLeaf("tab") : workspace.getLeaf(false);
     await leaf.openFile(file);
     await workspace.revealLeaf(leaf);
   }
@@ -1931,6 +3459,10 @@ var IterPlugin = class extends Plugin {
     if (activeLeaf?.view?.getViewType?.() === GARDEN_VIEW && activeLeaf.view.selectedTreePath) {
       const match = trees.find((t) => t.path === activeLeaf.view.selectedTreePath);
       if (match) return match.path;
+    }
+    if (activeLeaf?.view?.getViewType?.() === GOAL_VIEW && activeLeaf.view.file) {
+      const goalTree = findTreeContext(this.app, activeLeaf.view.file);
+      if (goalTree && trees.some((t) => t.path === goalTree)) return goalTree;
     }
     const activeFile = this.app.workspace.getActiveFile?.();
     const contextTree = findTreeContext(this.app, activeFile);
@@ -1949,7 +3481,7 @@ var IterPlugin = class extends Plugin {
         if (activeView?.getViewType?.() === GARDEN_VIEW && treePath) {
           activeView.selectedTreePath = treePath;
         } else {
-          await this.openFile(file);
+          await this.openGoal(file);
         }
         this.scheduleRefresh();
       }

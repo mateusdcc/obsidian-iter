@@ -93,8 +93,13 @@ class IterPanelView extends ItemView {
   }
 
   isActiveFile(file) {
+    if (!file) return false;
+    const recent = this.app.workspace.getMostRecentLeaf?.();
+    if (recent?.view?.getViewType?.() === this.plugin.goalViewType && recent.view.file?.path === file.path) {
+      return true;
+    }
     const active = this.app.workspace.getActiveFile?.();
-    return Boolean(file && active && active.path === file.path);
+    return Boolean(active && active.path === file.path);
   }
 
   isGardenActive() {
@@ -180,8 +185,26 @@ class IterPanelView extends ItemView {
     );
     if (tree.indexFile) {
       menu.addItem(item =>
-        item.setTitle('Open tree note').setIcon('file-text').onClick(() => void this.plugin.openFile(tree.indexFile)),
+        item.setTitle('Open goal view').setIcon('layout-dashboard').onClick(() => void this.plugin.openGoal(tree.indexFile)),
       );
+      menu.addItem(item =>
+        item.setTitle('Open markdown').setIcon('file-text').onClick(() => void this.plugin.openFile(tree.indexFile)),
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  showGoalItemMenu(event, file, extraLabel, extraIcon, extraAction) {
+    const menu = new Menu();
+    menu.addItem(item =>
+      item.setTitle('Open goal view').setIcon('layout-dashboard').onClick(() => void this.plugin.openGoal(file)),
+    );
+    menu.addItem(item =>
+      item.setTitle('Open markdown').setIcon('file-text').onClick(() => void this.plugin.openFile(file)),
+    );
+    if (extraAction) {
+      menu.addSeparator();
+      menu.addItem(item => item.setTitle(extraLabel).setIcon(extraIcon).onClick(extraAction));
     }
     menu.showAtMouseEvent(event);
   }
@@ -201,7 +224,7 @@ class IterPanelView extends ItemView {
     titleBtn.createSpan({ text: tree.title, cls: 'iter-row-name' });
 
     titleBtn.addEventListener('click', () => {
-      if (tree.indexFile) void this.plugin.openFile(tree.indexFile);
+      if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
       else void this.plugin.openGarden(tree.path);
     });
     row.addEventListener('contextmenu', event => {
@@ -269,7 +292,20 @@ class IterPanelView extends ItemView {
     titleBtn.setAttribute('title', subgoal.target ? `${subgoal.title} · ${subgoal.target}` : subgoal.title);
     if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute('aria-current', 'page');
     titleBtn.createSpan({ text: subgoal.title, cls: 'iter-row-name' });
-    titleBtn.addEventListener('click', () => void this.plugin.openFile(subgoal.file));
+    titleBtn.addEventListener('click', () => void this.plugin.openGoal(subgoal.file));
+    row.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      this.showGoalItemMenu(
+        event,
+        subgoal.file,
+        subgoal.done ? 'Mark incomplete' : 'Mark done',
+        subgoal.done ? 'circle' : 'check-circle-2',
+        async () => {
+          await toggleSubgoal(this.app, subgoal.file);
+          this.plugin.scheduleRefresh();
+        },
+      );
+    });
   }
 
   renderHabit(parent, habit) {
@@ -298,7 +334,20 @@ class IterPanelView extends ItemView {
     titleBtn.setAttribute('title', habit.target ? `${habit.title} (${habit.frequency}) · ${habit.target}` : `${habit.title} (${habit.frequency})`);
     if (this.isActiveFile(habit.file)) titleBtn.setAttribute('aria-current', 'page');
     titleBtn.createSpan({ text: habit.title, cls: 'iter-row-name' });
-    titleBtn.addEventListener('click', () => void this.plugin.openFile(habit.file));
+    titleBtn.addEventListener('click', () => void this.plugin.openGoal(habit.file));
+    row.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      this.showGoalItemMenu(
+        event,
+        habit.file,
+        habit.wateredToday ? "Undo today's watering" : 'Water now',
+        'droplet',
+        async () => {
+          await waterHabit(this.app, habit.file);
+          this.plugin.scheduleRefresh();
+        },
+      );
+    });
 
     row.createSpan({
       text: CADENCE_SHORT[habit.frequency] || 'D',

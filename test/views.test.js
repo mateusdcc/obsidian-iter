@@ -4,7 +4,10 @@ const { createMockApp } = require('./obsidian-mock');
 const { createTree, createSubgoal, createHabit, ensureStructure } = require('../src/storage');
 const { IterPanelView } = require('../src/panel-view');
 const { GardenView } = require('../src/garden-view');
+const { GoalView } = require('../src/goal-view');
 const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require('../src/modals');
+const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal } = require('../src/goal-modals');
+const { addDataset, addDatasetEntry, addWidget, updateGoalMeta } = require('../src/data-model');
 
 function createMockElement(tagName, attrs = {}) {
   const el = {
@@ -17,6 +20,7 @@ function createMockElement(tagName, attrs = {}) {
     value: '',
     required: false,
     disabled: false,
+    style: {},
     addClass(cls) {
       for (const part of String(cls).split(/\s+/).filter(Boolean)) {
         const cur = new Set(this.className.split(/\s+/).filter(Boolean));
@@ -96,10 +100,12 @@ test('IterPanelView and GardenView render trees, subgoals, habits, and modals cl
 
     const pluginStub = {
       gardenViewType: 'iter-garden',
+      goalViewType: 'iter-goal',
       promptCreateTree() {},
       promptCreateSubgoal() {},
       promptCreateHabit() {},
       openGarden() {},
+      openGoal() {},
       openFile() {},
       scheduleRefresh() {},
     };
@@ -127,11 +133,39 @@ test('IterPanelView and GardenView render trees, subgoals, habits, and modals cl
     const inspector = garden.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-inspector'));
     assert.equal(inspector.length, 1);
 
+    // Exercise GoalView with datasets and all 4 widget types
+    const subFile = app.vault.getAbstractFileByPath('Iter/Gym/subgoals/Bench 80kg.md');
+    const noteFile = await app.vault.create('Notes/Form Check.md', '---\nscore: 90\n---\n# Form');
+    await updateGoalMeta(app, subFile, { description: 'Clean bench press', due: '2026-12-31' });
+    const ds1 = await addDataset(app, subFile, { name: 'Benching PRs', type: 'number_time', unit: 'kg' });
+    await addDatasetEntry(app, subFile, ds1.id, { value: 70, date: '2026-10-01' });
+    await addDatasetEntry(app, subFile, ds1.id, { value: 75, date: '2026-11-13' });
+    const ds2 = await addDataset(app, subFile, { name: 'Form Notes', type: 'note' });
+    await addDatasetEntry(app, subFile, ds2.id, { path: noteFile.path });
+    await addWidget(app, subFile, { title: 'Latest PR', type: 'stat', datasetId: ds1.id, agg: 'latest' });
+    await addWidget(app, subFile, { title: 'Goal Bar', type: 'goal_bar', datasetId: ds1.id, mode: 'latest', target: 80 });
+    await addWidget(app, subFile, { title: 'PR Trend', type: 'chart', datasetId: ds1.id, variant: 'bar' });
+    await addWidget(app, subFile, { title: 'Notes', type: 'note_navigator', datasetId: ds2.id });
+
+    const goalView = new GoalView({ app, updateHeader() {} }, pluginStub);
+    goalView.contentEl = createMockElement('div');
+    await goalView.setState({ file: subFile.path }, {});
+
+    const widgetCards = goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-widget-card'));
+    assert.equal(widgetCards.length, 4);
+    const datasetCards = goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-dataset-card'));
+    assert.equal(datasetCards.length, 2);
+    const charts = goalView.contentEl.findAll(el => el.className.includes('iter-chart-svg'));
+    assert.equal(charts.length, 1);
+
     // Exercise modals
     for (const modal of [
       new CreateTreeModal(app, { onSubmit: async () => {} }),
       new CreateSubgoalModal(app, { trees: [{ path: 'Iter/Gym', title: 'Gym' }], initialTreePath: 'Iter/Gym', onSubmit: async () => {} }),
       new CreateHabitModal(app, { trees: [{ path: 'Iter/Gym', title: 'Gym' }], initialTreePath: 'Iter/Gym', onSubmit: async () => {} }),
+      new AddDatasetModal(app, { onSubmit: async () => {} }),
+      new AddWidgetModal(app, { datasets: [ds1, ds2], onSubmit: async () => {} }),
+      new NoteTimeMetaModal(app, { noteFile, onSubmit: async () => {} }),
     ]) {
       modal.contentEl = createMockElement('div');
       modal.onOpen();

@@ -3,6 +3,8 @@ class ItemView {
     this.leaf = leaf;
     this.app = leaf.app;
   }
+  async setState() {}
+  getState() { return {}; }
 }
 
 class Plugin {
@@ -22,6 +24,10 @@ class Modal {
   constructor(app) { this.app = app; }
   open() { this.app.lastModal = this; }
   close() {}
+}
+
+class FuzzySuggestModal extends Modal {
+  setPlaceholder(text) { this.placeholder = text; }
 }
 
 class Notice {
@@ -120,6 +126,9 @@ function createMockApp() {
       frontmatters.set(path, parseSimpleYamlFrontmatter(content));
       return file;
     },
+    getMarkdownFiles() {
+      return Array.from(entries.values()).filter(item => !Array.isArray(item.children) && item.extension === 'md');
+    },
   };
 
   const metadataCache = {
@@ -144,6 +153,7 @@ module.exports = {
   ItemView,
   Plugin,
   Modal,
+  FuzzySuggestModal,
   Notice,
   setIcon,
   createMockApp,

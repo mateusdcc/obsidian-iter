@@ -4,17 +4,20 @@ const { listGarden, findTreeContext } = require('./catalog');
 const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal } = require('./modals');
 const { IterPanelView, PANEL_VIEW } = require('./panel-view');
 const { GardenView, GARDEN_VIEW } = require('./garden-view');
+const { GoalView, GOAL_VIEW } = require('./goal-view');
 
 class IterPlugin extends Plugin {
   async onload() {
     this.alive = true;
     this.refreshTimer = null;
     this.gardenViewType = GARDEN_VIEW;
+    this.goalViewType = GOAL_VIEW;
 
     await ensureStructure(this.app.vault);
 
     this.registerView(PANEL_VIEW, leaf => new IterPanelView(leaf, this));
     this.registerView(GARDEN_VIEW, leaf => new GardenView(leaf, this));
+    this.registerView(GOAL_VIEW, leaf => new GoalView(leaf, this));
 
     this.addRibbonIcon('sprout', 'Open Iter panel', () => {
       void this.activatePanel(true);
@@ -54,6 +57,17 @@ class IterPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'open-goal-view',
+      name: 'Open goal view',
+      checkCallback: checking => {
+        const file = this.app.workspace.getActiveFile?.();
+        if (!file || !findTreeContext(this.app, file)) return false;
+        if (!checking) void this.openGoal(file);
+        return true;
+      },
+    });
+
     const onReady = () => {
       if (!this.alive) return;
       void ensureStructure(this.app.vault)
@@ -77,6 +91,7 @@ class IterPlugin extends Plugin {
     }
     this.app.workspace.detachLeavesOfType(PANEL_VIEW);
     this.app.workspace.detachLeavesOfType(GARDEN_VIEW);
+    this.app.workspace.detachLeavesOfType(GOAL_VIEW);
   }
 
   scheduleRefresh() {
@@ -89,6 +104,9 @@ class IterPlugin extends Plugin {
       }
       for (const leaf of this.app.workspace.getLeavesOfType(GARDEN_VIEW)) {
         leaf.view?.render?.();
+      }
+      for (const leaf of this.app.workspace.getLeavesOfType(GOAL_VIEW)) {
+        leaf.view?.scheduleRender?.();
       }
     }, 80);
   }
@@ -137,11 +155,29 @@ class IterPlugin extends Plugin {
     return leaf;
   }
 
+  async openGoal(file) {
+    if (!file) return;
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(GOAL_VIEW).find(item => item.view?.file?.path === file.path);
+    if (existing) {
+      await workspace.revealLeaf(existing);
+      return existing;
+    }
+    const active = workspace.getMostRecentLeaf?.();
+    const leaf = active?.view?.getViewType?.() === GARDEN_VIEW
+      ? workspace.getLeaf('tab')
+      : workspace.getLeaf(false);
+    await leaf.setViewState({ type: GOAL_VIEW, state: { file: file.path }, active: true });
+    await workspace.revealLeaf(leaf);
+    return leaf;
+  }
+
   async openFile(file) {
     if (!file) return;
     const { workspace } = this.app;
     const active = workspace.getMostRecentLeaf?.();
-    const leaf = active?.view?.getViewType?.() === GARDEN_VIEW
+    const activeType = active?.view?.getViewType?.();
+    const leaf = activeType === GARDEN_VIEW || activeType === GOAL_VIEW
       ? workspace.getLeaf('tab')
       : workspace.getLeaf(false);
     await leaf.openFile(file);
@@ -156,6 +192,10 @@ class IterPlugin extends Plugin {
     if (activeLeaf?.view?.getViewType?.() === GARDEN_VIEW && activeLeaf.view.selectedTreePath) {
       const match = trees.find(t => t.path === activeLeaf.view.selectedTreePath);
       if (match) return match.path;
+    }
+    if (activeLeaf?.view?.getViewType?.() === GOAL_VIEW && activeLeaf.view.file) {
+      const goalTree = findTreeContext(this.app, activeLeaf.view.file);
+      if (goalTree && trees.some(t => t.path === goalTree)) return goalTree;
     }
     const activeFile = this.app.workspace.getActiveFile?.();
     const contextTree = findTreeContext(this.app, activeFile);
@@ -175,7 +215,7 @@ class IterPlugin extends Plugin {
         if (activeView?.getViewType?.() === GARDEN_VIEW && treePath) {
           activeView.selectedTreePath = treePath;
         } else {
-          await this.openFile(file);
+          await this.openGoal(file);
         }
         this.scheduleRefresh();
       },
