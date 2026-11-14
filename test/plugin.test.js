@@ -46,6 +46,11 @@ test('IterPlugin onload ensures Iter structure and registers views and commands'
   assert.ok(commandNames.includes('Open Iter panel'));
   assert.ok(commandNames.includes('Open We garden'));
   assert.ok(commandNames.includes('Open goal view'));
+  assert.ok(commandNames.includes('Water a habit…'));
+  assert.ok(commandNames.includes('Quick-log data entry to a goal or habit…'));
+  assert.ok(commandNames.includes('Link current note to a goal or habit…'));
+  assert.ok(commandNames.includes('Insert embedded widget or habit tracker into current note'));
+  assert.ok(plugin.codeBlockProcessors.has('iter'));
 
   plugin.onunload();
 });

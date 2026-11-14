@@ -6,8 +6,8 @@ var __commonJS = (cb, mod) => function __require() {
 // src/storage.js
 var require_storage = __commonJS({
   "src/storage.js"(exports2, module2) {
-    var ROOT = "Iter";
-    var INDEX_FOLDER = `${ROOT}/_index`;
+    var ROOT2 = "Iter";
+    var INDEX_FOLDER = `${ROOT2}/_index`;
     var WE_PATH = `${INDEX_FOLDER}/We.md`;
     var MODULES = [
       { id: "general", label: "General" },
@@ -64,7 +64,7 @@ var require_storage = __commonJS({
       return vault.getAbstractFileByPath(path);
     }
     async function ensureStructure2(vault) {
-      await ensureFolder(vault, ROOT);
+      await ensureFolder(vault, ROOT2);
       await ensureFolder(vault, INDEX_FOLDER);
       if (!vault.getAbstractFileByPath(WE_PATH)) {
         let existsOnDisk = false;
@@ -97,13 +97,13 @@ var require_storage = __commonJS({
           }
         }
       }
-      return vault.getAbstractFileByPath(ROOT);
+      return vault.getAbstractFileByPath(ROOT2);
     }
     function validTreePath(treePath) {
-      if (typeof treePath !== "string" || !treePath.startsWith(`${ROOT}/`)) {
+      if (typeof treePath !== "string" || !treePath.startsWith(`${ROOT2}/`)) {
         throw new Error("Invalid tree path.");
       }
-      const rest = treePath.slice(ROOT.length + 1);
+      const rest = treePath.slice(ROOT2.length + 1);
       if (!rest || rest.includes("/")) throw new Error("Invalid tree path.");
       validateName(rest, "Tree name");
       return treePath;
@@ -171,7 +171,7 @@ var require_storage = __commonJS({
       const isEndless = Boolean(endless);
       const cleanDue = !isEndless && typeof due === "string" && parseDateKey(due) ? due.trim() : "";
       await ensureStructure2(vault);
-      const treeDir = `${ROOT}/${title}`;
+      const treeDir = `${ROOT2}/${title}`;
       if (vault.getAbstractFileByPath(treeDir)) {
         throw new Error(`A tree named "${title}" already exists.`);
       }
@@ -313,7 +313,7 @@ var require_storage = __commonJS({
     }
     async function deleteGoalFile2(app, file) {
       if (!file || isFolder(file)) throw new Error("Goal file not found.");
-      if (typeof file.path !== "string" || !file.path.startsWith(`${ROOT}/`) || file.path === WE_PATH || file.path.startsWith(`${INDEX_FOLDER}/`)) {
+      if (typeof file.path !== "string" || !file.path.startsWith(`${ROOT2}/`) || file.path === WE_PATH || file.path.startsWith(`${INDEX_FOLDER}/`)) {
         throw new Error("Invalid goal file path.");
       }
       await trashEntry(app, file);
@@ -735,7 +735,7 @@ var require_storage = __commonJS({
       return wateredToday;
     }
     module2.exports = {
-      ROOT,
+      ROOT: ROOT2,
       INDEX_FOLDER,
       WE_PATH,
       MODULES,
@@ -780,7 +780,7 @@ var require_storage = __commonJS({
 var require_data_model = __commonJS({
   "src/data-model.js"(exports2, module2) {
     var {
-      ROOT,
+      ROOT: ROOT2,
       WE_PATH,
       isFolder,
       parseDateKey,
@@ -1097,17 +1097,17 @@ var require_data_model = __commonJS({
       return "goal";
     }
     function resolveParentTreePath(filePath) {
-      if (typeof filePath !== "string" || !filePath.startsWith(`${ROOT}/`)) return null;
-      const rest = filePath.slice(ROOT.length + 1);
+      if (typeof filePath !== "string" || !filePath.startsWith(`${ROOT2}/`)) return null;
+      const rest = filePath.slice(ROOT2.length + 1);
       const treeName = rest.split("/")[0];
       if (!treeName || treeName.startsWith("_")) return null;
-      return `${ROOT}/${treeName}`;
+      return `${ROOT2}/${treeName}`;
     }
     function readGoalDocument2(app, file, now = /* @__PURE__ */ new Date()) {
       const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
       const kind = resolveGoalKind(file, fm);
-      const treePath = kind === "garden" ? ROOT : resolveParentTreePath(file?.path);
-      const parentTreeFile = treePath && treePath !== ROOT ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
+      const treePath = kind === "garden" ? ROOT2 : resolveParentTreePath(file?.path);
+      const parentTreeFile = treePath && treePath !== ROOT2 ? app.vault.getAbstractFileByPath(`${treePath}/_tree.md`) : null;
       const title = typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
       const description = typeof fm.description === "string" && fm.description.trim() ? fm.description.trim() : typeof fm.goal === "string" ? fm.goal.trim() : "";
       const due = typeof fm.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "";
@@ -1288,7 +1288,7 @@ var require_data_model = __commonJS({
       const files = collectVaultMarkdownFiles(app, []);
       const folders = /* @__PURE__ */ new Set();
       for (const f of files) {
-        if (!f?.path || f.path.startsWith(`${ROOT}/`) || f.path.startsWith(".")) continue;
+        if (!f?.path || f.path.startsWith(`${ROOT2}/`) || f.path.startsWith(".")) continue;
         const slashIdx = f.path.lastIndexOf("/");
         if (slashIdx > 0) {
           const dir = f.path.slice(0, slashIdx);
@@ -1360,7 +1360,7 @@ var require_data_model = __commonJS({
       const matched = [];
       for (const file of candidates) {
         if (!file?.path || file.path === sourcePath) continue;
-        if (file.path.startsWith(`${ROOT}/`) || file.name.startsWith("_") || file.name.startsWith(".")) continue;
+        if (file.path.startsWith(`${ROOT2}/`) || file.name.startsWith("_") || file.name.startsWith(".")) continue;
         if (folderPrefixes.length > 0) {
           const inFolder = folderPrefixes.some((prefix) => file.path.startsWith(`${prefix}/`));
           if (!inFolder) continue;
@@ -1613,12 +1613,12 @@ var require_data_model = __commonJS({
       }
       return acc;
     }
-    function discoverHabits(app, scopePath = ROOT, now = /* @__PURE__ */ new Date()) {
+    function discoverHabits(app, scopePath = ROOT2, now = /* @__PURE__ */ new Date()) {
       if (!scopePath || typeof scopePath !== "string") return [];
       const target = app.vault.getAbstractFileByPath(scopePath);
       if (!target) return [];
       const files = isFolder(target) ? collectTreeMarkdownFiles(target, []).filter((f) => f.name !== "_tree.md") : [target];
-      const showTreeBadge = scopePath === ROOT;
+      const showTreeBadge = scopePath === ROOT2;
       const results = [];
       for (const file of files) {
         const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
@@ -1809,9 +1809,9 @@ var require_data_model = __commonJS({
         entries: []
       };
       if (!relation) return emptyResult;
-      const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || ROOT;
+      const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || ROOT2;
       if (relation.dataFilter === "habits_today" || relation.dataFilter === "habits_pending" || relation.dataFilter === "habits_all") {
-        const allHabits = discoverHabits(app, targetTreePath || ROOT, now);
+        const allHabits = discoverHabits(app, targetTreePath || ROOT2, now);
         const queryLower = (relation.nameMatch || "").toLowerCase();
         const matchedHabits = allHabits.filter((h) => {
           if (relation.dataFilter === "habits_today" && !h.schedule.dueToday) return false;
@@ -2662,7 +2662,7 @@ var require_widget_art = __commonJS({
 var require_pipeline = __commonJS({
   "src/pipeline.js"(exports2, module2) {
     var {
-      ROOT,
+      ROOT: ROOT2,
       isFolder,
       toDateKey,
       parseDateKey,
@@ -3213,7 +3213,7 @@ var require_pipeline = __commonJS({
       const items = [];
       const isExplicitHabitFilter = dsFilter === "habits" || dsFilter === "habits_today" || dsFilter === "habits_pending" || dsFilter === "habits_all";
       if (isExplicitHabitFilter || !targetDsId && dsFilter === "any" && autoIncludeHabits && childKinds !== "subgoals") {
-        const habitScopePath = scope === "this_goal" && doc?.kind === "habit" && doc.file?.path ? doc.file.path : doc?.treePath || ROOT;
+        const habitScopePath = scope === "this_goal" && doc?.kind === "habit" && doc.file?.path ? doc.file.path : doc?.treePath || ROOT2;
         const habitItems = discoverHabits(app, habitScopePath, now);
         for (const h of habitItems) {
           if (dsFilter === "habits_today" && !h.schedule.dueToday) continue;
@@ -4092,7 +4092,7 @@ var require_pipeline = __commonJS({
 // src/canvas-editor.js
 var require_canvas_editor = __commonJS({
   "src/canvas-editor.js"(exports2, module2) {
-    var { Modal, Notice: Notice2, setIcon } = require("obsidian");
+    var { Modal, Notice: Notice2, setIcon: setIcon2 } = require("obsidian");
     var { formatNumber, STAT_AGGS, BAR_MODES, CHART_VARIANTS } = require_data_model();
     var { renderChartSvg } = require_widget_art();
     var {
@@ -4207,7 +4207,7 @@ var require_canvas_editor = __commonJS({
             type: "button"
           });
           const icon = itemBtn.createSpan({ cls: "iter-note-nav-icon" });
-          setIcon(icon, isHabitEntry ? "droplet" : entry.noteFile ? "file-text" : "target");
+          setIcon2(icon, isHabitEntry ? "droplet" : entry.noteFile ? "file-text" : "target");
           const main = itemBtn.createSpan({ cls: "iter-note-nav-main" });
           main.createSpan({ text: entry.label, cls: "iter-note-nav-title" });
           if (isHabitEntry) {
@@ -4264,7 +4264,7 @@ var require_canvas_editor = __commonJS({
               attr: { title: watered ? "Watered for this cycle" : "Water habit now" }
             });
             const wIcon = waterBtn.createSpan({ cls: "iter-btn-icon" });
-            setIcon(wIcon, watered ? "check" : "droplet");
+            setIcon2(wIcon, watered ? "check" : "droplet");
             waterBtn.createSpan({ text: watered ? "Watered" : "Water" });
             waterBtn.addEventListener("click", (event) => {
               event.stopPropagation?.();
@@ -5034,7 +5034,7 @@ var require_canvas_editor = __commonJS({
             cls: "iter-icon-button iter-flow-node-dup",
             attr: { "aria-label": "Duplicate node", title: "Duplicate node" }
           });
-          setIcon(dupBtn, "copy");
+          setIcon2(dupBtn, "copy");
           dupBtn.addEventListener("click", () => this.duplicateNode(node.id));
         }
         if (this.pipeline.nodes.length > 1) {
@@ -5043,7 +5043,7 @@ var require_canvas_editor = __commonJS({
             cls: "iter-icon-button",
             attr: { "aria-label": "Delete node", title: "Delete node" }
           });
-          setIcon(delBtn, "trash-2");
+          setIcon2(delBtn, "trash-2");
           delBtn.addEventListener("click", () => this.removeNode(node.id));
         }
         const labelField = host.createDiv({ cls: "iter-modal-field" });
@@ -5244,7 +5244,7 @@ var require_canvas_editor = __commonJS({
               cls: "iter-icon-button",
               attr: { "aria-label": "Remove rule" }
             });
-            setIcon(delRule, "x");
+            setIcon2(delRule, "x");
             delRule.addEventListener("click", () => {
               rules.splice(idx, 1);
               onChange(true);
@@ -5554,7 +5554,7 @@ var require_canvas_editor = __commonJS({
 var require_catalog = __commonJS({
   "src/catalog.js"(exports2, module2) {
     var {
-      ROOT,
+      ROOT: ROOT2,
       WE_PATH,
       isFolder,
       normalizeModule,
@@ -5728,7 +5728,7 @@ var require_catalog = __commonJS({
       const indexFile = app.vault.getAbstractFileByPath(WE_PATH);
       const indexFm = !isFolder(indexFile) ? getFrontmatter(app, indexFile) : null;
       const members = Array.isArray(indexFm?.members) ? indexFm.members.filter((m) => typeof m === "string" && m.trim()).map((m) => m.trim()) : [];
-      const root = app.vault.getAbstractFileByPath(ROOT);
+      const root = app.vault.getAbstractFileByPath(ROOT2);
       if (!isFolder(root)) {
         return { indexFile: isFolder(indexFile) ? null : indexFile, members, trees: [], looseItems: [] };
       }
@@ -5788,11 +5788,11 @@ var require_catalog = __commonJS({
     }
     function findTreeContext2(app, file) {
       const path = file?.path;
-      if (typeof path !== "string" || !path.startsWith(`${ROOT}/`)) return null;
-      const rest = path.slice(ROOT.length + 1);
+      if (typeof path !== "string" || !path.startsWith(`${ROOT2}/`)) return null;
+      const rest = path.slice(ROOT2.length + 1);
       const treeName = rest.split("/")[0];
       if (!treeName || isHiddenName(treeName)) return null;
-      const treePath = `${ROOT}/${treeName}`;
+      const treePath = `${ROOT2}/${treeName}`;
       const folder = app.vault.getAbstractFileByPath(treePath);
       return isTreeFolder(folder) ? treePath : null;
     }
@@ -6201,444 +6201,6 @@ var require_modals = __commonJS({
       CreateHabitModal: CreateHabitModal2,
       EditHabitScheduleModal: EditHabitScheduleModal2,
       ConfirmDeleteModal: ConfirmDeleteModal2
-    };
-  }
-});
-
-// src/panel-view.js
-var require_panel_view = __commonJS({
-  "src/panel-view.js"(exports2, module2) {
-    var { ItemView, Menu, Notice: Notice2, setIcon } = require("obsidian");
-    var { ROOT, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
-    var { listGarden: listGarden2 } = require_catalog();
-    var PANEL_VIEW2 = "iter-panel";
-    var MODULE_ICONS = {
-      gym: "dumbbell",
-      learning: "book-open",
-      creative: "sparkles",
-      health: "heart",
-      general: "trees"
-    };
-    function iconButton(parent, icon, label, callback, extraClass = "") {
-      const button = parent.createEl("button", {
-        cls: `iter-icon-button ${extraClass}`.trim(),
-        type: "button"
-      });
-      button.setAttribute("aria-label", label);
-      button.setAttribute("title", label);
-      setIcon(button, icon);
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void callback(event);
-      });
-      return button;
-    }
-    var IterPanelView2 = class extends ItemView {
-      constructor(leaf, plugin) {
-        super(leaf);
-        this.plugin = plugin;
-        this.expansion = /* @__PURE__ */ new Map();
-        this.renderTimer = null;
-      }
-      getViewType() {
-        return PANEL_VIEW2;
-      }
-      getDisplayText() {
-        return "Iter";
-      }
-      getIcon() {
-        return "sprout";
-      }
-      async onOpen() {
-        this.contentEl.addClass("iter-panel");
-        const schedule = (file) => {
-          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          }
-        };
-        for (const event of ["create", "delete", "modify"]) {
-          this.registerEvent(this.app.vault.on(event, schedule));
-        }
-        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          } else {
-            schedule(file);
-          }
-        }));
-        this.registerEvent(this.app.metadataCache.on("changed", schedule));
-        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
-        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleRender()));
-        this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleRender()));
-        this.render();
-      }
-      async onClose() {
-        if (this.renderTimer !== null) {
-          clearTimeout(this.renderTimer);
-          this.renderTimer = null;
-        }
-      }
-      scheduleRender() {
-        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
-        this.renderTimer = setTimeout(() => {
-          this.renderTimer = null;
-          this.render();
-        }, 90);
-      }
-      isActiveFile(file) {
-        if (!file) return false;
-        const recent = this.app.workspace.getMostRecentLeaf?.();
-        if (this.plugin?.goalViewType && recent?.view?.getViewType?.() === this.plugin.goalViewType && recent?.view?.file?.path === file.path) {
-          return true;
-        }
-        const active = this.app.workspace.getActiveFile?.();
-        return Boolean(active && active.path === file.path);
-      }
-      isGardenActive() {
-        const recent = this.app.workspace.getMostRecentLeaf?.();
-        return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
-      }
-      render() {
-        const container = this.contentEl;
-        container.empty();
-        const garden = listGarden2(this.app);
-        const toolbar = container.createDiv({ cls: "iter-toolbar" });
-        toolbar.createEl("span", { text: "Iter", cls: "iter-toolbar-title" });
-        const toolbarActions = toolbar.createDiv({ cls: "iter-toolbar-actions" });
-        iconButton(toolbarActions, "plus", "Create tree", () => this.plugin.promptCreateTree());
-        const weRow = container.createEl("button", {
-          cls: `iter-we-row${this.isGardenActive() ? " is-active" : ""}`,
-          type: "button"
-        });
-        weRow.setAttribute("aria-label", "Open We garden dashboard");
-        if (this.isGardenActive()) weRow.setAttribute("aria-current", "page");
-        const weIcon = weRow.createSpan({ cls: "iter-we-icon" });
-        setIcon(weIcon, "sprout");
-        weRow.createSpan({ text: "We", cls: "iter-we-label" });
-        const countText = garden.trees.length === 1 ? "1 tree" : `${garden.trees.length} trees`;
-        weRow.createSpan({ text: countText, cls: "iter-we-meta" });
-        weRow.addEventListener("click", () => {
-          void this.plugin.openGarden();
-        });
-        const body = container.createDiv({ cls: "iter-panel-list" });
-        if (!garden.trees.length && !garden.looseItems.length) {
-          const empty = body.createDiv({ cls: "iter-panel-empty" });
-          empty.createEl("p", { text: "Your Iter folder is ready." });
-          const plantBtn = empty.createEl("button", { text: "Plant first tree", type: "button", cls: "iter-ghost-action" });
-          plantBtn.addEventListener("click", () => this.plugin.promptCreateTree());
-          return;
-        }
-        if (garden.trees.length > 0) {
-          const filterRow = container.createDiv({ cls: "iter-panel-filter-row" });
-          container.insertBefore?.(filterRow, body);
-          const searchIn = filterRow.createEl("input", {
-            type: "search",
-            placeholder: "Filter goals & habits\u2026",
-            cls: "iter-panel-search"
-          });
-          searchIn.value = this.filterQuery || "";
-          const dueBtn = filterRow.createEl("button", {
-            text: "Due",
-            type: "button",
-            cls: `iter-panel-due-toggle${this.onlyDueToday ? " is-active" : ""}`,
-            attr: { title: "Show only habits due today", "aria-pressed": String(this.onlyDueToday) }
-          });
-          searchIn.addEventListener("input", () => {
-            this.filterQuery = searchIn.value;
-            this.renderListItems(body, garden);
-          });
-          dueBtn.addEventListener("click", () => {
-            this.onlyDueToday = !this.onlyDueToday;
-            dueBtn.toggleClass?.("is-active", this.onlyDueToday);
-            dueBtn.setAttribute("aria-pressed", String(this.onlyDueToday));
-            this.renderListItems(body, garden);
-          });
-        }
-        this.renderListItems(body, garden);
-      }
-      renderListItems(body, garden) {
-        body.empty();
-        const q = (this.filterQuery || "").trim().toLowerCase();
-        const onlyDue = Boolean(this.onlyDueToday);
-        for (const tree of garden.trees) {
-          if (!q && !onlyDue) {
-            this.renderTree(body, tree);
-            continue;
-          }
-          const treeMatch = q && tree.title.toLowerCase().includes(q);
-          const subgoals = onlyDue ? [] : tree.subgoals.filter((s) => treeMatch || !q || s.title.toLowerCase().includes(q));
-          const habits = tree.habits.filter((h) => {
-            if (onlyDue && (!h.isDueToday || h.wateredInPeriod || h.wateredToday)) return false;
-            if (q && !treeMatch && !h.title.toLowerCase().includes(q)) return false;
-            return true;
-          });
-          if (treeMatch || subgoals.length > 0 || habits.length > 0) {
-            this.renderTree(body, { ...tree, subgoals, habits, extras: q || onlyDue ? [] : tree.extras });
-          }
-        }
-        if (!q && !onlyDue && garden.looseItems.length) {
-          const misc = body.createDiv({ cls: "iter-misc-section" });
-          for (const item of garden.looseItems) {
-            this.renderExtraEntry(misc, item);
-          }
-        }
-      }
-      renderToggle(row, key, label, defaultExpanded = true) {
-        const expanded = this.expansion.get(key) ?? defaultExpanded;
-        const toggle = iconButton(
-          row,
-          expanded ? "chevron-down" : "chevron-right",
-          `${expanded ? "Collapse" : "Expand"} ${label}`,
-          () => {
-            this.expansion.set(key, !expanded);
-            this.render();
-          },
-          "iter-toggle"
-        );
-        toggle.setAttribute("aria-expanded", String(expanded));
-        return expanded;
-      }
-      showTreeMenu(event, tree, { allowDelete = true } = {}) {
-        const menu = new Menu();
-        menu.addItem(
-          (item) => item.setTitle("Create subgoal").setIcon("target").onClick(() => this.plugin.promptCreateSubgoal(tree.path))
-        );
-        menu.addItem(
-          (item) => item.setTitle("Create habit").setIcon("droplet").onClick(() => this.plugin.promptCreateHabit(tree.path))
-        );
-        menu.addSeparator();
-        menu.addItem(
-          (item) => item.setTitle("Focus in We garden").setIcon("sprout").onClick(() => void this.plugin.openGarden(tree.path))
-        );
-        if (tree.indexFile) {
-          menu.addItem(
-            (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(tree.indexFile))
-          );
-          menu.addItem(
-            (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
-          );
-        }
-        if (allowDelete) {
-          menu.addSeparator();
-          menu.addItem((item) => {
-            item.setTitle("Delete").setIcon("trash").onClick(() => this.plugin.promptDeleteTree(tree));
-            item.setWarning?.(true);
-          });
-        }
-        menu.showAtMouseEvent(event);
-      }
-      showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
-        const menu = new Menu();
-        menu.addItem(
-          (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
-        );
-        menu.addItem(
-          (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
-        );
-        if (extraActions.length) {
-          menu.addSeparator();
-          for (const action of extraActions) {
-            menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
-          }
-        }
-        if (onDelete) {
-          menu.addSeparator();
-          menu.addItem((item) => {
-            item.setTitle("Delete").setIcon("trash").onClick(onDelete);
-            item.setWarning?.(true);
-          });
-        }
-        menu.showAtMouseEvent(event);
-      }
-      renderTree(parent, tree) {
-        const section = parent.createDiv({ cls: "iter-tree-node" });
-        const row = section.createDiv({ cls: "iter-row iter-tree-row" });
-        const expanded = this.renderToggle(row, tree.path, tree.title, true);
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute("title", tree.goal ? `${tree.title} \u2014 ${tree.goal}` : tree.title);
-        if (this.isActiveFile(tree.indexFile)) titleBtn.setAttribute("aria-current", "page");
-        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
-        setIcon(iconEl, MODULE_ICONS[tree.module] || "trees");
-        titleBtn.createSpan({ text: tree.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => {
-          if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
-          else void this.plugin.openGarden(tree.path);
-        });
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showTreeMenu(event, tree, { allowDelete: true });
-        });
-        if (tree.stats.habitTotal > 0) {
-          const dot = row.createSpan({
-            cls: `iter-hydration-dot is-${tree.stats.hydrationState}`,
-            attr: {
-              title: `${tree.stats.habitWatered}/${tree.stats.habitTotal} habits watered`
-            }
-          });
-          dot.setAttribute("aria-hidden", "true");
-        }
-        iconButton(
-          row,
-          "plus",
-          `Add to ${tree.title}`,
-          (event) => this.showTreeMenu(event, tree, { allowDelete: false }),
-          "iter-row-action"
-        );
-        if (!expanded) return;
-        const childrenEl = section.createDiv({ cls: "iter-tree-children" });
-        const hasItems = tree.subgoals.length > 0 || tree.habits.length > 0 || tree.extras.length > 0;
-        if (!hasItems) {
-          childrenEl.createDiv({ cls: "iter-tree-empty", text: "No subgoals or habits yet" });
-          return;
-        }
-        for (const subgoal of tree.subgoals) {
-          this.renderSubgoal(childrenEl, subgoal);
-        }
-        for (const habit of tree.habits) {
-          this.renderHabit(childrenEl, habit);
-        }
-        for (const extra of tree.extras) {
-          this.renderExtraEntry(childrenEl, extra);
-        }
-      }
-      renderSubgoal(parent, subgoal) {
-        const row = parent.createDiv({ cls: `iter-row iter-subgoal-row${subgoal.done ? " is-done" : ""}` });
-        const toggleBtn = iconButton(
-          row,
-          subgoal.done ? "check-circle-2" : "circle",
-          subgoal.done ? `Mark "${subgoal.title}" incomplete` : `Complete "${subgoal.title}"`,
-          async () => {
-            try {
-              await toggleSubgoal(this.app, subgoal.file);
-              this.plugin.scheduleRefresh();
-            } catch (error) {
-              new Notice2(error?.message || "Could not update subgoal.");
-            }
-          },
-          `iter-check-btn${subgoal.done ? " is-done" : ""}`
-        );
-        toggleBtn.setAttribute("aria-pressed", String(subgoal.done));
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute("title", subgoal.target ? `${subgoal.title} \xB7 ${subgoal.target}` : subgoal.title);
-        if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute("aria-current", "page");
-        titleBtn.createSpan({ text: subgoal.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showGoalItemMenu(
-            event,
-            subgoal.file,
-            [
-              {
-                label: subgoal.done ? "Mark incomplete" : "Mark done",
-                icon: subgoal.done ? "circle" : "check-circle-2",
-                run: async () => {
-                  await toggleSubgoal(this.app, subgoal.file);
-                  this.plugin.scheduleRefresh();
-                }
-              }
-            ],
-            () => this.plugin.promptDeleteGoalItem("goal", subgoal)
-          );
-        });
-      }
-      renderHabit(parent, habit) {
-        const resting = !habit.isDueToday && !habit.wateredToday;
-        const row = parent.createDiv({
-          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
-        });
-        const waterBtn = iconButton(
-          row,
-          "droplet",
-          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water "${habit.title}" anyway` : `Water "${habit.title}"`,
-          async () => {
-            try {
-              const watered = await waterHabit2(this.app, habit.file);
-              new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-              this.plugin.scheduleRefresh();
-            } catch (error) {
-              new Notice2(error?.message || "Could not water habit.");
-            }
-          },
-          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
-        );
-        waterBtn.setAttribute("aria-pressed", String(habit.wateredToday));
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute(
-          "title",
-          habit.target ? `${habit.title} (${habit.cadenceLabel}) \xB7 ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`
-        );
-        if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
-        titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showGoalItemMenu(
-            event,
-            habit.file,
-            [
-              {
-                label: habit.wateredToday ? "Undo today's watering" : "Water now",
-                icon: "droplet",
-                run: async () => {
-                  await waterHabit2(this.app, habit.file);
-                  this.plugin.scheduleRefresh();
-                }
-              },
-              {
-                label: "Edit repetitivity",
-                icon: "calendar-days",
-                run: () => this.plugin.promptEditHabitSchedule(habit)
-              }
-            ],
-            () => this.plugin.promptDeleteGoalItem("habit", habit)
-          );
-        });
-        if (habit.streak > 0) {
-          row.createSpan({
-            text: `${habit.streak}\u{1F525}`,
-            cls: "iter-streak-mini-badge",
-            attr: { title: `${habit.streak} streak` }
-          });
-        }
-        row.createSpan({
-          text: habit.cadenceShort,
-          cls: "iter-cadence-badge",
-          attr: { title: `${habit.cadenceLabel} habit` }
-        });
-      }
-      renderExtraEntry(parent, entry) {
-        if (entry.kind === "folder") {
-          const section = parent.createDiv({ cls: "iter-extra-folder" });
-          const row2 = section.createDiv({ cls: "iter-row iter-folder-row" });
-          const expanded = this.renderToggle(row2, entry.path, entry.name, false);
-          const label = row2.createSpan({ cls: "iter-row-title iter-static-label" });
-          const iconEl2 = label.createSpan({ cls: "iter-row-icon" });
-          setIcon(iconEl2, "folder");
-          label.createSpan({ text: entry.name, cls: "iter-row-name" });
-          if (!expanded) return;
-          const children = section.createDiv({ cls: "iter-tree-children" });
-          for (const child of entry.children) {
-            this.renderExtraEntry(children, child);
-          }
-          return;
-        }
-        const row = parent.createDiv({ cls: "iter-row iter-file-row" });
-        row.createSpan({ cls: "iter-toggle-spacer" });
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        if (this.isActiveFile(entry.file)) titleBtn.setAttribute("aria-current", "page");
-        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
-        setIcon(iconEl, "file-text");
-        titleBtn.createSpan({ text: entry.name, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openFile(entry.file));
-      }
-    };
-    module2.exports = {
-      IterPanelView: IterPanelView2,
-      PANEL_VIEW: PANEL_VIEW2
     };
   }
 });
@@ -7766,12 +7328,1508 @@ var require_goal_modals = __commonJS({
   }
 });
 
+// src/workflow-integration.js
+var require_workflow_integration = __commonJS({
+  "src/workflow-integration.js"(exports2, module2) {
+    var { Modal, FuzzySuggestModal, Notice: Notice2, setIcon: setIcon2 } = require("obsidian");
+    var {
+      ROOT: ROOT2,
+      WE_PATH,
+      toDateKey,
+      waterHabit: waterHabit2,
+      toggleSubgoal,
+      formatCadenceLabel,
+      computeHabitStreak,
+      computeHabitScheduleMeta
+    } = require_storage();
+    function stripMd(name) {
+      return String(name || "").replace(/\.md$/i, "");
+    }
+    function sanitizeName(raw) {
+      return String(raw || "").trim().replace(/\.md$/i, "").replace(/[\\/:*?"<>|]/g, "-").trim();
+    }
+    var { listGarden: listGarden2 } = require_catalog();
+    var {
+      readGoalDocument: readGoalDocument2,
+      resolveDatasetEntries,
+      discoverVaultFolders,
+      addDataset,
+      addDatasetEntry,
+      computeStat,
+      computeGoalBar,
+      formatNumber,
+      resolveWidgetDataset,
+      discoverHabits
+    } = require_data_model();
+    var { NoteTimeMetaModal } = require_goal_modals();
+    async function ensureFolderChain(vault, folderPath) {
+      const clean = String(folderPath || "").trim().replace(/^\/+|\/+$/g, "");
+      if (!clean) return;
+      const parts = clean.split("/").filter(Boolean);
+      let cur = "";
+      for (const part of parts) {
+        cur = cur ? `${cur}/${part}` : part;
+        if (!vault.getAbstractFileByPath(cur)) {
+          try {
+            await vault.createFolder(cur);
+          } catch (err) {
+            if (!vault.getAbstractFileByPath(cur) && !/already exists/i.test(String(err?.message ?? err))) {
+              throw err;
+            }
+          }
+        }
+      }
+    }
+    function inferDatasetDefaultFolder(app, dataset, goalFile = null, doc = null) {
+      if (dataset?.autoQuery?.folder) {
+        const first = String(dataset.autoQuery.folder).split(",").map((s) => s.trim().replace(/^\/+|\/+$/g, "")).filter(Boolean)[0];
+        if (first) return first;
+      }
+      if (app && dataset) {
+        const entries = resolveDatasetEntries(app, dataset, goalFile?.path || "");
+        const counts = /* @__PURE__ */ new Map();
+        for (const item of entries) {
+          const p = item?.path || "";
+          const slash = p.lastIndexOf("/");
+          if (slash > 0) {
+            const dir = p.slice(0, slash);
+            if (!dir.startsWith(`${ROOT2}/`)) {
+              counts.set(dir, (counts.get(dir) || 0) + 1);
+            }
+          }
+        }
+        let bestDir = "";
+        let bestCount = 0;
+        for (const [dir, c] of counts.entries()) {
+          if (c > bestCount) {
+            bestDir = dir;
+            bestCount = c;
+          }
+        }
+        if (bestDir) return bestDir;
+      }
+      const fallbackName = sanitizeName(doc?.title || (goalFile ? stripMd(goalFile.name) : "") || "Notes") || "Notes";
+      return `Notes/${fallbackName}`;
+    }
+    function extractAutoQueryDefaults(autoQuery) {
+      const fmPairs = {};
+      const tags = [];
+      if (!autoQuery || typeof autoQuery !== "object") return { fmPairs, tags };
+      if (typeof autoQuery.where === "string" && autoQuery.where.trim()) {
+        const clauses = autoQuery.where.split(/\s*(?:,|&&|\band\b)\s*/i).filter(Boolean);
+        for (const clause of clauses) {
+          const m = clause.match(/^([a-zA-Z0-9_.-]+)\s*(?:=|:)\s*(.+)$/);
+          if (m) {
+            const key = m[1].trim();
+            const rawVal = m[2].trim().replace(/^["']|["']$/g, "");
+            if (key && rawVal) {
+              const num = Number(rawVal);
+              fmPairs[key] = Number.isFinite(num) && rawVal !== "" ? num : rawVal;
+            }
+          }
+        }
+      }
+      if (typeof autoQuery.tag === "string" && autoQuery.tag.trim()) {
+        for (const rawTag of autoQuery.tag.split(",")) {
+          const clean = rawTag.trim().replace(/^#+/, "");
+          if (clean && !tags.includes(clean)) tags.push(clean);
+        }
+      }
+      return { fmPairs, tags };
+    }
+    function serializeFrontmatterValue(val) {
+      if (typeof val === "number" && Number.isFinite(val)) return String(val);
+      if (typeof val === "boolean") return val ? "true" : "false";
+      const str = String(val ?? "");
+      if (/^[a-zA-Z0-9_-]+$/.test(str) && !/^(true|false|null)$/i.test(str)) {
+        return str;
+      }
+      return JSON.stringify(str);
+    }
+    async function createDatasetNote(app, {
+      goalFile,
+      dataset,
+      title,
+      folder = "",
+      date = "",
+      props = {},
+      waterHabitNow = false
+    }) {
+      const cleanTitle = sanitizeName(title);
+      if (!cleanTitle) {
+        throw new Error("Enter a valid note title.");
+      }
+      const cleanFolder = String(folder || "").trim().replace(/^\/+|\/+$/g, "");
+      if (cleanFolder) {
+        await ensureFolderChain(app.vault, cleanFolder);
+      }
+      const filePath = cleanFolder ? `${cleanFolder}/${cleanTitle}.md` : `${cleanTitle}.md`;
+      let noteFile = app.vault.getAbstractFileByPath(filePath);
+      const effectiveDate = date || toDateKey();
+      const { fmPairs, tags } = extractAutoQueryDefaults(dataset?.autoQuery);
+      const mergedFm = { ...fmPairs };
+      if (dataset?.type === "note_time" || date) {
+        mergedFm.date = effectiveDate;
+      }
+      if (props && typeof props === "object") {
+        for (const [k, v] of Object.entries(props)) {
+          if (v !== void 0 && v !== null && v !== "") {
+            mergedFm[k] = v;
+          }
+        }
+      }
+      if (!noteFile) {
+        const fmLines = ["---"];
+        for (const [k, v] of Object.entries(mergedFm)) {
+          fmLines.push(`${k}: ${serializeFrontmatterValue(v)}`);
+        }
+        if (tags.length > 0) {
+          fmLines.push("tags:");
+          for (const t of tags) {
+            fmLines.push(`  - ${t}`);
+          }
+        }
+        fmLines.push("---", "", `# ${cleanTitle}`, "", "");
+        noteFile = await app.vault.create(filePath, fmLines.join("\n"));
+      } else if (typeof app?.fileManager?.processFrontMatter === "function") {
+        await app.fileManager.processFrontMatter(noteFile, (fm) => {
+          for (const [k, v] of Object.entries(mergedFm)) {
+            fm[k] = v;
+          }
+        });
+      }
+      if (goalFile && dataset?.id) {
+        const primaryKey = dataset.metricKey || dataset.metricKeys?.[0] || "";
+        const primaryNum = primaryKey && props?.[primaryKey] !== void 0 ? Number(props[primaryKey]) : NaN;
+        const entryPayload = { path: noteFile.path };
+        if (dataset.type === "note_time") {
+          entryPayload.date = effectiveDate;
+        }
+        if (Number.isFinite(primaryNum)) {
+          entryPayload.value = primaryNum;
+        }
+        if (props && Object.keys(props).length > 0) {
+          entryPayload.props = props;
+        }
+        await addDatasetEntry(app, goalFile, dataset.id, entryPayload);
+      }
+      if (waterHabitNow && goalFile) {
+        await waterHabit2(app, goalFile);
+      }
+      return noteFile;
+    }
+    var CreateDatasetNoteModal = class extends Modal {
+      constructor(app, { goalFile, doc = null, dataset, onCreated = null }) {
+        super(app);
+        this.goalFile = goalFile;
+        this.goalDoc = doc || (goalFile ? readGoalDocument2(app, goalFile) : null);
+        this.dataset = dataset;
+        this.onCreated = onCreated;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", {
+          text: `Create note in "${this.dataset?.name || "Data list"}"`,
+          cls: "iter-modal-title"
+        });
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const titleField = form.createDiv({ cls: "iter-modal-field" });
+        titleField.createEl("label", { text: "Note title", cls: "iter-modal-label" });
+        const titleInput = titleField.createEl("input", {
+          type: "text",
+          placeholder: "e.g. Le Cygne, Chapter 2, Mock Exam 2",
+          cls: "iter-modal-input iter-new-note-title-input"
+        });
+        titleInput.required = true;
+        const folderField = form.createDiv({ cls: "iter-modal-field" });
+        folderField.createEl("label", { text: "Folder in vault", cls: "iter-modal-label" });
+        const folderInput = folderField.createEl("input", {
+          type: "text",
+          placeholder: "e.g. Books/As Flores do Mal",
+          cls: "iter-modal-input iter-new-note-folder-input"
+        });
+        folderInput.value = inferDatasetDefaultFolder(this.app, this.dataset, this.goalFile, this.goalDoc);
+        const vaultFolders = discoverVaultFolders(this.app);
+        if (vaultFolders.length > 0) {
+          const chips = folderField.createDiv({ cls: "iter-chip-suggestions" });
+          for (const dir of vaultFolders.slice(0, 8)) {
+            const chip = chips.createEl("button", {
+              text: dir,
+              type: "button",
+              cls: "iter-suggest-chip iter-folder-chip"
+            });
+            chip.addEventListener("click", () => {
+              folderInput.value = dir;
+            });
+          }
+        }
+        let dateInput = null;
+        if (this.dataset?.type === "note_time") {
+          const dateField = form.createDiv({ cls: "iter-modal-field" });
+          dateField.createEl("label", { text: "Date", cls: "iter-modal-label" });
+          dateInput = dateField.createEl("input", {
+            type: "date",
+            cls: "iter-modal-input iter-new-note-date-input"
+          });
+          dateInput.value = toDateKey();
+          dateInput.required = true;
+        }
+        const keys = Array.isArray(this.dataset?.metricKeys) && this.dataset.metricKeys.length ? this.dataset.metricKeys : this.dataset?.metricKey ? [this.dataset.metricKey] : [];
+        const propInputs = /* @__PURE__ */ new Map();
+        if (keys.length > 0) {
+          const grid = form.createDiv({ cls: keys.length > 1 ? "iter-modal-row" : "iter-modal-dynamic" });
+          for (const key of keys) {
+            const f = grid.createDiv({ cls: "iter-modal-field" });
+            f.createEl("label", { text: `${key} (frontmatter, optional)`, cls: "iter-modal-label" });
+            const inp = f.createEl("input", {
+              type: "text",
+              placeholder: `Written to "${key}" in note YAML`,
+              cls: "iter-modal-input iter-new-note-prop-input"
+            });
+            propInputs.set(key, inp);
+          }
+        }
+        let waterNow = this.goalDoc?.kind === "habit";
+        if (this.goalDoc?.kind === "habit") {
+          const waterBtn = form.createEl("button", {
+            type: "button",
+            cls: `iter-suggest-chip iter-water-on-create-toggle${waterNow ? " is-active" : ""}`,
+            text: `\u2713 Also water "${this.goalDoc.title}" for today`
+          });
+          waterBtn.addEventListener("click", () => {
+            waterNow = !waterNow;
+            waterBtn.textContent = waterNow ? `\u2713 Also water "${this.goalDoc.title}" for today` : `Also water "${this.goalDoc.title}" for today`;
+            waterBtn.toggleClass?.("is-active", waterNow);
+          });
+        }
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", {
+          text: "Create & open note",
+          type: "submit",
+          cls: "mod-cta"
+        });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            const props = {};
+            for (const [k, inp] of propInputs.entries()) {
+              const raw = String(inp.value || "").trim();
+              if (!raw) continue;
+              const num = Number(raw);
+              props[k] = Number.isFinite(num) ? num : raw;
+            }
+            const createdFile = await createDatasetNote(this.app, {
+              goalFile: this.goalFile,
+              dataset: this.dataset,
+              title: titleInput.value,
+              folder: folderInput.value,
+              date: dateInput ? dateInput.value : "",
+              props,
+              waterHabitNow: waterNow
+            });
+            if (this.onCreated) {
+              await this.onCreated(createdFile);
+            }
+            this.close();
+          } catch (err) {
+            new Notice2(err instanceof Error ? err.message : String(err));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+        titleInput.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    function discoverAllGoalTargets(app) {
+      const garden = listGarden2(app);
+      const targets = [];
+      for (const tree of garden.trees) {
+        if (tree.file) {
+          const doc = readGoalDocument2(app, tree.file);
+          if (doc) {
+            targets.push({
+              file: tree.file,
+              doc,
+              treeTitle: tree.title,
+              goalTitle: tree.title,
+              kind: "tree",
+              label: `${tree.title} (Tree)`
+            });
+          }
+        }
+        for (const sub of tree.subgoals || []) {
+          if (sub.file) {
+            const doc = readGoalDocument2(app, sub.file);
+            if (doc) {
+              targets.push({
+                file: sub.file,
+                doc,
+                treeTitle: tree.title,
+                goalTitle: sub.title,
+                kind: "subgoal",
+                label: `${tree.title} \u2192 ${sub.title} (Subgoal)`
+              });
+            }
+          }
+        }
+        for (const hab of tree.habits || []) {
+          if (hab.file) {
+            const doc = readGoalDocument2(app, hab.file);
+            if (doc) {
+              targets.push({
+                file: hab.file,
+                doc,
+                treeTitle: tree.title,
+                goalTitle: hab.title,
+                kind: "habit",
+                label: `${tree.title} \u2192 ${hab.title} (Habit)`
+              });
+            }
+          }
+        }
+      }
+      return targets;
+    }
+    function findNoteIterConnections2(app, noteFile) {
+      if (!app || !noteFile?.path || noteFile.path.startsWith(`${ROOT2}/`)) return [];
+      const targets = discoverAllGoalTargets(app);
+      const connections = [];
+      for (const target of targets) {
+        for (const ds of target.doc.datasets || []) {
+          if (ds.type !== "note" && ds.type !== "note_time") continue;
+          const entries = resolveDatasetEntries(app, ds, target.file.path);
+          const matched = entries.find((e) => e.path === noteFile.path || e.noteFile?.path === noteFile.path);
+          if (matched) {
+            connections.push({
+              goalFile: target.file,
+              doc: target.doc,
+              treeTitle: target.treeTitle,
+              goalTitle: target.goalTitle,
+              goalKind: target.kind,
+              dataset: ds,
+              entry: matched
+            });
+          }
+        }
+      }
+      return connections;
+    }
+    var LinkNoteToDatasetModal2 = class extends Modal {
+      constructor(app, { noteFile, onLinked = null }) {
+        super(app);
+        this.noteFile = noteFile;
+        this.onLinked = onLinked;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        const noteTitle = this.noteFile ? stripMd(this.noteFile.name) : "Note";
+        contentEl.createEl("h2", {
+          text: `Link "${noteTitle}" to Iter`,
+          cls: "iter-modal-title"
+        });
+        const targets = discoverAllGoalTargets(this.app);
+        const options = [];
+        for (const t of targets) {
+          for (const ds of t.doc.datasets || []) {
+            if (ds.type === "note" || ds.type === "note_time") {
+              options.push({
+                id: `${t.file.path}::${ds.id}`,
+                target: t,
+                dataset: ds,
+                label: `${t.treeTitle}${t.kind !== "tree" ? ` \u2192 ${t.goalTitle}` : ""} \xB7 ${ds.name} (${ds.type === "note_time" ? "Notes & Time" : "Notes"})`
+              });
+            }
+          }
+        }
+        if (!options.length && !targets.length) {
+          contentEl.createEl("p", {
+            text: "Create a Tree, Subgoal, or Habit in Iter first.",
+            cls: "iter-section-hint"
+          });
+          return;
+        }
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const selectField = form.createDiv({ cls: "iter-modal-field" });
+        selectField.createEl("label", { text: "Destination data list", cls: "iter-modal-label" });
+        const select = selectField.createEl("select", { cls: "iter-modal-select iter-link-note-select" });
+        for (const opt of options) {
+          select.createEl("option", { value: opt.id, text: opt.label });
+        }
+        for (const t of targets) {
+          select.createEl("option", {
+            value: `__new::${t.file.path}`,
+            text: `+ Create new "Notes & Time" list on ${t.treeTitle}${t.kind !== "tree" ? ` \u2192 ${t.goalTitle}` : ""}`
+          });
+        }
+        const dynamicSlot = form.createDiv({ cls: "iter-modal-dynamic" });
+        let getSubmission = null;
+        const rebuildDynamic = () => {
+          dynamicSlot.empty();
+          const val = select.value || "";
+          let target = null;
+          let dataset = null;
+          let newDsNameInput = null;
+          let newDsKeysInput = null;
+          if (val.startsWith("__new::")) {
+            const path = val.slice("__new::".length);
+            target = targets.find((t) => t.file.path === path) || null;
+            const row = dynamicSlot.createDiv({ cls: "iter-modal-row" });
+            const nf = row.createDiv({ cls: "iter-modal-field" });
+            nf.createEl("label", { text: "New data list name", cls: "iter-micro-label" });
+            newDsNameInput = nf.createEl("input", {
+              type: "text",
+              value: "Notes & Analyses",
+              cls: "iter-modal-input"
+            });
+            const kf = row.createDiv({ cls: "iter-modal-field" });
+            kf.createEl("label", { text: "Frontmatter keys (optional)", cls: "iter-micro-label" });
+            newDsKeysInput = kf.createEl("input", {
+              type: "text",
+              placeholder: "e.g. pages, score",
+              cls: "iter-modal-input"
+            });
+          } else {
+            const picked = options.find((o) => o.id === val) || options[0];
+            target = picked?.target || null;
+            dataset = picked?.dataset || null;
+          }
+          const isTimed = !dataset || dataset.type === "note_time";
+          let dateInput = null;
+          if (isTimed) {
+            const df = dynamicSlot.createDiv({ cls: "iter-modal-field" });
+            df.createEl("label", { text: "Date", cls: "iter-modal-label" });
+            dateInput = df.createEl("input", { type: "date", cls: "iter-modal-input" });
+            const fm = this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter;
+            dateInput.value = typeof fm?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.date.trim()) ? fm.date.trim() : toDateKey();
+          }
+          const keys = dataset ? Array.isArray(dataset.metricKeys) && dataset.metricKeys.length ? dataset.metricKeys : dataset.metricKey ? [dataset.metricKey] : [] : [];
+          const propInputs = /* @__PURE__ */ new Map();
+          if (keys.length > 0) {
+            const fm = this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter || {};
+            const grid = dynamicSlot.createDiv({ cls: keys.length > 1 ? "iter-modal-row" : "iter-modal-dynamic" });
+            for (const k of keys) {
+              const f = grid.createDiv({ cls: "iter-modal-field" });
+              f.createEl("label", { text: `${k} (frontmatter)`, cls: "iter-modal-label" });
+              const inp = f.createEl("input", {
+                type: "text",
+                placeholder: fm[k] !== void 0 ? `Current: ${fm[k]}` : `Value for ${k}`,
+                cls: "iter-modal-input"
+              });
+              if (fm[k] !== void 0 && fm[k] !== null) {
+                inp.value = String(fm[k]);
+              }
+              propInputs.set(k, inp);
+            }
+          }
+          let waterNow = target?.kind === "habit";
+          if (target?.kind === "habit") {
+            const waterBtn = dynamicSlot.createEl("button", {
+              type: "button",
+              cls: `iter-suggest-chip${waterNow ? " is-active" : ""}`,
+              text: `\u2713 Also water "${target.goalTitle}" for today`
+            });
+            waterBtn.addEventListener("click", () => {
+              waterNow = !waterNow;
+              waterBtn.textContent = waterNow ? `\u2713 Also water "${target.goalTitle}" for today` : `Also water "${target.goalTitle}" for today`;
+              waterBtn.toggleClass?.("is-active", waterNow);
+            });
+          }
+          getSubmission = async () => {
+            if (!target) throw new Error("Select a destination.");
+            let activeDs = dataset;
+            if (!activeDs) {
+              const dsName = String(newDsNameInput?.value || "Notes").trim() || "Notes";
+              const metricKeys = String(newDsKeysInput?.value || "").split(",").map((s) => s.trim()).filter(Boolean);
+              activeDs = await addDataset(this.app, target.file, {
+                name: dsName,
+                type: "note_time",
+                metricKeys: metricKeys.length ? metricKeys : ["score"]
+              });
+            }
+            const props = {};
+            for (const [k, inp] of propInputs.entries()) {
+              const raw = String(inp.value || "").trim();
+              if (!raw) continue;
+              const num = Number(raw);
+              props[k] = Number.isFinite(num) ? num : raw;
+            }
+            if (Object.keys(props).length > 0 && typeof this.app?.fileManager?.processFrontMatter === "function") {
+              await this.app.fileManager.processFrontMatter(this.noteFile, (fm) => {
+                for (const [k, v] of Object.entries(props)) {
+                  fm[k] = v;
+                }
+                if (dateInput?.value && !fm.date) {
+                  fm.date = dateInput.value;
+                }
+              });
+            }
+            const primaryKey = activeDs.metricKey || activeDs.metricKeys?.[0] || "";
+            const primaryVal = primaryKey && props[primaryKey] !== void 0 ? Number(props[primaryKey]) : NaN;
+            const payload = { path: this.noteFile.path };
+            if (activeDs.type === "note_time" && dateInput) {
+              payload.date = dateInput.value || toDateKey();
+            }
+            if (Number.isFinite(primaryVal)) {
+              payload.value = primaryVal;
+            }
+            if (Object.keys(props).length > 0) {
+              payload.props = props;
+            }
+            await addDatasetEntry(this.app, target.file, activeDs.id, payload);
+            if (waterNow && target.kind === "habit") {
+              await waterHabit2(this.app, target.file);
+            }
+            return { target, dataset: activeDs };
+          };
+        };
+        select.addEventListener("change", rebuildDynamic);
+        rebuildDynamic();
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", {
+          text: "Link note",
+          type: "submit",
+          cls: "mod-cta"
+        });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting || !getSubmission) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            const res = await getSubmission();
+            new Notice2(`Linked "${noteTitle}" to ${res.target.goalTitle} \xB7 ${res.dataset.name}`);
+            if (this.onLinked) await this.onLinked(res);
+            this.close();
+          } catch (err) {
+            new Notice2(err instanceof Error ? err.message : String(err));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    var QuickWaterHabitModal2 = class extends FuzzySuggestModal {
+      constructor(app, onWatered = null) {
+        super(app);
+        this.onWatered = onWatered;
+        this.setPlaceholder("Choose a habit to water\u2026");
+      }
+      getItems() {
+        const habits = discoverHabits(this.app, "Iter");
+        return [...habits].sort((a, b) => {
+          const aPending = a.schedule.dueToday && !a.schedule.wateredToday ? 0 : 1;
+          const bPending = b.schedule.dueToday && !b.schedule.wateredToday ? 0 : 1;
+          if (aPending !== bPending) return aPending - bPending;
+          return a.label.localeCompare(b.label);
+        });
+      }
+      getItemText(item) {
+        const status = item.schedule.wateredToday ? "\u2713 Watered today" : item.schedule.dueToday ? "\u{1F4A7} Due today" : `Next: ${item.schedule.appearLabel}`;
+        const streak = item.schedule.streak > 0 ? ` \xB7 ${item.schedule.streak}d streak` : "";
+        return `${item.label} \u2014 ${item.treeTitle} (${status} \xB7 ${item.schedule.cadenceLabel}${streak})`;
+      }
+      onChooseItem(item) {
+        void (async () => {
+          const res = await waterHabit2(this.app, item.file);
+          const newStreak = res?.streak ?? 0;
+          new Notice2(`Watered "${item.label}"${newStreak > 0 ? ` (${newStreak} streak!)` : ""}`);
+          if (this.onWatered) await this.onWatered(item);
+        })();
+      }
+    };
+    var QuickLogEntryModal2 = class extends Modal {
+      constructor(app, { plugin, onLogged = null }) {
+        super(app);
+        this.plugin = plugin;
+        this.onLogged = onLogged;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: "Quick-log to Iter data list", cls: "iter-modal-title" });
+        const targets = discoverAllGoalTargets(this.app);
+        const items = [];
+        for (const t of targets) {
+          for (const ds of t.doc.datasets || []) {
+            if (ds.type === "rollup") continue;
+            items.push({
+              id: `${t.file.path}::${ds.id}`,
+              target: t,
+              dataset: ds,
+              label: `${t.treeTitle}${t.kind !== "tree" ? ` \u2192 ${t.goalTitle}` : ""} \xB7 ${ds.name} (${ds.type})`
+            });
+          }
+        }
+        if (!items.length) {
+          contentEl.createEl("p", {
+            text: "No data lists found yet. Open a Tree, Subgoal, or Habit to add a data list first.",
+            cls: "iter-section-hint"
+          });
+          return;
+        }
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const selectField = form.createDiv({ cls: "iter-modal-field" });
+        selectField.createEl("label", { text: "Data list", cls: "iter-modal-label" });
+        const select = selectField.createEl("select", { cls: "iter-modal-select iter-quick-log-select" });
+        for (const item of items) {
+          select.createEl("option", { value: item.id, text: item.label });
+        }
+        const slot = form.createDiv({ cls: "iter-modal-dynamic" });
+        let handleSubmit = null;
+        const rebuildSlot = () => {
+          slot.empty();
+          const picked = items.find((i) => i.id === select.value) || items[0];
+          if (!picked) return;
+          const { target, dataset } = picked;
+          if (dataset.type === "number_time") {
+            const row = slot.createDiv({ cls: "iter-modal-row" });
+            const vf = row.createDiv({ cls: "iter-modal-field" });
+            vf.createEl("label", { text: dataset.unit ? `Value (${dataset.unit})` : "Value", cls: "iter-modal-label" });
+            const valInput = vf.createEl("input", { type: "number", step: "any", cls: "iter-modal-input iter-quick-log-val" });
+            valInput.required = true;
+            const df = row.createDiv({ cls: "iter-modal-field" });
+            df.createEl("label", { text: "Date", cls: "iter-modal-label" });
+            const dateInput = df.createEl("input", { type: "date", cls: "iter-modal-input" });
+            dateInput.value = toDateKey();
+            dateInput.required = true;
+            handleSubmit = async () => {
+              await addDatasetEntry(this.app, target.file, dataset.id, {
+                value: Number(valInput.value),
+                date: dateInput.value
+              });
+              new Notice2(`Logged ${valInput.value}${dataset.unit ? ` ${dataset.unit}` : ""} to ${dataset.name}`);
+            };
+          } else if (dataset.type === "text") {
+            const tf = slot.createDiv({ cls: "iter-modal-field" });
+            tf.createEl("label", { text: "Entry text", cls: "iter-modal-label" });
+            const textInput = tf.createEl("input", { type: "text", placeholder: "Add item\u2026", cls: "iter-modal-input iter-quick-log-val" });
+            textInput.required = true;
+            handleSubmit = async () => {
+              await addDatasetEntry(this.app, target.file, dataset.id, { value: textInput.value });
+              new Notice2(`Added "${textInput.value}" to ${dataset.name}`);
+            };
+          } else {
+            const hint = slot.createDiv({ cls: "iter-section-hint" });
+            hint.textContent = "Create a new note in this list (or link your active note):";
+            const tf = slot.createDiv({ cls: "iter-modal-field" });
+            tf.createEl("label", { text: "New note title", cls: "iter-modal-label" });
+            const titleInput = tf.createEl("input", {
+              type: "text",
+              placeholder: "e.g. Chapter 3, Poem analysis\u2026",
+              cls: "iter-modal-input iter-quick-log-val"
+            });
+            titleInput.required = true;
+            const ff = slot.createDiv({ cls: "iter-modal-field" });
+            ff.createEl("label", { text: "Folder", cls: "iter-modal-label" });
+            const folderInput = ff.createEl("input", {
+              type: "text",
+              cls: "iter-modal-input"
+            });
+            folderInput.value = inferDatasetDefaultFolder(this.app, dataset, target.file, target.doc);
+            handleSubmit = async () => {
+              const noteFile = await createDatasetNote(this.app, {
+                goalFile: target.file,
+                dataset,
+                title: titleInput.value,
+                folder: folderInput.value,
+                date: toDateKey(),
+                waterHabitNow: target.kind === "habit"
+              });
+              if (this.plugin?.openFile) {
+                await this.plugin.openFile(noteFile);
+              }
+            };
+          }
+        };
+        select.addEventListener("change", rebuildSlot);
+        rebuildSlot();
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Save", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting || !handleSubmit) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            await handleSubmit();
+            this.plugin?.scheduleRefresh?.();
+            if (this.onLogged) await this.onLogged();
+            this.close();
+          } catch (err) {
+            new Notice2(err instanceof Error ? err.message : String(err));
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    function parseIterBlockConfig(source) {
+      const cfg = {};
+      const lines = String(source || "").split(/\r?\n/);
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const kv = /^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/.exec(line);
+        if (kv) {
+          cfg[kv[1].trim().toLowerCase()] = kv[2].trim().replace(/^["']|["']$/g, "");
+        }
+      }
+      return cfg;
+    }
+    function renderIterCodeBlock2(plugin, source, container) {
+      container.empty();
+      const app = plugin.app;
+      const cfg = parseIterBlockConfig(source);
+      const goalQuery = cfg.goal || cfg.target || cfg.habit || cfg.tree || cfg.subgoal || "";
+      const viewMode = (cfg.view || cfg.mode || (goalQuery ? "goal" : "today")).toLowerCase();
+      const card = container.createDiv({ cls: "iter-embed-card" });
+      if (viewMode === "today" || viewMode === "habits-today" || viewMode === "habits_today") {
+        const scopePath = cfg.tree ? `Iter/${cfg.tree.replace(/^Iter\//, "")}` : "Iter";
+        const dueHabits = discoverHabits(app, scopePath).filter((h) => h.schedule.dueToday);
+        const wateredCount = dueHabits.filter((h) => h.schedule.wateredToday || h.schedule.wateredInPeriod).length;
+        const head2 = card.createDiv({ cls: "iter-embed-head" });
+        const titleWrap2 = head2.createDiv({ cls: "iter-embed-title-wrap" });
+        const iconSpan2 = titleWrap2.createSpan({ cls: "iter-btn-icon" });
+        setIcon2(iconSpan2, "sprout");
+        titleWrap2.createSpan({
+          text: cfg.title || "Habits for Today",
+          cls: "iter-embed-title"
+        });
+        titleWrap2.createSpan({
+          text: `${wateredCount}/${dueHabits.length} watered`,
+          cls: "iter-module-pill"
+        });
+        const openGardenBtn = head2.createEl("button", {
+          text: "Open Garden",
+          type: "button",
+          cls: "iter-ghost-action iter-embed-open-btn"
+        });
+        openGardenBtn.addEventListener("click", () => {
+          void plugin.openGarden();
+        });
+        if (!dueHabits.length) {
+          card.createEl("p", {
+            text: "No habits scheduled for today.",
+            cls: "iter-dataset-empty"
+          });
+          return;
+        }
+        const list = card.createDiv({ cls: "iter-note-nav-list" });
+        for (const h of dueHabits) {
+          const row = list.createDiv({ cls: "iter-note-nav-row is-habit-entry" });
+          const mainBtn = row.createEl("button", {
+            cls: "iter-note-nav-item is-habit-entry",
+            type: "button"
+          });
+          const ic = mainBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon2(ic, "droplet");
+          const textCol = mainBtn.createDiv({ cls: "iter-habit-entry-text" });
+          textCol.createSpan({ text: h.label, cls: "iter-note-nav-title" });
+          textCol.createSpan({
+            text: `${h.treeTitle} \xB7 ${h.schedule.cadenceLabel}${h.schedule.streak > 0 ? ` \xB7 ${h.schedule.streak}d streak` : ""}`,
+            cls: "iter-habit-entry-sub"
+          });
+          mainBtn.addEventListener("click", () => {
+            if (h.file) void plugin.openGoal(h.file);
+          });
+          const isDone = Boolean(h.schedule.wateredToday || h.schedule.wateredInPeriod);
+          const waterBtn = row.createEl("button", {
+            type: "button",
+            cls: `iter-habit-water-inline-btn${isDone ? " is-watered" : ""}`
+          });
+          const wIcon = waterBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon2(wIcon, isDone ? "check" : "droplet");
+          waterBtn.createSpan({ text: isDone ? "Watered" : "Water" });
+          waterBtn.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            if (!h.file) return;
+            await waterHabit2(app, h.file);
+            plugin.scheduleRefresh?.();
+            renderIterCodeBlock2(plugin, source, container);
+          });
+        }
+        return;
+      }
+      const targets = discoverAllGoalTargets(app);
+      const qLower = goalQuery.toLowerCase();
+      const matchedTarget = targets.find(
+        (t) => t.file.path.toLowerCase() === qLower || t.file.path.toLowerCase() === `${qLower}.md` || t.goalTitle.toLowerCase() === qLower || `${t.treeTitle}/${t.goalTitle}`.toLowerCase() === qLower
+      );
+      if (!matchedTarget) {
+        card.createEl("p", {
+          text: `Iter goal/habit not found: "${goalQuery}"`,
+          cls: "iter-dataset-empty"
+        });
+        return;
+      }
+      const { file, doc, treeTitle, goalTitle, kind } = matchedTarget;
+      const head = card.createDiv({ cls: "iter-embed-head" });
+      const titleWrap = head.createDiv({ cls: "iter-embed-title-wrap" });
+      const iconSpan = titleWrap.createSpan({ cls: "iter-btn-icon" });
+      setIcon2(iconSpan, kind === "habit" ? "droplet" : kind === "subgoal" ? "target" : "trees");
+      titleWrap.createSpan({
+        text: cfg.title || (kind === "tree" ? treeTitle : `${treeTitle} \xB7 ${goalTitle}`),
+        cls: "iter-embed-title"
+      });
+      titleWrap.createSpan({ text: kind, cls: "iter-module-pill" });
+      const actions = head.createDiv({ cls: "iter-embed-actions" });
+      if (kind === "habit") {
+        const sched = computeHabitScheduleMeta(doc.frequency, doc.days, doc.lastWatered, doc.waterLog);
+        const isWatered = Boolean(sched.wateredToday || sched.wateredInPeriod);
+        const wBtn = actions.createEl("button", {
+          type: "button",
+          cls: `iter-habit-water-inline-btn${isWatered ? " is-watered" : ""}`
+        });
+        const wIc = wBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon2(wIc, isWatered ? "check" : "droplet");
+        wBtn.createSpan({ text: isWatered ? "Watered" : "Water" });
+        wBtn.addEventListener("click", async () => {
+          await waterHabit2(app, file);
+          plugin.scheduleRefresh?.();
+          renderIterCodeBlock2(plugin, source, container);
+        });
+      } else if (kind === "subgoal") {
+        const doneBtn = actions.createEl("button", {
+          type: "button",
+          cls: "iter-ghost-action",
+          text: doc.done ? "\u2713 Completed" : "Mark done"
+        });
+        doneBtn.addEventListener("click", async () => {
+          await toggleSubgoal(app, file);
+          plugin.scheduleRefresh?.();
+          renderIterCodeBlock2(plugin, source, container);
+        });
+      }
+      const openBtn = actions.createEl("button", {
+        text: "Open in Iter",
+        type: "button",
+        cls: "iter-ghost-action iter-embed-open-btn"
+      });
+      openBtn.addEventListener("click", () => {
+        void plugin.openGoal(file);
+      });
+      const dsFilter = (cfg.dataset || "").toLowerCase();
+      const datasetsToShow = dsFilter ? (doc.datasets || []).filter((d) => d.name.toLowerCase() === dsFilter || d.id.toLowerCase() === dsFilter) : doc.datasets || [];
+      if (doc.widgets?.length && !dsFilter) {
+        const byId = new Map((doc.datasets || []).map((d) => [d.id, d]));
+        const statsRow = card.createDiv({ cls: "iter-embed-stats-row" });
+        for (const w of doc.widgets.slice(0, 4)) {
+          if (w.type === "streak" && kind === "habit") {
+            const streak = computeHabitStreak(doc.waterLog, doc.frequency, /* @__PURE__ */ new Date(), doc.days);
+            const pill = statsRow.createDiv({ cls: "iter-embed-stat-pill" });
+            pill.createSpan({ text: w.title || "Streak", cls: "iter-embed-stat-label" });
+            pill.createSpan({ text: `${streak}`, cls: "iter-embed-stat-val" });
+            continue;
+          }
+          const wDs = resolveWidgetDataset(app, w, byId, doc);
+          if (!wDs) continue;
+          if (w.type === "stat") {
+            const st = computeStat(app, wDs, w.agg, file.path, w.metricKey || "");
+            const pill = statsRow.createDiv({ cls: "iter-embed-stat-pill" });
+            pill.createSpan({ text: w.title || wDs.name, cls: "iter-embed-stat-label" });
+            pill.createSpan({
+              text: `${st.display}${w.unit || wDs.unit ? ` ${w.unit || wDs.unit}` : ""}`,
+              cls: "iter-embed-stat-val"
+            });
+          } else if (w.type === "goal_bar") {
+            const bar = computeGoalBar(app, wDs, w.mode, w.target, file.path, w.metricKey || "");
+            const pill = statsRow.createDiv({ cls: "iter-embed-stat-pill" });
+            pill.createSpan({ text: w.title || wDs.name, cls: "iter-embed-stat-label" });
+            pill.createSpan({ text: `${bar.rawPercent}%`, cls: "iter-embed-stat-val" });
+          }
+        }
+      }
+      for (const ds of datasetsToShow.slice(0, 3)) {
+        if (ds.type === "rollup") continue;
+        const entries = resolveDatasetEntries(app, ds, file.path);
+        const dsBox = card.createDiv({ cls: "iter-embed-ds-box" });
+        const dsBar = dsBox.createDiv({ cls: "iter-embed-ds-bar" });
+        dsBar.createSpan({ text: `${ds.name} (${entries.length})`, cls: "iter-embed-ds-title" });
+        if (ds.type === "note" || ds.type === "note_time") {
+          const newNoteBtn = dsBar.createEl("button", {
+            text: "+ New Note",
+            type: "button",
+            cls: "iter-ghost-action iter-embed-new-note-btn"
+          });
+          newNoteBtn.addEventListener("click", () => {
+            new CreateDatasetNoteModal(app, {
+              goalFile: file,
+              doc,
+              dataset: ds,
+              onCreated: async (createdFile) => {
+                plugin.scheduleRefresh?.();
+                renderIterCodeBlock2(plugin, source, container);
+                await plugin.openFile(createdFile);
+              }
+            }).open();
+          });
+        }
+        const previewEntries = entries.slice(-5).reverse();
+        if (previewEntries.length > 0) {
+          const list = dsBox.createDiv({ cls: "iter-entry-list" });
+          for (const item of previewEntries) {
+            const row = list.createDiv({ cls: "iter-entry-row" });
+            if (ds.type === "note" || ds.type === "note_time") {
+              const btn = row.createEl("button", { cls: "iter-entry-note-btn", type: "button" });
+              const ic = btn.createSpan({ cls: "iter-btn-icon" });
+              setIcon2(ic, "file-text");
+              btn.createSpan({ text: item.label, cls: "iter-entry-main" });
+              btn.addEventListener("click", () => {
+                if (item.noteFile) void plugin.openFile(item.noteFile);
+              });
+            } else {
+              row.createSpan({ text: item.label, cls: "iter-entry-main" });
+            }
+            if (item.value !== null && item.value !== void 0 && (ds.type === "note" || ds.type === "note_time")) {
+              row.createSpan({ text: formatNumber(item.value), cls: "iter-note-score-pill" });
+            }
+            if (item.date) {
+              row.createSpan({ text: item.date, cls: "iter-entry-date" });
+            }
+          }
+        }
+      }
+    }
+    var InsertEmbedModal2 = class extends Modal {
+      constructor(app, { onInsert }) {
+        super(app);
+        this.onInsert = onInsert;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: "Insert Iter embed into note", cls: "iter-modal-title" });
+        const targets = discoverAllGoalTargets(this.app);
+        const form = contentEl.createEl("form", { cls: "iter-modal-form" });
+        const field = form.createDiv({ cls: "iter-modal-field" });
+        field.createEl("label", { text: "What to embed", cls: "iter-modal-label" });
+        const select = field.createEl("select", { cls: "iter-modal-select iter-insert-embed-select" });
+        select.createEl("option", {
+          value: "view: today",
+          text: "Habits for Today (interactive Daily Note tracker)"
+        });
+        for (const t of targets) {
+          select.createEl("option", {
+            value: `goal: ${t.goalTitle}`,
+            text: `${t.label} \u2014 Overview & widgets`
+          });
+          for (const ds of t.doc.datasets || []) {
+            if (ds.type === "rollup") continue;
+            select.createEl("option", {
+              value: `goal: ${t.goalTitle}
+dataset: ${ds.name}`,
+              text: `${t.label} \u2192 Data list: ${ds.name}`
+            });
+          }
+        }
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: "Insert codeblock", type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const block = `\`\`\`iter
+${select.value}
+\`\`\`
+`;
+          if (this.onInsert) this.onInsert(block);
+          this.close();
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    module2.exports = {
+      inferDatasetDefaultFolder,
+      createDatasetNote,
+      CreateDatasetNoteModal,
+      discoverAllGoalTargets,
+      findNoteIterConnections: findNoteIterConnections2,
+      LinkNoteToDatasetModal: LinkNoteToDatasetModal2,
+      QuickWaterHabitModal: QuickWaterHabitModal2,
+      QuickLogEntryModal: QuickLogEntryModal2,
+      parseIterBlockConfig,
+      renderIterCodeBlock: renderIterCodeBlock2,
+      InsertEmbedModal: InsertEmbedModal2
+    };
+  }
+});
+
+// src/panel-view.js
+var require_panel_view = __commonJS({
+  "src/panel-view.js"(exports2, module2) {
+    var { ItemView, Menu: Menu2, Notice: Notice2, setIcon: setIcon2 } = require("obsidian");
+    var { ROOT: ROOT2, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
+    var { listGarden: listGarden2 } = require_catalog();
+    var PANEL_VIEW2 = "iter-panel";
+    var MODULE_ICONS = {
+      gym: "dumbbell",
+      learning: "book-open",
+      creative: "sparkles",
+      health: "heart",
+      general: "trees"
+    };
+    function iconButton(parent, icon, label, callback, extraClass = "") {
+      const button = parent.createEl("button", {
+        cls: `iter-icon-button ${extraClass}`.trim(),
+        type: "button"
+      });
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      setIcon2(button, icon);
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void callback(event);
+      });
+      return button;
+    }
+    var IterPanelView2 = class extends ItemView {
+      constructor(leaf, plugin) {
+        super(leaf);
+        this.plugin = plugin;
+        this.expansion = /* @__PURE__ */ new Map();
+        this.renderTimer = null;
+      }
+      getViewType() {
+        return PANEL_VIEW2;
+      }
+      getDisplayText() {
+        return "Iter";
+      }
+      getIcon() {
+        return "sprout";
+      }
+      async onOpen() {
+        this.contentEl.addClass("iter-panel");
+        const schedule = (file) => {
+          if (!file || file.path === ROOT2 || file.path.startsWith(`${ROOT2}/`)) {
+            this.scheduleRender();
+          }
+        };
+        for (const event of ["create", "delete", "modify"]) {
+          this.registerEvent(this.app.vault.on(event, schedule));
+        }
+        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+          if (oldPath === ROOT2 || oldPath.startsWith(`${ROOT2}/`)) {
+            this.scheduleRender();
+          } else {
+            schedule(file);
+          }
+        }));
+        this.registerEvent(this.app.metadataCache.on("changed", schedule));
+        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
+        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleRender()));
+        this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleRender()));
+        this.render();
+      }
+      async onClose() {
+        if (this.renderTimer !== null) {
+          clearTimeout(this.renderTimer);
+          this.renderTimer = null;
+        }
+      }
+      scheduleRender() {
+        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
+        this.renderTimer = setTimeout(() => {
+          this.renderTimer = null;
+          this.render();
+        }, 90);
+      }
+      isActiveFile(file) {
+        if (!file) return false;
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        if (this.plugin?.goalViewType && recent?.view?.getViewType?.() === this.plugin.goalViewType && recent?.view?.file?.path === file.path) {
+          return true;
+        }
+        const active = this.app.workspace.getActiveFile?.();
+        return Boolean(active && active.path === file.path);
+      }
+      isGardenActive() {
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
+      }
+      render() {
+        const container = this.contentEl;
+        container.empty();
+        const garden = listGarden2(this.app);
+        const toolbar = container.createDiv({ cls: "iter-toolbar" });
+        toolbar.createEl("span", { text: "Iter", cls: "iter-toolbar-title" });
+        const toolbarActions = toolbar.createDiv({ cls: "iter-toolbar-actions" });
+        iconButton(toolbarActions, "plus", "Create tree", () => this.plugin.promptCreateTree());
+        const weRow = container.createEl("button", {
+          cls: `iter-we-row${this.isGardenActive() ? " is-active" : ""}`,
+          type: "button"
+        });
+        weRow.setAttribute("aria-label", "Open We garden dashboard");
+        if (this.isGardenActive()) weRow.setAttribute("aria-current", "page");
+        const weIcon = weRow.createSpan({ cls: "iter-we-icon" });
+        setIcon2(weIcon, "sprout");
+        weRow.createSpan({ text: "We", cls: "iter-we-label" });
+        const countText = garden.trees.length === 1 ? "1 tree" : `${garden.trees.length} trees`;
+        weRow.createSpan({ text: countText, cls: "iter-we-meta" });
+        weRow.addEventListener("click", () => {
+          void this.plugin.openGarden();
+        });
+        const body = container.createDiv({ cls: "iter-panel-list" });
+        if (!garden.trees.length && !garden.looseItems.length) {
+          const empty = body.createDiv({ cls: "iter-panel-empty" });
+          empty.createEl("p", { text: "Your Iter folder is ready." });
+          const plantBtn = empty.createEl("button", { text: "Plant first tree", type: "button", cls: "iter-ghost-action" });
+          plantBtn.addEventListener("click", () => this.plugin.promptCreateTree());
+          return;
+        }
+        if (garden.trees.length > 0) {
+          const filterRow = container.createDiv({ cls: "iter-panel-filter-row" });
+          container.insertBefore?.(filterRow, body);
+          const searchIn = filterRow.createEl("input", {
+            type: "search",
+            placeholder: "Filter goals & habits\u2026",
+            cls: "iter-panel-search"
+          });
+          searchIn.value = this.filterQuery || "";
+          const dueBtn = filterRow.createEl("button", {
+            text: "Due",
+            type: "button",
+            cls: `iter-panel-due-toggle${this.onlyDueToday ? " is-active" : ""}`,
+            attr: { title: "Show only habits due today", "aria-pressed": String(this.onlyDueToday) }
+          });
+          searchIn.addEventListener("input", () => {
+            this.filterQuery = searchIn.value;
+            this.renderListItems(body, garden);
+          });
+          dueBtn.addEventListener("click", () => {
+            this.onlyDueToday = !this.onlyDueToday;
+            dueBtn.toggleClass?.("is-active", this.onlyDueToday);
+            dueBtn.setAttribute("aria-pressed", String(this.onlyDueToday));
+            this.renderListItems(body, garden);
+          });
+        }
+        this.renderListItems(body, garden);
+      }
+      renderListItems(body, garden) {
+        body.empty();
+        const q = (this.filterQuery || "").trim().toLowerCase();
+        const onlyDue = Boolean(this.onlyDueToday);
+        for (const tree of garden.trees) {
+          if (!q && !onlyDue) {
+            this.renderTree(body, tree);
+            continue;
+          }
+          const treeMatch = q && tree.title.toLowerCase().includes(q);
+          const subgoals = onlyDue ? [] : tree.subgoals.filter((s) => treeMatch || !q || s.title.toLowerCase().includes(q));
+          const habits = tree.habits.filter((h) => {
+            if (onlyDue && (!h.isDueToday || h.wateredInPeriod || h.wateredToday)) return false;
+            if (q && !treeMatch && !h.title.toLowerCase().includes(q)) return false;
+            return true;
+          });
+          if (treeMatch || subgoals.length > 0 || habits.length > 0) {
+            this.renderTree(body, { ...tree, subgoals, habits, extras: q || onlyDue ? [] : tree.extras });
+          }
+        }
+        if (!q && !onlyDue && garden.looseItems.length) {
+          const misc = body.createDiv({ cls: "iter-misc-section" });
+          for (const item of garden.looseItems) {
+            this.renderExtraEntry(misc, item);
+          }
+        }
+      }
+      renderToggle(row, key, label, defaultExpanded = true) {
+        const expanded = this.expansion.get(key) ?? defaultExpanded;
+        const toggle = iconButton(
+          row,
+          expanded ? "chevron-down" : "chevron-right",
+          `${expanded ? "Collapse" : "Expand"} ${label}`,
+          () => {
+            this.expansion.set(key, !expanded);
+            this.render();
+          },
+          "iter-toggle"
+        );
+        toggle.setAttribute("aria-expanded", String(expanded));
+        return expanded;
+      }
+      showTreeMenu(event, tree, { allowDelete = true } = {}) {
+        const menu = new Menu2();
+        menu.addItem(
+          (item) => item.setTitle("Create subgoal").setIcon("target").onClick(() => this.plugin.promptCreateSubgoal(tree.path))
+        );
+        menu.addItem(
+          (item) => item.setTitle("Create habit").setIcon("droplet").onClick(() => this.plugin.promptCreateHabit(tree.path))
+        );
+        menu.addSeparator();
+        menu.addItem(
+          (item) => item.setTitle("Focus in We garden").setIcon("sprout").onClick(() => void this.plugin.openGarden(tree.path))
+        );
+        if (tree.indexFile) {
+          menu.addItem(
+            (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(tree.indexFile))
+          );
+          menu.addItem(
+            (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
+          );
+        }
+        if (allowDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(() => this.plugin.promptDeleteTree(tree));
+            item.setWarning?.(true);
+          });
+        }
+        menu.showAtMouseEvent(event);
+      }
+      showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
+        const menu = new Menu2();
+        menu.addItem(
+          (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
+        );
+        menu.addItem(
+          (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
+        );
+        if (extraActions.length) {
+          menu.addSeparator();
+          for (const action of extraActions) {
+            menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
+          }
+        }
+        if (onDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(onDelete);
+            item.setWarning?.(true);
+          });
+        }
+        menu.showAtMouseEvent(event);
+      }
+      renderTree(parent, tree) {
+        const section = parent.createDiv({ cls: "iter-tree-node" });
+        const row = section.createDiv({ cls: "iter-row iter-tree-row" });
+        const expanded = this.renderToggle(row, tree.path, tree.title, true);
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute("title", tree.goal ? `${tree.title} \u2014 ${tree.goal}` : tree.title);
+        if (this.isActiveFile(tree.indexFile)) titleBtn.setAttribute("aria-current", "page");
+        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
+        setIcon2(iconEl, MODULE_ICONS[tree.module] || "trees");
+        titleBtn.createSpan({ text: tree.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => {
+          if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
+          else void this.plugin.openGarden(tree.path);
+        });
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showTreeMenu(event, tree, { allowDelete: true });
+        });
+        if (tree.stats.habitTotal > 0) {
+          const dot = row.createSpan({
+            cls: `iter-hydration-dot is-${tree.stats.hydrationState}`,
+            attr: {
+              title: `${tree.stats.habitWatered}/${tree.stats.habitTotal} habits watered`
+            }
+          });
+          dot.setAttribute("aria-hidden", "true");
+        }
+        iconButton(
+          row,
+          "plus",
+          `Add to ${tree.title}`,
+          (event) => this.showTreeMenu(event, tree, { allowDelete: false }),
+          "iter-row-action"
+        );
+        if (!expanded) return;
+        const childrenEl = section.createDiv({ cls: "iter-tree-children" });
+        const hasItems = tree.subgoals.length > 0 || tree.habits.length > 0 || tree.extras.length > 0;
+        if (!hasItems) {
+          childrenEl.createDiv({ cls: "iter-tree-empty", text: "No subgoals or habits yet" });
+          return;
+        }
+        for (const subgoal of tree.subgoals) {
+          this.renderSubgoal(childrenEl, subgoal);
+        }
+        for (const habit of tree.habits) {
+          this.renderHabit(childrenEl, habit);
+        }
+        for (const extra of tree.extras) {
+          this.renderExtraEntry(childrenEl, extra);
+        }
+      }
+      renderSubgoal(parent, subgoal) {
+        const row = parent.createDiv({ cls: `iter-row iter-subgoal-row${subgoal.done ? " is-done" : ""}` });
+        const toggleBtn = iconButton(
+          row,
+          subgoal.done ? "check-circle-2" : "circle",
+          subgoal.done ? `Mark "${subgoal.title}" incomplete` : `Complete "${subgoal.title}"`,
+          async () => {
+            try {
+              await toggleSubgoal(this.app, subgoal.file);
+              this.plugin.scheduleRefresh();
+            } catch (error) {
+              new Notice2(error?.message || "Could not update subgoal.");
+            }
+          },
+          `iter-check-btn${subgoal.done ? " is-done" : ""}`
+        );
+        toggleBtn.setAttribute("aria-pressed", String(subgoal.done));
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute("title", subgoal.target ? `${subgoal.title} \xB7 ${subgoal.target}` : subgoal.title);
+        if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute("aria-current", "page");
+        titleBtn.createSpan({ text: subgoal.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            subgoal.file,
+            [
+              {
+                label: subgoal.done ? "Mark incomplete" : "Mark done",
+                icon: subgoal.done ? "circle" : "check-circle-2",
+                run: async () => {
+                  await toggleSubgoal(this.app, subgoal.file);
+                  this.plugin.scheduleRefresh();
+                }
+              }
+            ],
+            () => this.plugin.promptDeleteGoalItem("goal", subgoal)
+          );
+        });
+      }
+      renderHabit(parent, habit) {
+        const resting = !habit.isDueToday && !habit.wateredToday;
+        const row = parent.createDiv({
+          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
+        });
+        const waterBtn = iconButton(
+          row,
+          "droplet",
+          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water "${habit.title}" anyway` : `Water "${habit.title}"`,
+          async () => {
+            try {
+              const watered = await waterHabit2(this.app, habit.file);
+              new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+              this.plugin.scheduleRefresh();
+            } catch (error) {
+              new Notice2(error?.message || "Could not water habit.");
+            }
+          },
+          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
+        );
+        waterBtn.setAttribute("aria-pressed", String(habit.wateredToday));
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute(
+          "title",
+          habit.target ? `${habit.title} (${habit.cadenceLabel}) \xB7 ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`
+        );
+        if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
+        titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            habit.file,
+            [
+              {
+                label: habit.wateredToday ? "Undo today's watering" : "Water now",
+                icon: "droplet",
+                run: async () => {
+                  await waterHabit2(this.app, habit.file);
+                  this.plugin.scheduleRefresh();
+                }
+              },
+              {
+                label: "Edit repetitivity",
+                icon: "calendar-days",
+                run: () => this.plugin.promptEditHabitSchedule(habit)
+              }
+            ],
+            () => this.plugin.promptDeleteGoalItem("habit", habit)
+          );
+        });
+        if (habit.streak > 0) {
+          row.createSpan({
+            text: `${habit.streak}\u{1F525}`,
+            cls: "iter-streak-mini-badge",
+            attr: { title: `${habit.streak} streak` }
+          });
+        }
+        row.createSpan({
+          text: habit.cadenceShort,
+          cls: "iter-cadence-badge",
+          attr: { title: `${habit.cadenceLabel} habit` }
+        });
+      }
+      renderExtraEntry(parent, entry) {
+        if (entry.kind === "folder") {
+          const section = parent.createDiv({ cls: "iter-extra-folder" });
+          const row2 = section.createDiv({ cls: "iter-row iter-folder-row" });
+          const expanded = this.renderToggle(row2, entry.path, entry.name, false);
+          const label = row2.createSpan({ cls: "iter-row-title iter-static-label" });
+          const iconEl2 = label.createSpan({ cls: "iter-row-icon" });
+          setIcon2(iconEl2, "folder");
+          label.createSpan({ text: entry.name, cls: "iter-row-name" });
+          if (!expanded) return;
+          const children = section.createDiv({ cls: "iter-tree-children" });
+          for (const child of entry.children) {
+            this.renderExtraEntry(children, child);
+          }
+          return;
+        }
+        const row = parent.createDiv({ cls: "iter-row iter-file-row" });
+        row.createSpan({ cls: "iter-toggle-spacer" });
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        if (this.isActiveFile(entry.file)) titleBtn.setAttribute("aria-current", "page");
+        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
+        setIcon2(iconEl, "file-text");
+        titleBtn.createSpan({ text: entry.name, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openFile(entry.file));
+      }
+    };
+    module2.exports = {
+      IterPanelView: IterPanelView2,
+      PANEL_VIEW: PANEL_VIEW2
+    };
+  }
+});
+
 // src/goal-view.js
 var require_goal_view = __commonJS({
   "src/goal-view.js"(exports2, module2) {
-    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
+    var { ItemView, Notice: Notice2, setIcon: setIcon2 } = require("obsidian");
     var {
-      ROOT,
+      ROOT: ROOT2,
       toDateKey,
       toggleSubgoal,
       waterHabit: waterHabit2,
@@ -7820,6 +8878,7 @@ var require_goal_view = __commonJS({
       NoteTimeMetaModal,
       EditEntryModal
     } = require_goal_modals();
+    var { CreateDatasetNoteModal } = require_workflow_integration();
     var GOAL_VIEW2 = "iter-goal";
     var TYPE_LABELS = Object.fromEntries(DATASET_TYPES.map((t) => [t.id, t.label]));
     var KIND_LABELS = {
@@ -7879,7 +8938,7 @@ var require_goal_view = __commonJS({
           if (!this.file) return false;
           if (!changedFile) return true;
           if (changedFile.path === this.file.path) return true;
-          if (changedFile.path.startsWith(`${ROOT}/`)) return true;
+          if (changedFile.path.startsWith(`${ROOT2}/`)) return true;
           const doc = readGoalDocument2(this.app, this.file);
           return doc.datasets.some(
             (ds) => (ds.type === "note" || ds.type === "note_time") && ds.entries.some((e) => e.path === changedFile.path)
@@ -7977,7 +9036,7 @@ var require_goal_view = __commonJS({
             type: "button"
           });
           const icon = doneBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(icon, doc.done ? "check-circle-2" : "circle");
+          setIcon2(icon, doc.done ? "check-circle-2" : "circle");
           doneBtn.createSpan({ text: doc.done ? "Done" : "Mark done" });
           doneBtn.addEventListener("click", async () => {
             await toggleSubgoal(this.app, this.file);
@@ -7997,7 +9056,7 @@ var require_goal_view = __commonJS({
             type: "button"
           });
           const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(drop, "droplet");
+          setIcon2(drop, "droplet");
           waterBtn.createSpan({
             text: wateredToday ? "Watered today" : watered ? `Done (${cadenceLabel})` : !dueToday ? `Rest day (${cadenceLabel})` : `Water (${cadenceLabel})`
           });
@@ -8014,7 +9073,7 @@ var require_goal_view = __commonJS({
           attr: { title: "Open underlying Markdown file" }
         });
         const mdIcon = mdBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(mdIcon, "file-text");
+        setIcon2(mdIcon, "file-text");
         mdBtn.createSpan({ text: "Markdown" });
         mdBtn.addEventListener("click", () => void this.plugin.openFile(this.file));
         shell.createEl("h1", { text: doc.title, cls: "iter-goal-title" });
@@ -8124,12 +9183,12 @@ var require_goal_view = __commonJS({
         };
         const canvasBtn = headerActions.createEl("button", { cls: "iter-ghost-action iter-canvas-open-btn", type: "button" });
         const canvasIcon = canvasBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(canvasIcon, "sliders-horizontal");
+        setIcon2(canvasIcon, "sliders-horizontal");
         canvasBtn.createSpan({ text: "Canvas editor" });
         canvasBtn.addEventListener("click", () => openCanvasEditor());
         const addBtn = headerActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const plus = addBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(plus, "plus");
+        setIcon2(plus, "plus");
         addBtn.createSpan({ text: "Add widget" });
         addBtn.addEventListener("click", () => {
           const isTree = (doc.kind === "tree" || doc.kind === "garden") && Boolean(doc.treePath);
@@ -8161,7 +9220,7 @@ var require_goal_view = __commonJS({
               attr: { title: `One-click add "${sug.config.title}" widget` }
             });
             const iconSpan = chip.createSpan({ cls: "iter-btn-icon" });
-            setIcon(iconSpan, sug.icon || "plus");
+            setIcon2(iconSpan, sug.icon || "plus");
             chip.createSpan({ text: sug.label });
             chip.addEventListener("click", async () => {
               await addWidget2(this.app, this.file, sug.config);
@@ -8191,7 +9250,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Move widget earlier", title: "Move widget earlier" }
           });
-          setIcon(upBtn, "chevron-left");
+          setIcon2(upBtn, "chevron-left");
           upBtn.addEventListener("click", async () => {
             await moveWidget(this.app, this.file, widget.id, "up");
             this.render();
@@ -8203,7 +9262,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Move widget later", title: "Move widget later" }
           });
-          setIcon(downBtn, "chevron-right");
+          setIcon2(downBtn, "chevron-right");
           downBtn.addEventListener("click", async () => {
             await moveWidget(this.app, this.file, widget.id, "down");
             this.render();
@@ -8215,7 +9274,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Duplicate widget", title: "Duplicate widget" }
           });
-          setIcon(dupBtn, "copy");
+          setIcon2(dupBtn, "copy");
           dupBtn.addEventListener("click", async () => {
             await duplicateWidget(this.app, this.file, widget.id);
             this.render();
@@ -8330,7 +9389,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Edit flow in canvas", title: "Edit flow in canvas" }
           });
-          setIcon(editBtn, "sliders-horizontal");
+          setIcon2(editBtn, "sliders-horizontal");
           editBtn.addEventListener("click", () => {
             new WorkflowEditorModal2(this.app, {
               doc,
@@ -8347,7 +9406,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Remove widget", title: "Remove widget" }
           });
-          setIcon(removeBtn2, "x");
+          setIcon2(removeBtn2, "x");
           removeBtn2.addEventListener("click", async () => {
             await removeWidget(this.app, this.file, widget.id);
             this.render();
@@ -8375,7 +9434,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Edit widget", title: "Edit widget or convert to Canvas flow" }
           });
-          setIcon(editBtn, "pencil");
+          setIcon2(editBtn, "pencil");
           editBtn.addEventListener("click", () => {
             const isTree = (doc.kind === "tree" || doc.kind === "garden") && Boolean(doc.treePath);
             const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
@@ -8409,7 +9468,7 @@ var require_goal_view = __commonJS({
           type: "button",
           attr: { "aria-label": "Remove widget", title: "Remove widget" }
         });
-        setIcon(removeBtn, "x");
+        setIcon2(removeBtn, "x");
         removeBtn.addEventListener("click", async () => {
           await removeWidget(this.app, this.file, widget.id);
           this.render();
@@ -8485,7 +9544,7 @@ var require_goal_view = __commonJS({
         header.createEl("h2", { text: "Data", cls: "iter-section-heading" });
         const addBtn = header.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const plus = addBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(plus, "plus");
+        setIcon2(plus, "plus");
         addBtn.createSpan({ text: "Add data" });
         addBtn.addEventListener("click", () => {
           const isTree = doc.kind === "tree" && Boolean(doc.treePath);
@@ -8573,12 +9632,37 @@ var require_goal_view = __commonJS({
         });
         const right = top.createDiv({ cls: "iter-dataset-actions" });
         if (!isRollup) {
+          if (dataset.type === "note" || dataset.type === "note_time") {
+            const newNoteBtn = right.createEl("button", {
+              cls: "iter-icon-button iter-dataset-new-note-btn",
+              type: "button",
+              attr: {
+                "aria-label": `Create new note in ${dataset.name}`,
+                title: `Create new note in ${dataset.name}`
+              }
+            });
+            setIcon2(newNoteBtn, "file-plus");
+            newNoteBtn.addEventListener("click", () => {
+              new CreateDatasetNoteModal(this.app, {
+                goalFile: this.file,
+                doc,
+                dataset,
+                onCreated: async (createdFile) => {
+                  this.render();
+                  if (createdFile) void this.plugin.openFile(createdFile);
+                }
+              }).open();
+            });
+          }
           const addEntryBtn = right.createEl("button", {
             cls: "iter-icon-button iter-dataset-add-btn",
             type: "button",
-            attr: { "aria-label": `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` }
+            attr: {
+              "aria-label": `Add entry to ${dataset.name}`,
+              title: dataset.type === "note" || dataset.type === "note_time" ? `Link existing note to ${dataset.name}` : `Add to ${dataset.name}`
+            }
           });
-          setIcon(addEntryBtn, "plus");
+          setIcon2(addEntryBtn, "plus");
           addEntryBtn.addEventListener("click", () => this.triggerDatasetAdd(dataset));
         }
         const editDsBtn = right.createEl("button", {
@@ -8586,7 +9670,7 @@ var require_goal_view = __commonJS({
           type: "button",
           attr: { "aria-label": `Edit ${dataset.name}`, title: `Edit ${dataset.name} settings` }
         });
-        setIcon(editDsBtn, "pencil");
+        setIcon2(editDsBtn, "pencil");
         editDsBtn.addEventListener("click", () => {
           const isTree = doc?.kind === "tree" && Boolean(doc?.treePath);
           const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
@@ -8606,7 +9690,7 @@ var require_goal_view = __commonJS({
           type: "button",
           attr: { "aria-label": `Delete ${dataset.name}`, title: `Delete ${dataset.name}` }
         });
-        setIcon(removeDsBtn, "trash-2");
+        setIcon2(removeDsBtn, "trash-2");
         removeDsBtn.addEventListener("click", async () => {
           await removeDataset(this.app, this.file, dataset.id);
           if (this.openAddForDataset === dataset.id) this.openAddForDataset = null;
@@ -8627,7 +9711,7 @@ var require_goal_view = __commonJS({
             const rowBtn = sourceList.createEl("button", { cls: "iter-rollup-source-row", type: "button" });
             const mainWrap = rowBtn.createDiv({ cls: "iter-rollup-source-main" });
             const icon = mainWrap.createSpan({ cls: "iter-btn-icon" });
-            setIcon(icon, src.childKind === "habit" ? "droplet" : "target");
+            setIcon2(icon, src.childKind === "habit" ? "droplet" : "target");
             mainWrap.createSpan({
               text: `${src.childTitle} \u2014 ${src.datasetName}`,
               cls: "iter-rollup-source-title"
@@ -8718,7 +9802,7 @@ var require_goal_view = __commonJS({
           if (dataset.type === "note" || dataset.type === "note_time") {
             const linkBtn = row.createEl("button", { cls: "iter-entry-note-btn", type: "button" });
             const icon = linkBtn.createSpan({ cls: "iter-btn-icon" });
-            setIcon(icon, "file-text");
+            setIcon2(icon, "file-text");
             linkBtn.createSpan({ text: item.label, cls: "iter-entry-main" });
             linkBtn.addEventListener("click", () => {
               if (item.noteFile) void this.plugin.openFile(item.noteFile);
@@ -8748,7 +9832,7 @@ var require_goal_view = __commonJS({
             type: "button",
             attr: { "aria-label": "Edit entry", title: "Edit entry" }
           });
-          setIcon(editBtn, "pencil");
+          setIcon2(editBtn, "pencil");
           editBtn.addEventListener("click", () => {
             if (dataset.type === "note" || dataset.type === "note_time") {
               const baseKeys = Array.isArray(dataset.metricKeys) ? dataset.metricKeys : [];
@@ -8785,7 +9869,7 @@ var require_goal_view = __commonJS({
               title: item.isAuto ? "Exclude from auto-collect list" : "Remove entry"
             }
           });
-          setIcon(delBtn, "x");
+          setIcon2(delBtn, "x");
           delBtn.addEventListener("click", async () => {
             await removeDatasetEntry(this.app, this.file, dataset.id, entryIdx, item.path);
             this.render();
@@ -8802,12 +9886,12 @@ var require_goal_view = __commonJS({
         const actions = header.createDiv({ cls: "iter-goal-top-actions" });
         const addSubBtn = actions.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const p1 = addSubBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(p1, "plus");
+        setIcon2(p1, "plus");
         addSubBtn.createSpan({ text: "Subgoal" });
         addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
         const addHabBtn = actions.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const p2 = addHabBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(p2, "plus");
+        setIcon2(p2, "plus");
         addHabBtn.createSpan({ text: "Habit" });
         addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
         if (!tree.subgoals.length && !tree.habits.length) {
@@ -8821,7 +9905,7 @@ var require_goal_view = __commonJS({
             type: "button"
           });
           const icon = btn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(icon, sub.done ? "check-circle-2" : "target");
+          setIcon2(icon, sub.done ? "check-circle-2" : "target");
           btn.createSpan({ text: sub.title, cls: "iter-tree-link-name" });
           btn.createSpan({ text: "Subgoal", cls: "iter-tree-link-kind" });
           btn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
@@ -8832,7 +9916,7 @@ var require_goal_view = __commonJS({
             type: "button"
           });
           const icon = btn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(icon, "droplet");
+          setIcon2(icon, "droplet");
           btn.createSpan({ text: habit.title, cls: "iter-tree-link-name" });
           btn.createSpan({ text: habit.cadenceLabel, cls: "iter-tree-link-kind" });
           btn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
@@ -9251,8 +10335,8 @@ var require_tree_art = __commonJS({
 // src/garden-view.js
 var require_garden_view = __commonJS({
   "src/garden-view.js"(exports2, module2) {
-    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
-    var { MODULES, ROOT, WE_PATH, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
+    var { ItemView, Notice: Notice2, setIcon: setIcon2 } = require("obsidian");
+    var { MODULES, ROOT: ROOT2, WE_PATH, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
     var { listGarden: listGarden2 } = require_catalog();
     var { readGoalDocument: readGoalDocument2 } = require_data_model();
     var { renderDocumentWidgetsSection } = require_goal_view();
@@ -9294,7 +10378,7 @@ var require_garden_view = __commonJS({
       async onOpen() {
         this.contentEl.addClass("iter-garden");
         const schedule = (file) => {
-          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
+          if (!file || file.path === ROOT2 || file.path.startsWith(`${ROOT2}/`)) {
             this.scheduleRender();
           }
         };
@@ -9305,7 +10389,7 @@ var require_garden_view = __commonJS({
           if (oldPath === this.selectedTreePath) {
             this.selectedTreePath = file.path;
           }
-          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
+          if (oldPath === ROOT2 || oldPath.startsWith(`${ROOT2}/`)) {
             this.scheduleRender();
           } else {
             schedule(file);
@@ -9384,7 +10468,7 @@ var require_garden_view = __commonJS({
           type: "button"
         });
         const plusIcon = newTreeBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(plusIcon, "plus");
+        setIcon2(plusIcon, "plus");
         newTreeBtn.createSpan({ text: "New tree" });
         newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
       }
@@ -9448,7 +10532,7 @@ var require_garden_view = __commonJS({
               title: `Open ${tree.title} goal view`
             }
           });
-          setIcon(openBtn, "arrow-up-right");
+          setIcon2(openBtn, "arrow-up-right");
           openBtn.addEventListener("click", (event) => {
             event.stopPropagation();
             void this.plugin.openGoal(tree.indexFile);
@@ -9479,7 +10563,7 @@ var require_garden_view = __commonJS({
               }
             });
             const drop = chip.createSpan({ cls: "iter-chip-icon" });
-            setIcon(drop, "droplet");
+            setIcon2(drop, "droplet");
             chip.createSpan({ text: habit.title, cls: "iter-chip-label" });
             chip.addEventListener("click", async (event) => {
               event.stopPropagation();
@@ -9526,7 +10610,7 @@ var require_garden_view = __commonJS({
         if (tree.indexFile) {
           const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
           const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(noteIcon, "target");
+          setIcon2(noteIcon, "target");
           noteBtn.createSpan({ text: "Open goal" });
           noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
         }
@@ -9535,7 +10619,7 @@ var require_garden_view = __commonJS({
           type: "button",
           attr: { "aria-label": "Close inspector", title: "Close" }
         });
-        setIcon(closeBtn, "x");
+        setIcon2(closeBtn, "x");
         closeBtn.addEventListener("click", () => {
           this.selectedTreePath = null;
           this.render();
@@ -9557,7 +10641,7 @@ var require_garden_view = __commonJS({
         subHeader.createEl("h3", { text: "Subgoals" });
         const addSubBtn = subHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const subPlus = addSubBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(subPlus, "plus");
+        setIcon2(subPlus, "plus");
         addSubBtn.createSpan({ text: "Subgoal" });
         addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
         if (!tree.subgoals.length) {
@@ -9574,7 +10658,7 @@ var require_garden_view = __commonJS({
                 "aria-label": sub.done ? `Mark ${sub.title} incomplete` : `Complete ${sub.title}`
               }
             });
-            setIcon(checkBtn, sub.done ? "check-circle-2" : "circle");
+            setIcon2(checkBtn, sub.done ? "check-circle-2" : "circle");
             checkBtn.addEventListener("click", async () => {
               try {
                 await toggleSubgoal(this.app, sub.file);
@@ -9594,7 +10678,7 @@ var require_garden_view = __commonJS({
         habHeader.createEl("h3", { text: "Habits" });
         const addHabBtn = habHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
         const habPlus = addHabBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(habPlus, "plus");
+        setIcon2(habPlus, "plus");
         addHabBtn.createSpan({ text: "Habit" });
         addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
         if (!tree.habits.length) {
@@ -9617,7 +10701,7 @@ var require_garden_view = __commonJS({
               attr: { "aria-pressed": String(habit.wateredToday) }
             });
             const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
-            setIcon(drop, "droplet");
+            setIcon2(drop, "droplet");
             waterBtn.createSpan({
               text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
             });
@@ -9642,8 +10726,9 @@ var require_garden_view = __commonJS({
 });
 
 // src/plugin.js
-var { Plugin, Notice } = require("obsidian");
+var { Plugin, Menu, Notice, setIcon } = require("obsidian");
 var {
+  ROOT,
   ensureStructure,
   createTree,
   createSubgoal,
@@ -9663,6 +10748,14 @@ var {
   EditHabitScheduleModal,
   ConfirmDeleteModal
 } = require_modals();
+var {
+  findNoteIterConnections,
+  LinkNoteToDatasetModal,
+  QuickWaterHabitModal,
+  QuickLogEntryModal,
+  renderIterCodeBlock,
+  InsertEmbedModal
+} = require_workflow_integration();
 var { IterPanelView, PANEL_VIEW } = require_panel_view();
 var { GardenView, GARDEN_VIEW } = require_garden_view();
 var { GoalView, GOAL_VIEW } = require_goal_view();
@@ -9795,6 +10888,91 @@ var IterPlugin = class extends Plugin {
         }).open();
       }
     });
+    this.addCommand({
+      id: "water-habit",
+      name: "Water a habit\u2026",
+      callback: () => {
+        new QuickWaterHabitModal(this.app, () => {
+          this.scheduleRefresh();
+        }).open();
+      }
+    });
+    this.addCommand({
+      id: "quick-log-entry",
+      name: "Quick-log data entry to a goal or habit\u2026",
+      callback: () => {
+        new QuickLogEntryModal(this.app, {
+          plugin: this,
+          onLogged: () => this.scheduleRefresh()
+        }).open();
+      }
+    });
+    this.addCommand({
+      id: "link-current-note",
+      name: "Link current note to a goal or habit\u2026",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile?.();
+        if (!file || file.extension !== "md" || file.path.startsWith(`${ROOT}/`)) return false;
+        if (!checking) {
+          new LinkNoteToDatasetModal(this.app, {
+            noteFile: file,
+            onLinked: () => {
+              this.scheduleRefresh();
+              this.updateStatusBar();
+            }
+          }).open();
+        }
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "insert-iter-embed",
+      name: "Insert embedded widget or habit tracker into current note",
+      editorCallback: (editor) => {
+        new InsertEmbedModal(this.app, {
+          onInsert: (block) => {
+            editor.replaceSelection(block);
+          }
+        }).open();
+      }
+    });
+    if (typeof this.registerMarkdownCodeBlockProcessor === "function") {
+      this.registerMarkdownCodeBlockProcessor("iter", (source, el) => {
+        renderIterCodeBlock(this, source, el);
+      });
+    }
+    if (typeof this.addStatusBarItem === "function") {
+      this.statusBarEl = this.addStatusBarItem();
+      if (this.statusBarEl) {
+        this.statusBarEl.addClass?.("iter-status-bar-item");
+        this.statusBarEl.style.display = "none";
+        this.statusBarEl.addEventListener?.("click", (event) => {
+          this.openStatusBarMenu(event);
+        });
+      }
+    }
+    if (typeof this.app?.workspace?.on === "function") {
+      this.registerEvent(
+        this.app.workspace.on("file-menu", (menu, file) => {
+          this.populateFileContextMenu(menu, file);
+        })
+      );
+      this.registerEvent(
+        this.app.workspace.on("editor-menu", (menu, _editor, info) => {
+          if (info?.file) this.populateFileContextMenu(menu, info.file);
+        })
+      );
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", () => {
+          this.updateStatusBar();
+        })
+      );
+      this.registerEvent(
+        this.app.workspace.on("file-open", () => {
+          this.updateStatusBar();
+        })
+      );
+    }
     const onReady = () => {
       if (!this.alive) return;
       void ensureStructure(this.app.vault).then(() => this.activatePanel(false)).catch((error) => console.error("Iter init:", error));
@@ -9830,7 +11008,77 @@ var IterPlugin = class extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(GOAL_VIEW)) {
         leaf.view?.scheduleRender?.();
       }
+      this.updateStatusBar();
     }, 80);
+  }
+  populateFileContextMenu(menu, file) {
+    if (!menu || !file || file.extension !== "md") return;
+    if (file.path.startsWith(`${ROOT}/`) && findTreeContext(this.app, file)) {
+      menu.addItem((item) => {
+        item.setTitle("Iter: Open Goal View").setIcon("sprout").onClick(() => {
+          void this.openGoal(file);
+        });
+      });
+      return;
+    }
+    if (file.path.startsWith(`${ROOT}/`)) return;
+    const connections = findNoteIterConnections(this.app, file);
+    for (const conn of connections) {
+      menu.addItem((item) => {
+        item.setTitle(`Iter: Open "${conn.goalTitle}" (${conn.dataset.name})`).setIcon("sprout").onClick(() => {
+          void this.openGoal(conn.goalFile);
+        });
+      });
+      if (conn.goalKind === "habit") {
+        menu.addItem((item) => {
+          item.setTitle(`Iter: Water "${conn.goalTitle}"`).setIcon("droplet").onClick(async () => {
+            await waterHabit(this.app, conn.goalFile);
+            new Notice(`Watered "${conn.goalTitle}"!`);
+            this.scheduleRefresh();
+          });
+        });
+      }
+    }
+    menu.addItem((item) => {
+      item.setTitle("Iter: Link note to goal or habit\u2026").setIcon("link").onClick(() => {
+        new LinkNoteToDatasetModal(this.app, {
+          noteFile: file,
+          onLinked: () => {
+            this.scheduleRefresh();
+            this.updateStatusBar();
+          }
+        }).open();
+      });
+    });
+  }
+  updateStatusBar() {
+    if (!this.statusBarEl) return;
+    const activeFile = this.app.workspace?.getActiveFile?.();
+    if (!activeFile || activeFile.extension !== "md" || activeFile.path.startsWith(`${ROOT}/`)) {
+      this.statusBarEl.style.display = "none";
+      this.statusBarEl.empty?.();
+      return;
+    }
+    const connections = findNoteIterConnections(this.app, activeFile);
+    if (!connections.length) {
+      this.statusBarEl.style.display = "none";
+      this.statusBarEl.empty?.();
+      return;
+    }
+    this.statusBarEl.empty?.();
+    this.statusBarEl.style.display = "";
+    const iconSpan = this.statusBarEl.createSpan({ cls: "iter-status-bar-icon" });
+    setIcon(iconSpan, "sprout");
+    const first = connections[0];
+    const label = connections.length === 1 ? `${first.goalTitle} \xB7 ${first.dataset.name}` : `${first.goalTitle} (+${connections.length - 1} more)`;
+    this.statusBarEl.createSpan({ text: label, cls: "iter-status-bar-text" });
+  }
+  openStatusBarMenu(event) {
+    const activeFile = this.app.workspace?.getActiveFile?.();
+    if (!activeFile) return;
+    const menu = new Menu();
+    this.populateFileContextMenu(menu, activeFile);
+    menu.showAtMouseEvent(event);
   }
   async activatePanel(reveal = true) {
     const { workspace } = this.app;

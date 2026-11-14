@@ -49,6 +49,7 @@ const {
   NoteTimeMetaModal,
   EditEntryModal,
 } = require('./goal-modals');
+const { CreateDatasetNoteModal } = require('./workflow-integration');
 
 const GOAL_VIEW = 'iter-goal';
 
@@ -941,10 +942,38 @@ class GoalView extends ItemView {
 
     const right = top.createDiv({ cls: 'iter-dataset-actions' });
     if (!isRollup) {
+      if (dataset.type === 'note' || dataset.type === 'note_time') {
+        const newNoteBtn = right.createEl('button', {
+          cls: 'iter-icon-button iter-dataset-new-note-btn',
+          type: 'button',
+          attr: {
+            'aria-label': `Create new note in ${dataset.name}`,
+            title: `Create new note in ${dataset.name}`,
+          },
+        });
+        setIcon(newNoteBtn, 'file-plus');
+        newNoteBtn.addEventListener('click', () => {
+          new CreateDatasetNoteModal(this.app, {
+            goalFile: this.file,
+            doc,
+            dataset,
+            onCreated: async createdFile => {
+              this.render();
+              if (createdFile) void this.plugin.openFile(createdFile);
+            },
+          }).open();
+        });
+      }
+
       const addEntryBtn = right.createEl('button', {
         cls: 'iter-icon-button iter-dataset-add-btn',
         type: 'button',
-        attr: { 'aria-label': `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` },
+        attr: {
+          'aria-label': `Add entry to ${dataset.name}`,
+          title: dataset.type === 'note' || dataset.type === 'note_time'
+            ? `Link existing note to ${dataset.name}`
+            : `Add to ${dataset.name}`,
+        },
       });
       setIcon(addEntryBtn, 'plus');
       addEntryBtn.addEventListener('click', () => this.triggerDatasetAdd(dataset));

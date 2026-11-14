@@ -997,6 +997,86 @@ test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorM
     await fire(autoDsModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
     assert.ok(submittedAutoDs?.autoQuery);
     assert.equal(submittedAutoDs.autoQuery.folder, 'Books/As Flores do Mal');
+
+    // m) Obsidian Workflow Integration: CreateDatasetNoteModal, findNoteIterConnections, file-menu, and ```iter codeblock embeds
+    const {
+      CreateDatasetNoteModal,
+      findNoteIterConnections,
+      LinkNoteToDatasetModal,
+      renderIterCodeBlock,
+    } = require('../src/workflow-integration');
+
+    const poemsAutoDs = await addDataset(app, essayHabit, {
+      name: 'Poems Analysis',
+      type: 'note_time',
+      metricKeys: ['stanzas'],
+      autoQuery: { folder: 'Books/As Flores do Mal', tag: '#poem' },
+    });
+
+    // 1. Create a new note directly from the dataset (pre-fills folder Books/As Flores do Mal, writes frontmatter + tags, waters habit)
+    let createdPoemFile = null;
+    const createNoteModal = new CreateDatasetNoteModal(app, {
+      goalFile: essayHabit,
+      dataset: poemsAutoDs,
+      onCreated: async f => {
+        createdPoemFile = f;
+      },
+    });
+    createNoteModal.contentEl = createMockElement('div');
+    createNoteModal.onOpen();
+    const titleInp = createNoteModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-new-note-title-input'))[0];
+    const folderInp = createNoteModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-new-note-folder-input'))[0];
+    const propInp = createNoteModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-new-note-prop-input'))[0];
+    assert.equal(folderInp.value, 'Books/As Flores do Mal', 'Should pre-fill folder from dataset autoQuery');
+    titleInp.value = 'Le Cygne';
+    propInp.value = '13';
+    await fire(createNoteModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+
+    assert.ok(createdPoemFile, 'New note should be created in the vault');
+    assert.equal(createdPoemFile.path, 'Books/As Flores do Mal/Le Cygne.md');
+    assert.ok(createdPoemFile.content.includes('stanzas: 13'));
+    assert.ok(createdPoemFile.content.includes('- poem'));
+
+    // 2. Reverse lookup & right-click file-menu on a vault note
+    const connections = findNoteIterConnections(app, createdPoemFile);
+    assert.ok(connections.some(c => c.goalTitle === 'Read Philosophical Essay' && c.dataset.name === 'Poems Analysis'));
+
+    const pluginForMenu = new IterPlugin(app, { id: 'iter', name: 'Iter' });
+    const fileMenu = new Menu();
+    pluginForMenu.populateFileContextMenu(fileMenu, createdPoemFile);
+    const menuTitles = fileMenu.items.map(i => i.title);
+    assert.ok(menuTitles.some(t => t && t.includes('Iter: Open "Read Philosophical Essay"')));
+    assert.ok(menuTitles.some(t => t && t.includes('Iter: Water "Read Philosophical Essay"')));
+    assert.ok(menuTitles.includes('Iter: Link note to goal or habit…'));
+
+    // 3. Link an existing standalone vault note via LinkNoteToDatasetModal
+    const standaloneNote = await app.vault.create('Notes/Standalone Essay.md', '# Standalone Essay\n');
+    let linkedRes = null;
+    const linkModal = new LinkNoteToDatasetModal(app, {
+      noteFile: standaloneNote,
+      onLinked: res => {
+        linkedRes = res;
+      },
+    });
+    linkModal.contentEl = createMockElement('div');
+    linkModal.onOpen();
+    await fire(linkModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.ok(linkedRes?.dataset, 'Standalone note should be linked to the selected dataset');
+
+    // 4. Embedded ```iter codeblock renders live Habits for Today and Goal cards inside any Markdown note
+    const embedContainer = createMockElement('div');
+    renderIterCodeBlock(pluginForMenu, 'view: today', embedContainer);
+    assert.ok(
+      embedContainer.findAll(el => el.className.split(/\s+/).includes('iter-embed-title') && el.textContent === 'Habits for Today').length === 1,
+      '```iter view: today should render Habits for Today card',
+    );
+
+    const goalEmbedContainer = createMockElement('div');
+    renderIterCodeBlock(pluginForMenu, 'goal: Read Philosophical Essay', goalEmbedContainer);
+    assert.ok(
+      goalEmbedContainer.findAll(el => el.className.split(/\s+/).includes('iter-embed-new-note-btn')).length >= 1,
+      '```iter goal: Read Philosophical Essay should render dataset with + New Note button',
+    );
   } finally {
     global.document = prevDocument;
   }

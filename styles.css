@@ -3071,5 +3071,113 @@ button.iter-habit-water-inline-btn.is-watered {
   letter-spacing: 0.04em;
 }
 
+/* Embedded ```iter Markdown Codeblock Cards & Status Bar */
+.iter-embed-card {
+  margin: 10px 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: color-mix(in srgb, var(--background-secondary) 65%, var(--background-primary));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.iter-embed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.iter-embed-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.iter-embed-title {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.iter-embed-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iter-embed-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.iter-embed-stat-pill {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.iter-embed-stat-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.iter-embed-stat-val {
+  font-size: 13px;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.iter-embed-ds-box {
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iter-embed-ds-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-embed-ds-title {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  color: var(--text-muted);
+}
+
+.iter-status-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 6px;
+  transition: background 120ms ease;
+}
+
+.iter-status-bar-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.iter-status-bar-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--interactive-accent);
+}
+
+
 
 

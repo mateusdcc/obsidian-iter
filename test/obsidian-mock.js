@@ -13,11 +13,15 @@ class Plugin {
     this.manifest = manifest;
     this.commands = [];
     this.views = new Map();
+    this.codeBlockProcessors = new Map();
   }
   registerView(type, factory) { this.views.set(type, factory); }
   registerEvent() {}
   addCommand(cmd) { this.commands.push(cmd); }
   addRibbonIcon() {}
+  registerMarkdownCodeBlockProcessor(lang, handler) {
+    this.codeBlockProcessors.set(lang, handler);
+  }
 }
 
 class Modal {

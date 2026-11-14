@@ -1,5 +1,6 @@
-const { Plugin, Notice } = require('obsidian');
+const { Plugin, Menu, Notice, setIcon } = require('obsidian');
 const {
+  ROOT,
   ensureStructure,
   createTree,
   createSubgoal,
@@ -19,6 +20,14 @@ const {
   EditHabitScheduleModal,
   ConfirmDeleteModal,
 } = require('./modals');
+const {
+  findNoteIterConnections,
+  LinkNoteToDatasetModal,
+  QuickWaterHabitModal,
+  QuickLogEntryModal,
+  renderIterCodeBlock,
+  InsertEmbedModal,
+} = require('./workflow-integration');
 const { IterPanelView, PANEL_VIEW } = require('./panel-view');
 const { GardenView, GARDEN_VIEW } = require('./garden-view');
 const { GoalView, GOAL_VIEW } = require('./goal-view');
@@ -168,6 +177,98 @@ class IterPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'water-habit',
+      name: 'Water a habit…',
+      callback: () => {
+        new QuickWaterHabitModal(this.app, () => {
+          this.scheduleRefresh();
+        }).open();
+      },
+    });
+
+    this.addCommand({
+      id: 'quick-log-entry',
+      name: 'Quick-log data entry to a goal or habit…',
+      callback: () => {
+        new QuickLogEntryModal(this.app, {
+          plugin: this,
+          onLogged: () => this.scheduleRefresh(),
+        }).open();
+      },
+    });
+
+    this.addCommand({
+      id: 'link-current-note',
+      name: 'Link current note to a goal or habit…',
+      checkCallback: checking => {
+        const file = this.app.workspace.getActiveFile?.();
+        if (!file || file.extension !== 'md' || file.path.startsWith(`${ROOT}/`)) return false;
+        if (!checking) {
+          new LinkNoteToDatasetModal(this.app, {
+            noteFile: file,
+            onLinked: () => {
+              this.scheduleRefresh();
+              this.updateStatusBar();
+            },
+          }).open();
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'insert-iter-embed',
+      name: 'Insert embedded widget or habit tracker into current note',
+      editorCallback: editor => {
+        new InsertEmbedModal(this.app, {
+          onInsert: block => {
+            editor.replaceSelection(block);
+          },
+        }).open();
+      },
+    });
+
+    if (typeof this.registerMarkdownCodeBlockProcessor === 'function') {
+      this.registerMarkdownCodeBlockProcessor('iter', (source, el) => {
+        renderIterCodeBlock(this, source, el);
+      });
+    }
+
+    if (typeof this.addStatusBarItem === 'function') {
+      this.statusBarEl = this.addStatusBarItem();
+      if (this.statusBarEl) {
+        this.statusBarEl.addClass?.('iter-status-bar-item');
+        this.statusBarEl.style.display = 'none';
+        this.statusBarEl.addEventListener?.('click', event => {
+          this.openStatusBarMenu(event);
+        });
+      }
+    }
+
+    if (typeof this.app?.workspace?.on === 'function') {
+      this.registerEvent(
+        this.app.workspace.on('file-menu', (menu, file) => {
+          this.populateFileContextMenu(menu, file);
+        }),
+      );
+      this.registerEvent(
+        this.app.workspace.on('editor-menu', (menu, _editor, info) => {
+          if (info?.file) this.populateFileContextMenu(menu, info.file);
+        }),
+      );
+      this.registerEvent(
+        this.app.workspace.on('active-leaf-change', () => {
+          this.updateStatusBar();
+        }),
+      );
+      this.registerEvent(
+        this.app.workspace.on('file-open', () => {
+          this.updateStatusBar();
+        }),
+      );
+    }
+
     const onReady = () => {
       if (!this.alive) return;
       void ensureStructure(this.app.vault)
@@ -208,7 +309,100 @@ class IterPlugin extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(GOAL_VIEW)) {
         leaf.view?.scheduleRender?.();
       }
+      this.updateStatusBar();
     }, 80);
+  }
+
+  populateFileContextMenu(menu, file) {
+    if (!menu || !file || file.extension !== 'md') return;
+
+    if (file.path.startsWith(`${ROOT}/`) && findTreeContext(this.app, file)) {
+      menu.addItem(item => {
+        item
+          .setTitle('Iter: Open Goal View')
+          .setIcon('sprout')
+          .onClick(() => {
+            void this.openGoal(file);
+          });
+      });
+      return;
+    }
+
+    if (file.path.startsWith(`${ROOT}/`)) return;
+
+    const connections = findNoteIterConnections(this.app, file);
+    for (const conn of connections) {
+      menu.addItem(item => {
+        item
+          .setTitle(`Iter: Open "${conn.goalTitle}" (${conn.dataset.name})`)
+          .setIcon('sprout')
+          .onClick(() => {
+            void this.openGoal(conn.goalFile);
+          });
+      });
+      if (conn.goalKind === 'habit') {
+        menu.addItem(item => {
+          item
+            .setTitle(`Iter: Water "${conn.goalTitle}"`)
+            .setIcon('droplet')
+            .onClick(async () => {
+              await waterHabit(this.app, conn.goalFile);
+              new Notice(`Watered "${conn.goalTitle}"!`);
+              this.scheduleRefresh();
+            });
+        });
+      }
+    }
+
+    menu.addItem(item => {
+      item
+        .setTitle('Iter: Link note to goal or habit…')
+        .setIcon('link')
+        .onClick(() => {
+          new LinkNoteToDatasetModal(this.app, {
+            noteFile: file,
+            onLinked: () => {
+              this.scheduleRefresh();
+              this.updateStatusBar();
+            },
+          }).open();
+        });
+    });
+  }
+
+  updateStatusBar() {
+    if (!this.statusBarEl) return;
+    const activeFile = this.app.workspace?.getActiveFile?.();
+    if (!activeFile || activeFile.extension !== 'md' || activeFile.path.startsWith(`${ROOT}/`)) {
+      this.statusBarEl.style.display = 'none';
+      this.statusBarEl.empty?.();
+      return;
+    }
+
+    const connections = findNoteIterConnections(this.app, activeFile);
+    if (!connections.length) {
+      this.statusBarEl.style.display = 'none';
+      this.statusBarEl.empty?.();
+      return;
+    }
+
+    this.statusBarEl.empty?.();
+    this.statusBarEl.style.display = '';
+    const iconSpan = this.statusBarEl.createSpan({ cls: 'iter-status-bar-icon' });
+    setIcon(iconSpan, 'sprout');
+    const first = connections[0];
+    const label = connections.length === 1
+      ? `${first.goalTitle} · ${first.dataset.name}`
+      : `${first.goalTitle} (+${connections.length - 1} more)`;
+    this.statusBarEl.createSpan({ text: label, cls: 'iter-status-bar-text' });
+  }
+
+  openStatusBarMenu(event) {
+    const activeFile = this.app.workspace?.getActiveFile?.();
+    if (!activeFile) return;
+    const menu = new Menu();
+    this.populateFileContextMenu(menu, activeFile);
+    menu.showAtMouseEvent(event);
   }
 
   async activatePanel(reveal = true) {
