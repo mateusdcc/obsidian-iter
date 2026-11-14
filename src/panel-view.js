@@ -141,11 +141,61 @@ class IterPanelView extends ItemView {
       return;
     }
 
-    for (const tree of garden.trees) {
-      this.renderTree(body, tree);
+    if (garden.trees.length > 0) {
+      const filterRow = container.createDiv({ cls: 'iter-panel-filter-row' });
+      container.insertBefore?.(filterRow, body);
+      const searchIn = filterRow.createEl('input', {
+        type: 'search',
+        placeholder: 'Filter goals & habits…',
+        cls: 'iter-panel-search',
+      });
+      searchIn.value = this.filterQuery || '';
+      const dueBtn = filterRow.createEl('button', {
+        text: 'Due',
+        type: 'button',
+        cls: `iter-panel-due-toggle${this.onlyDueToday ? ' is-active' : ''}`,
+        attr: { title: 'Show only habits due today', 'aria-pressed': String(this.onlyDueToday) },
+      });
+      searchIn.addEventListener('input', () => {
+        this.filterQuery = searchIn.value;
+        this.renderListItems(body, garden);
+      });
+      dueBtn.addEventListener('click', () => {
+        this.onlyDueToday = !this.onlyDueToday;
+        dueBtn.toggleClass?.('is-active', this.onlyDueToday);
+        dueBtn.setAttribute('aria-pressed', String(this.onlyDueToday));
+        this.renderListItems(body, garden);
+      });
     }
 
-    if (garden.looseItems.length) {
+    this.renderListItems(body, garden);
+  }
+
+  renderListItems(body, garden) {
+    body.empty();
+    const q = (this.filterQuery || '').trim().toLowerCase();
+    const onlyDue = Boolean(this.onlyDueToday);
+
+    for (const tree of garden.trees) {
+      if (!q && !onlyDue) {
+        this.renderTree(body, tree);
+        continue;
+      }
+      const treeMatch = q && tree.title.toLowerCase().includes(q);
+      const subgoals = onlyDue
+        ? []
+        : tree.subgoals.filter(s => treeMatch || !q || s.title.toLowerCase().includes(q));
+      const habits = tree.habits.filter(h => {
+        if (onlyDue && (!h.isDueToday || h.wateredInPeriod || h.wateredToday)) return false;
+        if (q && !treeMatch && !h.title.toLowerCase().includes(q)) return false;
+        return true;
+      });
+      if (treeMatch || subgoals.length > 0 || habits.length > 0) {
+        this.renderTree(body, { ...tree, subgoals, habits, extras: q || onlyDue ? [] : tree.extras });
+      }
+    }
+
+    if (!q && !onlyDue && garden.looseItems.length) {
       const misc = body.createDiv({ cls: 'iter-misc-section' });
       for (const item of garden.looseItems) {
         this.renderExtraEntry(misc, item);
@@ -388,6 +438,14 @@ class IterPanelView extends ItemView {
         () => this.plugin.promptDeleteGoalItem('habit', habit),
       );
     });
+
+    if (habit.streak > 0) {
+      row.createSpan({
+        text: `${habit.streak}🔥`,
+        cls: 'iter-streak-mini-badge',
+        attr: { title: `${habit.streak} streak` },
+      });
+    }
 
     row.createSpan({
       text: habit.cadenceShort,

@@ -2783,3 +2783,43 @@ button.iter-flow-port.is-armed {
   align-items: center;
   gap: 4px;
 }
+
+.iter-panel-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 6px;
+}
+
+input.iter-panel-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  border-radius: var(--radius-s);
+}
+
+button.iter-panel-due-toggle {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+button.iter-panel-due-toggle.is-active {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-secondary));
+}
+
+.iter-streak-mini-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 2px;
+}

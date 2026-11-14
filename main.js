@@ -611,7 +611,7 @@ var require_storage = __commonJS({
       });
       return result;
     }
-    async function waterHabit(app, file, now = /* @__PURE__ */ new Date()) {
+    async function waterHabit2(app, file, now = /* @__PURE__ */ new Date()) {
       const today = toDateKey(now);
       let wateredToday = false;
       await app.fileManager.processFrontMatter(file, (frontmatter) => {
@@ -670,1861 +670,7 @@ var require_storage = __commonJS({
       computeHabitStreak,
       computeHabitStreakDetails,
       toggleSubgoal,
-      waterHabit
-    };
-  }
-});
-
-// src/catalog.js
-var require_catalog = __commonJS({
-  "src/catalog.js"(exports2, module2) {
-    var {
-      ROOT,
-      WE_PATH,
-      isFolder,
-      normalizeModule,
-      normalizeFrequency,
-      normalizeDays,
-      normalizeStyle,
-      formatCadenceLabel,
-      formatCadenceShort,
-      isScheduledOnDate,
-      normalizeWaterLog,
-      isWateredInPeriod,
-      computeHabitStreak,
-      toDateKey,
-      parseDateKey
-    } = require_storage();
-    function compareNames(a, b) {
-      return a.localeCompare(b, void 0, { sensitivity: "base", numeric: true });
-    }
-    function getFrontmatter(app, file) {
-      if (!file) return null;
-      return app.metadataCache.getFileCache(file)?.frontmatter ?? null;
-    }
-    function readString(fm, key, fallback = "") {
-      const val = fm?.[key];
-      return typeof val === "string" && val.trim() ? val.trim() : fallback;
-    }
-    function isHiddenName(name) {
-      return !name || name.startsWith("_") || name.startsWith(".");
-    }
-    function stripExt(file) {
-      return file.name.endsWith(".md") ? file.name.slice(0, -3) : file.name;
-    }
-    function parseTargets(raw) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
-      return Object.entries(raw).filter(([user, target]) => typeof user === "string" && user.trim() && target !== void 0 && target !== null && String(target).trim()).map(([user, target]) => ({ user: user.trim(), target: String(target).trim() }));
-    }
-    function readSubgoals(app, treeFolder) {
-      const dir = treeFolder.children.find((child) => isFolder(child) && child.name === "subgoals");
-      if (!dir) return [];
-      return dir.children.filter((child) => !isFolder(child) && child.extension === "md" && !isHiddenName(child.name)).map((file) => {
-        const fm = getFrontmatter(app, file);
-        return {
-          file,
-          title: readString(fm, "title", stripExt(file)),
-          done: Boolean(fm?.done),
-          target: readString(fm, "target", "")
-        };
-      }).sort((a, b) => Number(a.done) - Number(b.done) || compareNames(a.title, b.title));
-    }
-    function readHabits(app, treeFolder, now = /* @__PURE__ */ new Date()) {
-      const dir = treeFolder.children.find((child) => isFolder(child) && child.name === "habits");
-      if (!dir) return [];
-      const today = toDateKey(now);
-      return dir.children.filter((child) => !isFolder(child) && child.extension === "md" && !isHiddenName(child.name)).map((file) => {
-        const fm = getFrontmatter(app, file);
-        const frequency = normalizeFrequency(fm?.frequency);
-        const days = normalizeDays(fm?.days);
-        const waterLog = normalizeWaterLog(fm?.water_log);
-        const lastWatered = typeof fm?.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : waterLog.length ? waterLog[waterLog.length - 1] : null;
-        const isDueToday = isScheduledOnDate(frequency, days, today);
-        const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now, days);
-        const wateredToday = waterLog.includes(today) || lastWatered === today;
-        const streak = computeHabitStreak(
-          lastWatered && !waterLog.includes(lastWatered) ? [...waterLog, lastWatered] : waterLog,
-          frequency,
-          now,
-          days
-        );
-        return {
-          file,
-          title: readString(fm, "title", stripExt(file)),
-          frequency,
-          days,
-          cadenceLabel: formatCadenceLabel(frequency, days),
-          cadenceShort: formatCadenceShort(frequency, days),
-          isDueToday,
-          target: readString(fm, "target", ""),
-          lastWatered,
-          waterLog,
-          wateredInPeriod,
-          wateredToday,
-          streak
-        };
-      }).sort((a, b) => compareNames(a.title, b.title));
-    }
-    function readExtraEntries(directory, reservedNames = /* @__PURE__ */ new Set()) {
-      if (!isFolder(directory)) return [];
-      const folders = [];
-      const files = [];
-      for (const child of directory.children) {
-        if (isHiddenName(child.name) || reservedNames.has(child.name)) continue;
-        if (isFolder(child)) {
-          folders.push({
-            kind: "folder",
-            name: child.name,
-            path: child.path,
-            entry: child,
-            children: readExtraEntries(child)
-          });
-        } else {
-          files.push({
-            kind: "file",
-            name: stripExt(child),
-            path: child.path,
-            file: child
-          });
-        }
-      }
-      folders.sort((a, b) => compareNames(a.name, b.name));
-      files.sort((a, b) => compareNames(a.name, b.name));
-      return [...folders, ...files];
-    }
-    function computeTreeStats(subgoals, habits) {
-      const subgoalTotal = subgoals.length;
-      const subgoalDone = subgoals.filter((item) => item.done).length;
-      const dueHabits = habits.filter((item) => item.isDueToday);
-      const dueTotal = dueHabits.length;
-      const dueWatered = dueHabits.filter((item) => item.wateredInPeriod).length;
-      const habitTotal = dueTotal > 0 ? dueTotal : habits.length;
-      const habitWatered = dueTotal > 0 ? dueWatered : habits.filter((item) => item.wateredInPeriod).length;
-      const totalWaterings = habits.reduce((sum, item) => sum + item.waterLog.length, 0);
-      let progress = 0;
-      if (subgoalTotal > 0 && habitTotal > 0) {
-        const subgoalRatio = subgoalDone / subgoalTotal;
-        const periodRatio = habitWatered / habitTotal;
-        const consistency = 1 - Math.exp(-totalWaterings / 8);
-        progress = 0.5 * subgoalRatio + 0.25 * periodRatio + 0.25 * consistency;
-      } else if (subgoalTotal > 0) {
-        progress = subgoalDone / subgoalTotal;
-      } else if (habitTotal > 0) {
-        const periodRatio = habitWatered / habitTotal;
-        const consistency = 1 - Math.exp(-totalWaterings / 8);
-        progress = 0.45 * periodRatio + 0.55 * consistency;
-      }
-      const growth = Math.max(0.18, Math.min(1, 0.18 + 0.82 * progress));
-      let stageLabel = "Seedling";
-      if (growth >= 0.9) stageLabel = "Flourishing";
-      else if (growth >= 0.7) stageLabel = "Canopy";
-      else if (growth >= 0.48) stageLabel = "Young Tree";
-      else if (growth >= 0.28) stageLabel = "Sapling";
-      let hydrationState = "calm";
-      if (habits.length > 0) {
-        if (dueTotal === 0) {
-          hydrationState = habitWatered > 0 ? "hydrated" : "calm";
-        } else if (dueWatered === dueTotal) {
-          hydrationState = "hydrated";
-        } else if (dueWatered > 0) {
-          hydrationState = "partial";
-        } else {
-          hydrationState = "thirsty";
-        }
-      }
-      return {
-        subgoalDone,
-        subgoalTotal,
-        habitWatered,
-        habitTotal,
-        totalWaterings,
-        growth,
-        stageLabel,
-        hydrationState
-      };
-    }
-    function isTreeFolder(folder) {
-      if (!isFolder(folder)) return false;
-      return folder.children.some(
-        (child) => !isFolder(child) && child.name === "_tree.md" || isFolder(child) && (child.name === "subgoals" || child.name === "habits")
-      );
-    }
-    function listGarden2(app, now = /* @__PURE__ */ new Date()) {
-      const indexFile = app.vault.getAbstractFileByPath(WE_PATH);
-      const indexFm = !isFolder(indexFile) ? getFrontmatter(app, indexFile) : null;
-      const members = Array.isArray(indexFm?.members) ? indexFm.members.filter((m) => typeof m === "string" && m.trim()).map((m) => m.trim()) : [];
-      const root = app.vault.getAbstractFileByPath(ROOT);
-      if (!isFolder(root)) {
-        return { indexFile: isFolder(indexFile) ? null : indexFile, members, trees: [], looseItems: [] };
-      }
-      const trees = [];
-      const looseFolders = [];
-      const looseFiles = [];
-      for (const entry of root.children) {
-        if (isHiddenName(entry.name)) continue;
-        if (isFolder(entry) && isTreeFolder(entry)) {
-          const treeFile = entry.children.find((child) => !isFolder(child) && child.name === "_tree.md") ?? null;
-          const fm = getFrontmatter(app, treeFile);
-          const subgoals = readSubgoals(app, entry);
-          const habits = readHabits(app, entry, now);
-          const extras = readExtraEntries(entry, /* @__PURE__ */ new Set(["subgoals", "habits"]));
-          trees.push({
-            path: entry.path,
-            folder: entry,
-            indexFile: treeFile,
-            title: readString(fm, "title", entry.name),
-            module: normalizeModule(fm?.module),
-            goal: readString(fm, "goal", ""),
-            style: normalizeStyle(fm?.style),
-            endless: Boolean(fm?.endless),
-            due: fm?.endless ? "" : typeof fm?.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "",
-            targets: parseTargets(fm?.targets),
-            subgoals,
-            habits,
-            extras,
-            stats: computeTreeStats(subgoals, habits)
-          });
-        } else if (isFolder(entry)) {
-          looseFolders.push({
-            kind: "folder",
-            name: entry.name,
-            path: entry.path,
-            entry,
-            children: readExtraEntries(entry)
-          });
-        } else {
-          looseFiles.push({
-            kind: "file",
-            name: stripExt(entry),
-            path: entry.path,
-            file: entry
-          });
-        }
-      }
-      trees.sort((a, b) => compareNames(a.title, b.title));
-      looseFolders.sort((a, b) => compareNames(a.name, b.name));
-      looseFiles.sort((a, b) => compareNames(a.name, b.name));
-      return {
-        indexFile: isFolder(indexFile) ? null : indexFile,
-        members,
-        trees,
-        looseItems: [...looseFolders, ...looseFiles]
-      };
-    }
-    function findTreeContext2(app, file) {
-      const path = file?.path;
-      if (typeof path !== "string" || !path.startsWith(`${ROOT}/`)) return null;
-      const rest = path.slice(ROOT.length + 1);
-      const treeName = rest.split("/")[0];
-      if (!treeName || isHiddenName(treeName)) return null;
-      const treePath = `${ROOT}/${treeName}`;
-      const folder = app.vault.getAbstractFileByPath(treePath);
-      return isTreeFolder(folder) ? treePath : null;
-    }
-    module2.exports = {
-      compareNames,
-      computeTreeStats,
-      isTreeFolder,
-      listGarden: listGarden2,
-      findTreeContext: findTreeContext2
-    };
-  }
-});
-
-// src/schedule-picker.js
-var require_schedule_picker = __commonJS({
-  "src/schedule-picker.js"(exports2, module2) {
-    var { WEEKDAYS, normalizeFrequency, normalizeDays, formatCadenceLabel } = require_storage();
-    var CADENCE_OPTIONS = [
-      { id: "daily", label: "Daily" },
-      { id: "weekdays", label: "Specific days" },
-      { id: "weekly", label: "Weekly" },
-      { id: "monthly", label: "Monthly" }
-    ];
-    function renderSchedulePicker(container, { frequency = "daily", days = [], onChange } = {}) {
-      let currentFreq = normalizeFrequency(frequency);
-      let currentDays = new Set(normalizeDays(days));
-      const root = container.createDiv({ cls: "iter-schedule-picker" });
-      const cadenceRow = root.createDiv({ cls: "iter-cadence-pills", attr: { role: "radiogroup", "aria-label": "Habit repetitivity" } });
-      const weekdayWrap = root.createDiv({ cls: "iter-weekday-wrap" });
-      const weekdayGrid = weekdayWrap.createDiv({ cls: "iter-weekday-grid", attr: { role: "group", "aria-label": "Days of the week" } });
-      const summaryEl = weekdayWrap.createDiv({ cls: "iter-schedule-summary" });
-      const cadenceButtons = /* @__PURE__ */ new Map();
-      const dayButtons = /* @__PURE__ */ new Map();
-      const snapshot = () => ({
-        frequency: currentFreq,
-        days: currentFreq === "weekdays" ? normalizeDays(Array.from(currentDays)) : []
-      });
-      const syncUi = () => {
-        for (const [id, btn] of cadenceButtons) {
-          const active = id === currentFreq;
-          btn.toggleClass?.("is-active", active);
-          if (!btn.toggleClass) {
-            btn.className = `iter-cadence-pill${active ? " is-active" : ""}`;
-          }
-          btn.setAttribute("aria-checked", String(active));
-        }
-        const showDays = currentFreq === "weekdays";
-        weekdayWrap.style.display = showDays ? "" : "none";
-        const orderedDays = normalizeDays(Array.from(currentDays));
-        for (const [id, btn] of dayButtons) {
-          const selected = currentDays.has(id);
-          btn.toggleClass?.("is-selected", selected);
-          if (!btn.toggleClass) {
-            btn.className = `iter-weekday-pill${selected ? " is-selected" : ""}`;
-          }
-          btn.setAttribute("aria-pressed", String(selected));
-        }
-        if (showDays) {
-          summaryEl.textContent = orderedDays.length ? `Water on ${formatCadenceLabel("weekdays", orderedDays)}` : "Select one or more days of the week";
-          summaryEl.toggleClass?.("is-empty", orderedDays.length === 0);
-        }
-      };
-      for (const option of CADENCE_OPTIONS) {
-        const btn = cadenceRow.createEl("button", {
-          text: option.label,
-          type: "button",
-          cls: "iter-cadence-pill",
-          attr: { role: "radio" }
-        });
-        cadenceButtons.set(option.id, btn);
-        btn.addEventListener("click", () => {
-          if (currentFreq === option.id) return;
-          currentFreq = option.id;
-          syncUi();
-          onChange?.(snapshot());
-        });
-      }
-      for (const day of WEEKDAYS) {
-        const btn = weekdayGrid.createEl("button", {
-          text: day.label,
-          type: "button",
-          cls: "iter-weekday-pill",
-          attr: { title: day.full, "aria-label": day.full }
-        });
-        dayButtons.set(day.id, btn);
-        btn.addEventListener("click", () => {
-          if (currentDays.has(day.id)) currentDays.delete(day.id);
-          else currentDays.add(day.id);
-          syncUi();
-          onChange?.(snapshot());
-        });
-      }
-      syncUi();
-      return {
-        getValue: snapshot,
-        setValue(nextFreq, nextDays = []) {
-          currentFreq = normalizeFrequency(nextFreq);
-          currentDays = new Set(normalizeDays(nextDays));
-          syncUi();
-        }
-      };
-    }
-    module2.exports = {
-      CADENCE_OPTIONS,
-      renderSchedulePicker
-    };
-  }
-});
-
-// src/modals.js
-var require_modals = __commonJS({
-  "src/modals.js"(exports2, module2) {
-    var { Modal, Notice: Notice2 } = require("obsidian");
-    var { MODULES, STYLES } = require_storage();
-    var { renderSchedulePicker } = require_schedule_picker();
-    var STYLE_LABELS = {
-      auto: "Auto (from module)",
-      canopy: "Canopy",
-      bonsai: "Bonsai",
-      pine: "Pine",
-      willow: "Willow"
-    };
-    var BaseIterModal = class extends Modal {
-      constructor(app, title, submitLabel, onSubmit) {
-        super(app);
-        this.modalTitle = title;
-        this.submitLabel = submitLabel;
-        this.onSubmit = onSubmit;
-        this.submitting = false;
-      }
-      buildForm(contentEl) {
-        contentEl.empty();
-        contentEl.addClass("iter-modal");
-        contentEl.createEl("h2", { text: this.modalTitle, cls: "iter-modal-title" });
-        return contentEl.createEl("form", { cls: "iter-modal-form" });
-      }
-      addField(form, labelText, buildInput) {
-        const field = form.createDiv({ cls: "iter-modal-field" });
-        const label = field.createEl("label", { text: labelText, cls: "iter-modal-label" });
-        const input = buildInput(field);
-        const id = `iter-field-${Math.random().toString(36).slice(2, 9)}`;
-        input.id = id;
-        label.setAttribute("for", id);
-        return input;
-      }
-      addActions(form, collectValues, focusOnError) {
-        const actions = form.createDiv({ cls: "iter-modal-actions" });
-        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
-        cancel.addEventListener("click", () => this.close());
-        const submit = actions.createEl("button", { text: this.submitLabel, type: "submit", cls: "mod-cta" });
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          if (this.submitting) return;
-          this.submitting = true;
-          submit.disabled = true;
-          try {
-            await this.onSubmit(collectValues());
-            this.close();
-          } catch (error) {
-            new Notice2(error instanceof Error ? error.message : String(error));
-            focusOnError?.focus();
-          } finally {
-            this.submitting = false;
-            submit.disabled = false;
-          }
-        });
-      }
-      onClose() {
-        this.contentEl.empty();
-      }
-    };
-    var CreateTreeModal2 = class extends BaseIterModal {
-      constructor(app, { onSubmit }) {
-        super(app, "Create tree", "Plant tree", onSubmit);
-      }
-      onOpen() {
-        const form = this.buildForm(this.contentEl);
-        const nameInput = this.addField(form, "Tree name", (parent) => {
-          const input = parent.createEl("input", { type: "text", placeholder: "Gym, Learn Japanese\u2026", cls: "iter-modal-input" });
-          input.required = true;
-          return input;
-        });
-        const row = form.createDiv({ cls: "iter-modal-row" });
-        const moduleSelect = this.addField(row, "Module", (parent) => {
-          const select = parent.createEl("select", { cls: "iter-modal-select" });
-          for (const mod of MODULES) {
-            select.createEl("option", { value: mod.id, text: mod.label });
-          }
-          return select;
-        });
-        const styleSelect = this.addField(row, "Tree form", (parent) => {
-          const select = parent.createEl("select", { cls: "iter-modal-select" });
-          for (const style of STYLES) {
-            select.createEl("option", { value: style, text: STYLE_LABELS[style] || style });
-          }
-          return select;
-        });
-        const goalInput = this.addField(
-          form,
-          "Long-term goal (optional)",
-          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. Reach 70kg at 12% body fat", cls: "iter-modal-input" })
-        );
-        let endless = false;
-        const completionField = form.createDiv({ cls: "iter-modal-field" });
-        completionField.createEl("span", { text: "Expected completion", cls: "iter-modal-label" });
-        const horizonPills = completionField.createDiv({ cls: "iter-cadence-pills" });
-        const targetBtn = horizonPills.createEl("button", {
-          text: "Target date",
-          type: "button",
-          cls: "iter-cadence-pill is-active"
-        });
-        const endlessBtn = horizonPills.createEl("button", {
-          text: "Never-ending",
-          type: "button",
-          cls: "iter-cadence-pill"
-        });
-        const dueWrap = completionField.createDiv({ cls: "iter-tree-due-slot" });
-        const dueInput = dueWrap.createEl("input", {
-          type: "date",
-          cls: "iter-modal-input"
-        });
-        const endlessHint = completionField.createDiv({
-          text: "Grows continuously through subgoals and habits without an end date.",
-          cls: "iter-schedule-summary"
-        });
-        const syncHorizon = () => {
-          targetBtn.toggleClass("is-active", !endless);
-          endlessBtn.toggleClass("is-active", endless);
-          targetBtn.setAttribute("aria-pressed", String(!endless));
-          endlessBtn.setAttribute("aria-pressed", String(endless));
-          dueWrap.style.display = endless ? "none" : "";
-          endlessHint.style.display = endless ? "" : "none";
-        };
-        targetBtn.addEventListener("click", () => {
-          endless = false;
-          syncHorizon();
-        });
-        endlessBtn.addEventListener("click", () => {
-          endless = true;
-          dueInput.value = "";
-          syncHorizon();
-        });
-        syncHorizon();
-        this.addActions(
-          form,
-          () => ({
-            name: nameInput.value,
-            module: moduleSelect.value,
-            style: styleSelect.value,
-            goal: goalInput.value,
-            endless,
-            due: endless ? "" : dueInput.value
-          }),
-          nameInput
-        );
-        nameInput.focus();
-      }
-    };
-    var CreateSubgoalModal2 = class extends BaseIterModal {
-      constructor(app, { trees, initialTreePath, onSubmit }) {
-        super(app, "Create subgoal", "Create subgoal", onSubmit);
-        this.trees = trees;
-        this.initialTreePath = initialTreePath;
-      }
-      onOpen() {
-        const form = this.buildForm(this.contentEl);
-        const treeSelect = this.addField(form, "Tree", (parent) => {
-          const select = parent.createEl("select", { cls: "iter-modal-select" });
-          for (const tree of this.trees) {
-            const option = select.createEl("option", { value: tree.path, text: tree.title });
-            if (tree.path === this.initialTreePath) option.selected = true;
-          }
-          return select;
-        });
-        const nameInput = this.addField(form, "Subgoal", (parent) => {
-          const input = parent.createEl("input", { type: "text", placeholder: "e.g. Bench 80kg", cls: "iter-modal-input" });
-          input.required = true;
-          return input;
-        });
-        const targetInput = this.addField(
-          form,
-          "Milestone target (optional)",
-          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. 80kg x 5 reps", cls: "iter-modal-input" })
-        );
-        this.addActions(
-          form,
-          () => ({
-            treePath: treeSelect.value,
-            name: nameInput.value,
-            target: targetInput.value
-          }),
-          nameInput
-        );
-        nameInput.focus();
-      }
-    };
-    var CreateHabitModal2 = class extends BaseIterModal {
-      constructor(app, { trees, initialTreePath, onSubmit }) {
-        super(app, "Create habit", "Create habit", onSubmit);
-        this.trees = trees;
-        this.initialTreePath = initialTreePath;
-      }
-      onOpen() {
-        const form = this.buildForm(this.contentEl);
-        const treeSelect = this.addField(form, "Tree", (parent) => {
-          const select = parent.createEl("select", { cls: "iter-modal-select" });
-          for (const tree of this.trees) {
-            const option = select.createEl("option", { value: tree.path, text: tree.title });
-            if (tree.path === this.initialTreePath) option.selected = true;
-          }
-          return select;
-        });
-        const nameInput = this.addField(form, "Habit", (parent) => {
-          const input = parent.createEl("input", { type: "text", placeholder: "e.g. Go to the Gym", cls: "iter-modal-input" });
-          input.required = true;
-          return input;
-        });
-        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
-        scheduleField.createEl("span", { text: "Repetitivity", cls: "iter-modal-label" });
-        const picker = renderSchedulePicker(scheduleField, { frequency: "daily", days: [] });
-        const targetInput = this.addField(
-          form,
-          "Daily/period target (optional)",
-          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. 3000 kcal / 10 new words", cls: "iter-modal-input" })
-        );
-        this.addActions(
-          form,
-          () => {
-            const schedule = picker.getValue();
-            return {
-              treePath: treeSelect.value,
-              frequency: schedule.frequency,
-              days: schedule.days,
-              name: nameInput.value,
-              target: targetInput.value
-            };
-          },
-          nameInput
-        );
-        nameInput.focus();
-      }
-    };
-    var EditHabitScheduleModal2 = class extends BaseIterModal {
-      constructor(app, { title, frequency, days, onSubmit }) {
-        super(app, `Repetitivity \xB7 ${title}`, "Save schedule", onSubmit);
-        this.frequency = frequency;
-        this.days = days;
-      }
-      onOpen() {
-        const form = this.buildForm(this.contentEl);
-        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
-        scheduleField.createEl("span", { text: "Watering schedule", cls: "iter-modal-label" });
-        const picker = renderSchedulePicker(scheduleField, {
-          frequency: this.frequency,
-          days: this.days
-        });
-        this.addActions(form, () => picker.getValue());
-      }
-    };
-    var ConfirmDeleteModal2 = class extends Modal {
-      constructor(app, { title, message, confirmLabel = "Delete", onConfirm }) {
-        super(app);
-        this.modalTitle = title;
-        this.message = message;
-        this.confirmLabel = confirmLabel;
-        this.onConfirm = onConfirm;
-        this.submitting = false;
-      }
-      onOpen() {
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass("iter-modal");
-        contentEl.createEl("h2", { text: this.modalTitle, cls: "iter-modal-title" });
-        contentEl.createEl("p", { text: this.message, cls: "iter-modal-message" });
-        const actions = contentEl.createDiv({ cls: "iter-modal-actions" });
-        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
-        cancel.addEventListener("click", () => this.close());
-        const confirm = actions.createEl("button", {
-          text: this.confirmLabel,
-          type: "button",
-          cls: "mod-warning"
-        });
-        confirm.addEventListener("click", async () => {
-          if (this.submitting) return;
-          this.submitting = true;
-          confirm.disabled = true;
-          try {
-            await this.onConfirm();
-            this.close();
-          } catch (error) {
-            new Notice2(error instanceof Error ? error.message : String(error));
-          } finally {
-            this.submitting = false;
-            confirm.disabled = false;
-          }
-        });
-        confirm.focus();
-      }
-      onClose() {
-        this.contentEl.empty();
-      }
-    };
-    module2.exports = {
-      CreateTreeModal: CreateTreeModal2,
-      CreateSubgoalModal: CreateSubgoalModal2,
-      CreateHabitModal: CreateHabitModal2,
-      EditHabitScheduleModal: EditHabitScheduleModal2,
-      ConfirmDeleteModal: ConfirmDeleteModal2
-    };
-  }
-});
-
-// src/panel-view.js
-var require_panel_view = __commonJS({
-  "src/panel-view.js"(exports2, module2) {
-    var { ItemView, Menu, Notice: Notice2, setIcon } = require("obsidian");
-    var { ROOT, toggleSubgoal, waterHabit } = require_storage();
-    var { listGarden: listGarden2 } = require_catalog();
-    var PANEL_VIEW2 = "iter-panel";
-    var MODULE_ICONS = {
-      gym: "dumbbell",
-      learning: "book-open",
-      creative: "sparkles",
-      health: "heart",
-      general: "trees"
-    };
-    function iconButton(parent, icon, label, callback, extraClass = "") {
-      const button = parent.createEl("button", {
-        cls: `iter-icon-button ${extraClass}`.trim(),
-        type: "button"
-      });
-      button.setAttribute("aria-label", label);
-      button.setAttribute("title", label);
-      setIcon(button, icon);
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void callback(event);
-      });
-      return button;
-    }
-    var IterPanelView2 = class extends ItemView {
-      constructor(leaf, plugin) {
-        super(leaf);
-        this.plugin = plugin;
-        this.expansion = /* @__PURE__ */ new Map();
-        this.renderTimer = null;
-      }
-      getViewType() {
-        return PANEL_VIEW2;
-      }
-      getDisplayText() {
-        return "Iter";
-      }
-      getIcon() {
-        return "sprout";
-      }
-      async onOpen() {
-        this.contentEl.addClass("iter-panel");
-        const schedule = (file) => {
-          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          }
-        };
-        for (const event of ["create", "delete", "modify"]) {
-          this.registerEvent(this.app.vault.on(event, schedule));
-        }
-        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          } else {
-            schedule(file);
-          }
-        }));
-        this.registerEvent(this.app.metadataCache.on("changed", schedule));
-        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
-        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleRender()));
-        this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleRender()));
-        this.render();
-      }
-      async onClose() {
-        if (this.renderTimer !== null) {
-          clearTimeout(this.renderTimer);
-          this.renderTimer = null;
-        }
-      }
-      scheduleRender() {
-        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
-        this.renderTimer = setTimeout(() => {
-          this.renderTimer = null;
-          this.render();
-        }, 90);
-      }
-      isActiveFile(file) {
-        if (!file) return false;
-        const recent = this.app.workspace.getMostRecentLeaf?.();
-        if (this.plugin?.goalViewType && recent?.view?.getViewType?.() === this.plugin.goalViewType && recent?.view?.file?.path === file.path) {
-          return true;
-        }
-        const active = this.app.workspace.getActiveFile?.();
-        return Boolean(active && active.path === file.path);
-      }
-      isGardenActive() {
-        const recent = this.app.workspace.getMostRecentLeaf?.();
-        return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
-      }
-      render() {
-        const container = this.contentEl;
-        container.empty();
-        const garden = listGarden2(this.app);
-        const toolbar = container.createDiv({ cls: "iter-toolbar" });
-        toolbar.createEl("span", { text: "Iter", cls: "iter-toolbar-title" });
-        const toolbarActions = toolbar.createDiv({ cls: "iter-toolbar-actions" });
-        iconButton(toolbarActions, "plus", "Create tree", () => this.plugin.promptCreateTree());
-        const weRow = container.createEl("button", {
-          cls: `iter-we-row${this.isGardenActive() ? " is-active" : ""}`,
-          type: "button"
-        });
-        weRow.setAttribute("aria-label", "Open We garden dashboard");
-        if (this.isGardenActive()) weRow.setAttribute("aria-current", "page");
-        const weIcon = weRow.createSpan({ cls: "iter-we-icon" });
-        setIcon(weIcon, "sprout");
-        weRow.createSpan({ text: "We", cls: "iter-we-label" });
-        const countText = garden.trees.length === 1 ? "1 tree" : `${garden.trees.length} trees`;
-        weRow.createSpan({ text: countText, cls: "iter-we-meta" });
-        weRow.addEventListener("click", () => {
-          void this.plugin.openGarden();
-        });
-        const body = container.createDiv({ cls: "iter-panel-list" });
-        if (!garden.trees.length && !garden.looseItems.length) {
-          const empty = body.createDiv({ cls: "iter-panel-empty" });
-          empty.createEl("p", { text: "Your Iter folder is ready." });
-          const plantBtn = empty.createEl("button", { text: "Plant first tree", type: "button", cls: "iter-ghost-action" });
-          plantBtn.addEventListener("click", () => this.plugin.promptCreateTree());
-          return;
-        }
-        for (const tree of garden.trees) {
-          this.renderTree(body, tree);
-        }
-        if (garden.looseItems.length) {
-          const misc = body.createDiv({ cls: "iter-misc-section" });
-          for (const item of garden.looseItems) {
-            this.renderExtraEntry(misc, item);
-          }
-        }
-      }
-      renderToggle(row, key, label, defaultExpanded = true) {
-        const expanded = this.expansion.get(key) ?? defaultExpanded;
-        const toggle = iconButton(
-          row,
-          expanded ? "chevron-down" : "chevron-right",
-          `${expanded ? "Collapse" : "Expand"} ${label}`,
-          () => {
-            this.expansion.set(key, !expanded);
-            this.render();
-          },
-          "iter-toggle"
-        );
-        toggle.setAttribute("aria-expanded", String(expanded));
-        return expanded;
-      }
-      showTreeMenu(event, tree, { allowDelete = true } = {}) {
-        const menu = new Menu();
-        menu.addItem(
-          (item) => item.setTitle("Create subgoal").setIcon("target").onClick(() => this.plugin.promptCreateSubgoal(tree.path))
-        );
-        menu.addItem(
-          (item) => item.setTitle("Create habit").setIcon("droplet").onClick(() => this.plugin.promptCreateHabit(tree.path))
-        );
-        menu.addSeparator();
-        menu.addItem(
-          (item) => item.setTitle("Focus in We garden").setIcon("sprout").onClick(() => void this.plugin.openGarden(tree.path))
-        );
-        if (tree.indexFile) {
-          menu.addItem(
-            (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(tree.indexFile))
-          );
-          menu.addItem(
-            (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
-          );
-        }
-        if (allowDelete) {
-          menu.addSeparator();
-          menu.addItem((item) => {
-            item.setTitle("Delete").setIcon("trash").onClick(() => this.plugin.promptDeleteTree(tree));
-            item.setWarning?.(true);
-          });
-        }
-        menu.showAtMouseEvent(event);
-      }
-      showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
-        const menu = new Menu();
-        menu.addItem(
-          (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
-        );
-        menu.addItem(
-          (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
-        );
-        if (extraActions.length) {
-          menu.addSeparator();
-          for (const action of extraActions) {
-            menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
-          }
-        }
-        if (onDelete) {
-          menu.addSeparator();
-          menu.addItem((item) => {
-            item.setTitle("Delete").setIcon("trash").onClick(onDelete);
-            item.setWarning?.(true);
-          });
-        }
-        menu.showAtMouseEvent(event);
-      }
-      renderTree(parent, tree) {
-        const section = parent.createDiv({ cls: "iter-tree-node" });
-        const row = section.createDiv({ cls: "iter-row iter-tree-row" });
-        const expanded = this.renderToggle(row, tree.path, tree.title, true);
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute("title", tree.goal ? `${tree.title} \u2014 ${tree.goal}` : tree.title);
-        if (this.isActiveFile(tree.indexFile)) titleBtn.setAttribute("aria-current", "page");
-        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
-        setIcon(iconEl, MODULE_ICONS[tree.module] || "trees");
-        titleBtn.createSpan({ text: tree.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => {
-          if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
-          else void this.plugin.openGarden(tree.path);
-        });
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showTreeMenu(event, tree, { allowDelete: true });
-        });
-        if (tree.stats.habitTotal > 0) {
-          const dot = row.createSpan({
-            cls: `iter-hydration-dot is-${tree.stats.hydrationState}`,
-            attr: {
-              title: `${tree.stats.habitWatered}/${tree.stats.habitTotal} habits watered`
-            }
-          });
-          dot.setAttribute("aria-hidden", "true");
-        }
-        iconButton(
-          row,
-          "plus",
-          `Add to ${tree.title}`,
-          (event) => this.showTreeMenu(event, tree, { allowDelete: false }),
-          "iter-row-action"
-        );
-        if (!expanded) return;
-        const childrenEl = section.createDiv({ cls: "iter-tree-children" });
-        const hasItems = tree.subgoals.length > 0 || tree.habits.length > 0 || tree.extras.length > 0;
-        if (!hasItems) {
-          childrenEl.createDiv({ cls: "iter-tree-empty", text: "No subgoals or habits yet" });
-          return;
-        }
-        for (const subgoal of tree.subgoals) {
-          this.renderSubgoal(childrenEl, subgoal);
-        }
-        for (const habit of tree.habits) {
-          this.renderHabit(childrenEl, habit);
-        }
-        for (const extra of tree.extras) {
-          this.renderExtraEntry(childrenEl, extra);
-        }
-      }
-      renderSubgoal(parent, subgoal) {
-        const row = parent.createDiv({ cls: `iter-row iter-subgoal-row${subgoal.done ? " is-done" : ""}` });
-        const toggleBtn = iconButton(
-          row,
-          subgoal.done ? "check-circle-2" : "circle",
-          subgoal.done ? `Mark "${subgoal.title}" incomplete` : `Complete "${subgoal.title}"`,
-          async () => {
-            try {
-              await toggleSubgoal(this.app, subgoal.file);
-              this.plugin.scheduleRefresh();
-            } catch (error) {
-              new Notice2(error?.message || "Could not update subgoal.");
-            }
-          },
-          `iter-check-btn${subgoal.done ? " is-done" : ""}`
-        );
-        toggleBtn.setAttribute("aria-pressed", String(subgoal.done));
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute("title", subgoal.target ? `${subgoal.title} \xB7 ${subgoal.target}` : subgoal.title);
-        if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute("aria-current", "page");
-        titleBtn.createSpan({ text: subgoal.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showGoalItemMenu(
-            event,
-            subgoal.file,
-            [
-              {
-                label: subgoal.done ? "Mark incomplete" : "Mark done",
-                icon: subgoal.done ? "circle" : "check-circle-2",
-                run: async () => {
-                  await toggleSubgoal(this.app, subgoal.file);
-                  this.plugin.scheduleRefresh();
-                }
-              }
-            ],
-            () => this.plugin.promptDeleteGoalItem("goal", subgoal)
-          );
-        });
-      }
-      renderHabit(parent, habit) {
-        const resting = !habit.isDueToday && !habit.wateredToday;
-        const row = parent.createDiv({
-          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
-        });
-        const waterBtn = iconButton(
-          row,
-          "droplet",
-          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water "${habit.title}" anyway` : `Water "${habit.title}"`,
-          async () => {
-            try {
-              const watered = await waterHabit(this.app, habit.file);
-              new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-              this.plugin.scheduleRefresh();
-            } catch (error) {
-              new Notice2(error?.message || "Could not water habit.");
-            }
-          },
-          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
-        );
-        waterBtn.setAttribute("aria-pressed", String(habit.wateredToday));
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        titleBtn.setAttribute(
-          "title",
-          habit.target ? `${habit.title} (${habit.cadenceLabel}) \xB7 ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`
-        );
-        if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
-        titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
-        row.addEventListener("contextmenu", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showGoalItemMenu(
-            event,
-            habit.file,
-            [
-              {
-                label: habit.wateredToday ? "Undo today's watering" : "Water now",
-                icon: "droplet",
-                run: async () => {
-                  await waterHabit(this.app, habit.file);
-                  this.plugin.scheduleRefresh();
-                }
-              },
-              {
-                label: "Edit repetitivity",
-                icon: "calendar-days",
-                run: () => this.plugin.promptEditHabitSchedule(habit)
-              }
-            ],
-            () => this.plugin.promptDeleteGoalItem("habit", habit)
-          );
-        });
-        row.createSpan({
-          text: habit.cadenceShort,
-          cls: "iter-cadence-badge",
-          attr: { title: `${habit.cadenceLabel} habit` }
-        });
-      }
-      renderExtraEntry(parent, entry) {
-        if (entry.kind === "folder") {
-          const section = parent.createDiv({ cls: "iter-extra-folder" });
-          const row2 = section.createDiv({ cls: "iter-row iter-folder-row" });
-          const expanded = this.renderToggle(row2, entry.path, entry.name, false);
-          const label = row2.createSpan({ cls: "iter-row-title iter-static-label" });
-          const iconEl2 = label.createSpan({ cls: "iter-row-icon" });
-          setIcon(iconEl2, "folder");
-          label.createSpan({ text: entry.name, cls: "iter-row-name" });
-          if (!expanded) return;
-          const children = section.createDiv({ cls: "iter-tree-children" });
-          for (const child of entry.children) {
-            this.renderExtraEntry(children, child);
-          }
-          return;
-        }
-        const row = parent.createDiv({ cls: "iter-row iter-file-row" });
-        row.createSpan({ cls: "iter-toggle-spacer" });
-        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
-        if (this.isActiveFile(entry.file)) titleBtn.setAttribute("aria-current", "page");
-        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
-        setIcon(iconEl, "file-text");
-        titleBtn.createSpan({ text: entry.name, cls: "iter-row-name" });
-        titleBtn.addEventListener("click", () => void this.plugin.openFile(entry.file));
-      }
-    };
-    module2.exports = {
-      IterPanelView: IterPanelView2,
-      PANEL_VIEW: PANEL_VIEW2
-    };
-  }
-});
-
-// src/tree-art.js
-var require_tree_art = __commonJS({
-  "src/tree-art.js"(exports2, module2) {
-    var SVG_NS = "http://www.w3.org/2000/svg";
-    function hashString(input) {
-      let hash = 2166136261;
-      const text = String(input || "iter");
-      for (let i = 0; i < text.length; i += 1) {
-        hash ^= text.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-      }
-      return hash >>> 0;
-    }
-    function createRng(seedValue) {
-      let state = seedValue || 1;
-      return () => {
-        state = Math.imul(1664525, state) + 1013904223 >>> 0;
-        return state / 4294967296;
-      };
-    }
-    function resolveStyle(tree) {
-      if (tree?.style && tree.style !== "auto") return tree.style;
-      switch (tree?.module) {
-        case "gym":
-          return "bonsai";
-        case "learning":
-          return "pine";
-        case "creative":
-          return "willow";
-        default:
-          return "canopy";
-      }
-    }
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
-    }
-    function round(num) {
-      return Math.round(num * 10) / 10;
-    }
-    function buildCanopyGeometry(growth, rand) {
-      const lean = (rand() - 0.5) * 14;
-      const baseY = 128;
-      const height = 28 + growth * 58;
-      const topY = baseY - height;
-      const topX = 80 + lean * 0.45;
-      const midX = 80 - lean * 0.35;
-      const midY = baseY - height * 0.5;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(midX)} ${round(midY)} ${round(topX)} ${round(topY)}`, width: round(2.2 + growth * 2.4) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      if (growth < 0.25) {
-        canopies.push(
-          { kind: "ellipse", cx: round(topX - 8), cy: round(topY - 2), rx: 8, ry: 4.5, rotate: -26, tone: "a" },
-          { kind: "ellipse", cx: round(topX + 8), cy: round(topY - 4), rx: 7.5, ry: 4, rotate: 24, tone: "b" }
-        );
-        return { trunks, branches, canopies, blossoms };
-      }
-      const leftBranchX = topX - (14 + growth * 14);
-      const leftBranchY = topY + height * 0.28;
-      const rightBranchX = topX + (14 + growth * 14);
-      const rightBranchY = topY + height * 0.22;
-      branches.push(
-        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.52)} Q ${round(topX - 10)} ${round(leftBranchY + 8)} ${round(leftBranchX)} ${round(leftBranchY)}`, width: round(1.5 + growth * 1.1) },
-        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.58)} Q ${round(topX + 10)} ${round(rightBranchY + 8)} ${round(rightBranchX)} ${round(rightBranchY)}`, width: round(1.5 + growth * 1.1) }
-      );
-      const scale = 0.65 + growth * 0.52;
-      canopies.push(
-        { kind: "ellipse", cx: round(leftBranchX), cy: round(leftBranchY - 4), rx: round(18 * scale), ry: round(13 * scale), rotate: -8, tone: "b" },
-        { kind: "ellipse", cx: round(rightBranchX), cy: round(rightBranchY - 5), rx: round(19 * scale), ry: round(14 * scale), rotate: 8, tone: "b" },
-        { kind: "ellipse", cx: round(topX), cy: round(topY - 8), rx: round(24 * scale), ry: round(18 * scale), rotate: 0, tone: "a" }
-      );
-      if (growth >= 0.55) {
-        canopies.push(
-          { kind: "ellipse", cx: round(topX - 11), cy: round(topY - 14), rx: round(15 * scale), ry: round(11 * scale), rotate: -5, tone: "c" },
-          { kind: "ellipse", cx: round(topX + 10), cy: round(topY - 12), rx: round(14 * scale), ry: round(11 * scale), rotate: 6, tone: "a" }
-        );
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX - 12), cy: round(topY - 10), r: 2.3 },
-          { cx: round(topX + 8), cy: round(topY - 17), r: 2.1 },
-          { cx: round(rightBranchX + 4), cy: round(rightBranchY - 7), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildBonsaiGeometry(growth, rand) {
-      const dir = rand() > 0.5 ? 1 : -1;
-      const baseY = 128;
-      const height = 28 + growth * 50;
-      const bendX = 80 - dir * (16 + growth * 12);
-      const apexX = 80 + dir * (12 + growth * 14);
-      const apexY = baseY - height;
-      const trunks = [
-        { d: `M 80 ${baseY} C ${round(80 - dir * 24)} ${round(baseY - height * 0.35)}, ${round(bendX)} ${round(baseY - height * 0.72)}, ${round(apexX)} ${round(apexY)}`, width: round(2.8 + growth * 2.6) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      if (growth < 0.25) {
-        canopies.push(
-          { kind: "ellipse", cx: round(apexX), cy: round(apexY - 4), rx: 11, ry: 5, rotate: dir * 6, tone: "a" }
-        );
-        return { trunks, branches, canopies, blossoms };
-      }
-      const sideX = 80 - dir * (22 + growth * 14);
-      const sideY = baseY - height * 0.54;
-      branches.push(
-        { d: `M ${round(80 - dir * 10)} ${round(baseY - height * 0.45)} Q ${round(sideX + dir * 8)} ${round(sideY + 6)} ${round(sideX)} ${round(sideY)}`, width: round(1.8 + growth) }
-      );
-      const padScale = 0.7 + growth * 0.48;
-      canopies.push(
-        { kind: "ellipse", cx: round(sideX), cy: round(sideY - 4), rx: round(19 * padScale), ry: round(8 * padScale), rotate: -dir * 4, tone: "b" },
-        { kind: "ellipse", cx: round(apexX), cy: round(apexY - 5), rx: round(24 * padScale), ry: round(9.5 * padScale), rotate: dir * 3, tone: "a" }
-      );
-      if (growth >= 0.58) {
-        const upperX = apexX - dir * 16;
-        const upperY = apexY + 12;
-        branches.push(
-          { d: `M ${round(apexX - dir * 4)} ${round(apexY + 16)} Q ${round(upperX + dir * 6)} ${round(upperY + 4)} ${round(upperX)} ${round(upperY)}`, width: 1.6 }
-        );
-        canopies.push(
-          { kind: "ellipse", cx: round(upperX), cy: round(upperY - 4), rx: round(15 * padScale), ry: round(7 * padScale), rotate: 0, tone: "c" }
-        );
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(apexX - 8), cy: round(apexY - 8), r: 2.2 },
-          { cx: round(apexX + 9), cy: round(apexY - 5), r: 2 },
-          { cx: round(sideX), cy: round(sideY - 6), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildPineGeometry(growth, rand) {
-      const sway = (rand() - 0.5) * 6;
-      const baseY = 128;
-      const height = 32 + growth * 60;
-      const topY = baseY - height;
-      const topX = 80 + sway;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(80 - sway * 0.5)} ${round(baseY - height * 0.5)} ${round(topX)} ${round(topY + 8)}`, width: round(2.2 + growth * 2) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      const tierCount = growth < 0.25 ? 1 : growth < 0.5 ? 2 : growth < 0.8 ? 3 : 4;
-      for (let i = 0; i < tierCount; i += 1) {
-        const t = (i + 1) / (tierCount + 0.35);
-        const tierY = baseY - height * (0.28 + t * 0.68);
-        const halfWidth = (10 + growth * 20) * (1 - i * 0.2);
-        const tierHeight = 14 + growth * 10;
-        const peakY = tierY - tierHeight;
-        const cx = 80 + sway * t;
-        const d = [
-          `M ${round(cx)} ${round(peakY)}`,
-          `Q ${round(cx + halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx + halfWidth)} ${round(tierY)}`,
-          `Q ${round(cx)} ${round(tierY + 4)} ${round(cx - halfWidth)} ${round(tierY)}`,
-          `Q ${round(cx - halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx)} ${round(peakY)} Z`
-        ].join(" ");
-        canopies.push({ kind: "path", d, tone: i % 2 === 0 ? "a" : "b" });
-      }
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX), cy: round(topY - 2), r: 2.2 },
-          { cx: round(topX - 9), cy: round(topY + 18), r: 1.9 },
-          { cx: round(topX + 10), cy: round(topY + 26), r: 1.9 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function buildWillowGeometry(growth, rand) {
-      const lean = (rand() - 0.5) * 10;
-      const baseY = 128;
-      const height = 28 + growth * 54;
-      const topY = baseY - height;
-      const topX = 80 + lean * 0.4;
-      const trunks = [
-        { d: `M 80 ${baseY} Q ${round(80 - lean * 0.4)} ${round(baseY - height * 0.48)} ${round(topX)} ${round(topY + 6)}`, width: round(2.2 + growth * 2.2) }
-      ];
-      const branches = [];
-      const canopies = [];
-      const blossoms = [];
-      const frondCount = growth < 0.25 ? 2 : growth < 0.55 ? 4 : 6;
-      const span = 14 + growth * 22;
-      for (let i = 0; i < frondCount; i += 1) {
-        const ratio = frondCount === 1 ? 0.5 : i / (frondCount - 1);
-        const offset = (ratio - 0.5) * 2 * span;
-        const endX = topX + offset;
-        const drop = 16 + growth * 24 - Math.abs(offset) * 0.22;
-        const endY = topY + 6 + drop;
-        const ctrlX = topX + offset * 0.72;
-        const ctrlY = topY - 4;
-        branches.push({
-          d: `M ${round(topX)} ${round(topY + 6)} Q ${round(ctrlX)} ${round(ctrlY)} ${round(endX)} ${round(endY)}`,
-          width: 1.4,
-          soft: true
-        });
-        canopies.push({
-          kind: "ellipse",
-          cx: round(endX),
-          cy: round(endY - 4),
-          rx: 3.8,
-          ry: 7.5,
-          rotate: round(offset * 0.35),
-          tone: i % 2 === 0 ? "a" : "b"
-        });
-      }
-      canopies.unshift({
-        kind: "ellipse",
-        cx: round(topX),
-        cy: round(topY - 2),
-        rx: round(12 + growth * 12),
-        ry: round(7 + growth * 5),
-        rotate: 0,
-        tone: "c"
-      });
-      if (growth >= 0.85) {
-        blossoms.push(
-          { cx: round(topX - 8), cy: round(topY - 3), r: 2.1 },
-          { cx: round(topX + 9), cy: round(topY + 1), r: 2 }
-        );
-      }
-      return { trunks, branches, canopies, blossoms };
-    }
-    function computeTreeGeometry(tree) {
-      const growth = clamp(tree?.stats?.growth ?? 0.2, 0.15, 1);
-      const style = resolveStyle(tree);
-      const rand = createRng(hashString(`${tree?.title || "Iter"}:${style}`));
-      let shapes;
-      if (style === "bonsai") shapes = buildBonsaiGeometry(growth, rand);
-      else if (style === "pine") shapes = buildPineGeometry(growth, rand);
-      else if (style === "willow") shapes = buildWillowGeometry(growth, rand);
-      else shapes = buildCanopyGeometry(growth, rand);
-      return {
-        style,
-        growth,
-        hydrationState: tree?.stats?.hydrationState ?? "calm",
-        ...shapes
-      };
-    }
-    function svgEl(tag, attrs = {}) {
-      const node = document.createElementNS(SVG_NS, tag);
-      if (typeof node.isShown !== "function") {
-        node.isShown = function() {
-          return Boolean(this.isConnected);
-        };
-      }
-      for (const [key, value] of Object.entries(attrs)) {
-        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
-      }
-      return node;
-    }
-    function appendPot(svg, hydrationState) {
-      svg.appendChild(svgEl("ellipse", {
-        cx: 80,
-        cy: 164,
-        rx: 28,
-        ry: 3.5,
-        class: "iter-svg-shadow"
-      }));
-      svg.appendChild(svgEl("path", {
-        d: "M 55 135 L 105 135 L 98 159 Q 97 162 93 162 L 67 162 Q 63 162 62 159 Z",
-        class: "iter-svg-pot"
-      }));
-      svg.appendChild(svgEl("rect", {
-        x: 51,
-        y: 129,
-        width: 58,
-        height: 6,
-        rx: 3,
-        class: "iter-svg-rim"
-      }));
-      svg.appendChild(svgEl("path", {
-        d: "M 56 129 Q 80 125 104 129",
-        class: "iter-svg-soil"
-      }));
-      if (hydrationState === "hydrated" || hydrationState === "partial") {
-        const dewGroup = svgEl("g", {
-          class: hydrationState === "hydrated" ? "iter-svg-dew is-hydrated" : "iter-svg-dew is-partial"
-        });
-        dewGroup.appendChild(svgEl("path", {
-          d: "M 116 142 C 116 142 120 147.5 120 150 A 4 4 0 1 1 112 150 C 112 147.5 116 142 116 142 Z"
-        }));
-        svg.appendChild(dewGroup);
-      }
-    }
-    function renderTreeSvg(container, tree, options = {}) {
-      const geo = computeTreeGeometry(tree);
-      const svg = svgEl("svg", {
-        viewBox: "0 0 160 176",
-        class: `iter-tree-svg is-${geo.hydrationState} style-${geo.style}${options.large ? " is-large" : ""}`,
-        role: "img",
-        "aria-label": `${tree?.title || "Tree"} (${tree?.stats?.stageLabel || "Seedling"})`
-      });
-      const treeGroup = svgEl("g", { class: "iter-svg-plant" });
-      const canopyGroup = svgEl("g", { class: "iter-svg-canopy" });
-      for (const trunk of geo.trunks) {
-        treeGroup.appendChild(svgEl("path", {
-          d: trunk.d,
-          "stroke-width": trunk.width,
-          class: "iter-svg-trunk"
-        }));
-      }
-      for (const branch of geo.branches) {
-        treeGroup.appendChild(svgEl("path", {
-          d: branch.d,
-          "stroke-width": branch.width,
-          class: branch.soft ? "iter-svg-branch is-soft" : "iter-svg-branch"
-        }));
-      }
-      for (const shape of geo.canopies) {
-        if (shape.kind === "path") {
-          canopyGroup.appendChild(svgEl("path", {
-            d: shape.d,
-            class: `iter-svg-foliage tone-${shape.tone}`
-          }));
-        } else {
-          const transform = shape.rotate ? `rotate(${shape.rotate} ${shape.cx} ${shape.cy})` : null;
-          canopyGroup.appendChild(svgEl("ellipse", {
-            cx: shape.cx,
-            cy: shape.cy,
-            rx: shape.rx,
-            ry: shape.ry,
-            transform,
-            class: `iter-svg-foliage tone-${shape.tone}`
-          }));
-        }
-      }
-      for (const blossom of geo.blossoms) {
-        canopyGroup.appendChild(svgEl("circle", {
-          cx: blossom.cx,
-          cy: blossom.cy,
-          r: blossom.r,
-          class: "iter-svg-blossom"
-        }));
-      }
-      treeGroup.appendChild(canopyGroup);
-      svg.appendChild(treeGroup);
-      appendPot(svg, geo.hydrationState);
-      container.appendChild(svg);
-      return svg;
-    }
-    function renderEmptyPotSvg(container) {
-      const svg = svgEl("svg", {
-        viewBox: "0 0 160 176",
-        class: "iter-tree-svg is-empty-pot",
-        "aria-hidden": "true"
-      });
-      svg.appendChild(svgEl("path", {
-        d: "M 80 128 Q 78 112 72 106",
-        "stroke-width": 2,
-        class: "iter-svg-trunk"
-      }));
-      svg.appendChild(svgEl("ellipse", {
-        cx: 72,
-        cy: 103,
-        rx: 6,
-        ry: 3.2,
-        transform: "rotate(-25 72 103)",
-        class: "iter-svg-foliage tone-a"
-      }));
-      appendPot(svg, "calm");
-      container.appendChild(svg);
-      return svg;
-    }
-    module2.exports = {
-      resolveStyle,
-      computeTreeGeometry,
-      renderTreeSvg,
-      renderEmptyPotSvg
-    };
-  }
-});
-
-// src/garden-view.js
-var require_garden_view = __commonJS({
-  "src/garden-view.js"(exports2, module2) {
-    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
-    var { MODULES, ROOT, toggleSubgoal, waterHabit } = require_storage();
-    var { listGarden: listGarden2 } = require_catalog();
-    var { renderTreeSvg, renderEmptyPotSvg } = require_tree_art();
-    var GARDEN_VIEW2 = "iter-garden";
-    var MODULE_LABELS = Object.fromEntries(MODULES.map((item) => [item.id, item.label]));
-    var HYDRATION_LABELS = {
-      hydrated: "Watered",
-      partial: "Partly watered",
-      thirsty: "Needs water",
-      calm: "No habits yet"
-    };
-    var GardenView2 = class extends ItemView {
-      constructor(leaf, plugin) {
-        super(leaf);
-        this.plugin = plugin;
-        this.selectedTreePath = null;
-        this.renderTimer = null;
-      }
-      getViewType() {
-        return GARDEN_VIEW2;
-      }
-      getDisplayText() {
-        return "We";
-      }
-      getIcon() {
-        return "sprout";
-      }
-      async setState(state, result) {
-        if (state?.selectedTreePath !== void 0) {
-          this.selectedTreePath = state.selectedTreePath;
-          this.render();
-        }
-        await super.setState(state, result);
-      }
-      getState() {
-        return { selectedTreePath: this.selectedTreePath };
-      }
-      async onOpen() {
-        this.contentEl.addClass("iter-garden");
-        const schedule = (file) => {
-          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          }
-        };
-        for (const event of ["create", "delete", "modify"]) {
-          this.registerEvent(this.app.vault.on(event, schedule));
-        }
-        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-          if (oldPath === this.selectedTreePath) {
-            this.selectedTreePath = file.path;
-          }
-          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
-            this.scheduleRender();
-          } else {
-            schedule(file);
-          }
-        }));
-        this.registerEvent(this.app.metadataCache.on("changed", schedule));
-        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
-        this.render();
-      }
-      async onClose() {
-        if (this.renderTimer !== null) {
-          clearTimeout(this.renderTimer);
-          this.renderTimer = null;
-        }
-      }
-      scheduleRender() {
-        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
-        this.renderTimer = setTimeout(() => {
-          this.renderTimer = null;
-          this.render();
-        }, 90);
-      }
-      selectTree(treePath) {
-        this.selectedTreePath = this.selectedTreePath === treePath ? null : treePath;
-        this.render();
-      }
-      render() {
-        const container = this.contentEl;
-        container.empty();
-        const garden = listGarden2(this.app);
-        if (this.selectedTreePath && !garden.trees.some((tree) => tree.path === this.selectedTreePath)) {
-          this.selectedTreePath = null;
-        }
-        const shell = container.createDiv({ cls: "iter-garden-shell" });
-        this.renderHeader(shell, garden);
-        if (!garden.trees.length) {
-          this.renderEmptyState(shell);
-          return;
-        }
-        this.renderTodayQueue(shell, garden);
-        const grid = shell.createDiv({ cls: "iter-garden-grid" });
-        for (const tree of garden.trees) {
-          this.renderPotCard(grid, tree);
-        }
-        const selected = this.selectedTreePath ? garden.trees.find((tree) => tree.path === this.selectedTreePath) : null;
-        if (selected) {
-          this.renderInspector(shell, selected);
-        }
-      }
-      renderHeader(shell, garden) {
-        const header = shell.createDiv({ cls: "iter-garden-header" });
-        const titleGroup = header.createDiv({ cls: "iter-garden-heading" });
-        titleGroup.createEl("h1", { text: "We", cls: "iter-garden-title" });
-        const totalSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalTotal, 0);
-        const doneSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalDone, 0);
-        const totalHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitTotal, 0);
-        const wateredHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitWatered, 0);
-        const parts = [];
-        if (garden.trees.length) {
-          parts.push(`${garden.trees.length} ${garden.trees.length === 1 ? "tree" : "trees"}`);
-          if (totalSubgoals) parts.push(`${doneSubgoals}/${totalSubgoals} subgoals`);
-          if (totalHabits) parts.push(`${wateredHabits}/${totalHabits} watered`);
-        } else {
-          parts.push("Shared long-term garden");
-        }
-        titleGroup.createEl("p", { text: parts.join(" \xB7 "), cls: "iter-garden-subtitle" });
-        const actions = header.createDiv({ cls: "iter-garden-actions" });
-        if (garden.members.length) {
-          const membersWrap = actions.createDiv({ cls: "iter-members-strip" });
-          for (const member of garden.members) {
-            membersWrap.createSpan({ text: member, cls: "iter-member-pill" });
-          }
-        }
-        const newTreeBtn = actions.createEl("button", {
-          cls: "iter-primary-pill",
-          type: "button"
-        });
-        const plusIcon = newTreeBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(plusIcon, "plus");
-        newTreeBtn.createSpan({ text: "New tree" });
-        newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
-      }
-      renderTodayQueue(shell, garden) {
-        const dueHabits = [];
-        for (const tree of garden.trees) {
-          for (const habit of tree.habits) {
-            if (habit.isDueToday || habit.wateredToday) {
-              dueHabits.push({ tree, habit });
-            }
-          }
-        }
-        if (!dueHabits.length) return;
-        const doneCount = dueHabits.filter((item) => item.habit.wateredInPeriod || item.habit.wateredToday).length;
-        const remaining = dueHabits.filter((item) => !item.habit.wateredInPeriod && !item.habit.wateredToday);
-        const banner = shell.createDiv({ cls: "iter-today-queue" });
-        const head = banner.createDiv({ cls: "iter-today-queue-head" });
-        const titleWrap = head.createDiv({ cls: "iter-today-queue-title-wrap" });
-        const dropIcon = titleWrap.createSpan({ cls: "iter-btn-icon" });
-        setIcon(dropIcon, "droplet");
-        titleWrap.createSpan({ text: "Today\u2019s watering queue", cls: "iter-today-queue-title" });
-        titleWrap.createSpan({
-          text: `${doneCount}/${dueHabits.length} watered`,
-          cls: `iter-today-queue-count${remaining.length === 0 ? " is-complete" : ""}`
-        });
-        if (remaining.length > 1) {
-          const waterAllBtn = head.createEl("button", {
-            text: `Water all due (${remaining.length})`,
-            type: "button",
-            cls: "iter-ghost-action iter-water-all-btn"
-          });
-          waterAllBtn.addEventListener("click", async () => {
-            for (const item of remaining) {
-              await waterHabit(this.app, item.habit.file);
-            }
-            new Notice2(`Watered ${remaining.length} due habits!`);
-            this.plugin.scheduleRefresh();
-          });
-        }
-        const pills = banner.createDiv({ cls: "iter-today-queue-pills" });
-        for (const { tree, habit } of dueHabits) {
-          const done = habit.wateredInPeriod || habit.wateredToday;
-          const pill = pills.createEl("button", {
-            type: "button",
-            cls: `iter-today-pill${done ? " is-watered" : ""}`,
-            attr: {
-              "aria-pressed": String(habit.wateredToday),
-              title: `${tree.title} \xB7 ${habit.title} (${habit.cadenceLabel})`
-            }
-          });
-          const icon = pill.createSpan({ cls: "iter-chip-icon" });
-          setIcon(icon, done ? "check-circle-2" : "droplet");
-          pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: "iter-today-pill-label" });
-          if (habit.streak > 0) {
-            pill.createSpan({ text: `${habit.streak}d`, cls: "iter-today-pill-streak" });
-          }
-          pill.addEventListener("click", async () => {
-            const watered = await waterHabit(this.app, habit.file);
-            new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-            this.plugin.scheduleRefresh();
-          });
-        }
-      }
-      renderEmptyState(shell) {
-        const empty = shell.createDiv({ cls: "iter-garden-empty" });
-        const art = empty.createDiv({ cls: "iter-empty-art" });
-        renderEmptyPotSvg(art);
-        empty.createEl("h2", { text: "Your garden is quiet", cls: "iter-empty-title" });
-        empty.createEl("p", {
-          text: "Plant a tree for a long-term goal, break it into subgoals, and water it with daily, weekly, or monthly habits.",
-          cls: "iter-empty-copy"
-        });
-        const btn = empty.createEl("button", { text: "Create tree", cls: "mod-cta", type: "button" });
-        btn.addEventListener("click", () => this.plugin.promptCreateTree());
-      }
-      renderPotCard(grid, tree) {
-        const selected = this.selectedTreePath === tree.path;
-        const card = grid.createDiv({
-          cls: `iter-pot-card${selected ? " is-selected" : ""} is-${tree.stats.hydrationState}`
-        });
-        card.setAttribute("tabindex", "0");
-        card.setAttribute("role", "button");
-        card.setAttribute("aria-pressed", String(selected));
-        card.setAttribute("aria-label", `${tree.title}, ${tree.stats.stageLabel}`);
-        card.addEventListener("click", () => this.selectTree(tree.path));
-        card.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            this.selectTree(tree.path);
-          }
-        });
-        const stage = card.createDiv({ cls: "iter-pot-stage" });
-        renderTreeSvg(stage, tree);
-        const meta = card.createDiv({ cls: "iter-pot-meta" });
-        const nameRow = meta.createDiv({ cls: "iter-pot-name-row" });
-        nameRow.createSpan({ text: tree.title, cls: "iter-pot-title" });
-        const rightBadges = nameRow.createDiv({ cls: "iter-pot-badges" });
-        rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
-        if (tree.indexFile) {
-          const openBtn = rightBadges.createEl("button", {
-            cls: "iter-icon-button iter-pot-open-btn",
-            type: "button",
-            attr: {
-              "aria-label": `Open ${tree.title} goal view`,
-              title: `Open ${tree.title} goal view`
-            }
-          });
-          setIcon(openBtn, "arrow-up-right");
-          openBtn.addEventListener("click", (event) => {
-            event.stopPropagation();
-            void this.plugin.openGoal(tree.indexFile);
-          });
-        }
-        if (tree.goal) {
-          meta.createEl("p", { text: tree.goal, cls: "iter-pot-goal" });
-        }
-        const statsParts = [tree.stats.stageLabel];
-        if (tree.stats.subgoalTotal > 0) {
-          statsParts.push(`${tree.stats.subgoalDone}/${tree.stats.subgoalTotal} subgoals`);
-        }
-        if (tree.stats.habitTotal > 0) {
-          statsParts.push(`${tree.stats.habitWatered}/${tree.stats.habitTotal} watered`);
-        }
-        meta.createDiv({ text: statsParts.join(" \xB7 "), cls: "iter-pot-stats" });
-        if (tree.habits.length > 0) {
-          const waterBar = card.createDiv({ cls: "iter-pot-water-bar" });
-          const visibleHabits = tree.habits.slice(0, 3);
-          for (const habit of visibleHabits) {
-            const resting = !habit.isDueToday && !habit.wateredToday;
-            const chip = waterBar.createEl("button", {
-              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
-              type: "button",
-              attr: {
-                "aria-pressed": String(habit.wateredToday),
-                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water ${habit.title}` : `Water ${habit.title} (${habit.cadenceLabel})`
-              }
-            });
-            const drop = chip.createSpan({ cls: "iter-chip-icon" });
-            setIcon(drop, "droplet");
-            chip.createSpan({ text: habit.title, cls: "iter-chip-label" });
-            chip.addEventListener("click", async (event) => {
-              event.stopPropagation();
-              try {
-                const watered = await waterHabit(this.app, habit.file);
-                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not water habit.");
-              }
-            });
-          }
-          if (tree.habits.length > 3) {
-            waterBar.createSpan({ text: `+${tree.habits.length - 3}`, cls: "iter-more-habits" });
-          }
-        }
-      }
-      renderInspector(shell, tree) {
-        const panel = shell.createDiv({ cls: "iter-inspector" });
-        const visual = panel.createDiv({ cls: "iter-inspector-visual" });
-        renderTreeSvg(visual, tree, { large: true });
-        const growthPct = Math.round(tree.stats.growth * 100);
-        visual.createDiv({
-          text: `${tree.stats.stageLabel} \xB7 ${growthPct}%`,
-          cls: "iter-inspector-stage"
-        });
-        visual.createDiv({
-          text: HYDRATION_LABELS[tree.stats.hydrationState],
-          cls: `iter-hydration-badge is-${tree.stats.hydrationState}`
-        });
-        const details = panel.createDiv({ cls: "iter-inspector-details" });
-        const top = details.createDiv({ cls: "iter-inspector-top" });
-        const heading = top.createDiv({ cls: "iter-inspector-heading" });
-        heading.createEl("h2", { text: tree.title, cls: "iter-inspector-title" });
-        heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
-        if (tree.endless) {
-          heading.createSpan({
-            text: "Never-ending",
-            cls: "iter-kind-pill is-endless",
-            attr: { title: "Grows continuously without an expected completion date" }
-          });
-        }
-        const topActions = top.createDiv({ cls: "iter-inspector-top-actions" });
-        if (tree.indexFile) {
-          const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
-          const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
-          setIcon(noteIcon, "target");
-          noteBtn.createSpan({ text: "Open goal" });
-          noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
-        }
-        const closeBtn = topActions.createEl("button", {
-          cls: "iter-icon-button",
-          type: "button",
-          attr: { "aria-label": "Close inspector", title: "Close" }
-        });
-        setIcon(closeBtn, "x");
-        closeBtn.addEventListener("click", () => {
-          this.selectedTreePath = null;
-          this.render();
-        });
-        if (tree.goal) {
-          details.createEl("p", { text: tree.goal, cls: "iter-inspector-goal" });
-        }
-        if (tree.targets.length > 0) {
-          const targetsWrap = details.createDiv({ cls: "iter-targets-strip" });
-          for (const item of tree.targets) {
-            const pill = targetsWrap.createDiv({ cls: "iter-target-pill" });
-            pill.createSpan({ text: item.user, cls: "iter-target-user" });
-            pill.createSpan({ text: item.target, cls: "iter-target-value" });
-          }
-        }
-        const columns = details.createDiv({ cls: "iter-inspector-columns" });
-        const subCol = columns.createDiv({ cls: "iter-inspector-section" });
-        const subHeader = subCol.createDiv({ cls: "iter-section-header" });
-        subHeader.createEl("h3", { text: "Subgoals" });
-        const addSubBtn = subHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
-        const subPlus = addSubBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(subPlus, "plus");
-        addSubBtn.createSpan({ text: "Subgoal" });
-        addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
-        if (!tree.subgoals.length) {
-          subCol.createEl("p", { text: "No subgoals yet.", cls: "iter-section-empty" });
-        } else {
-          const list = subCol.createDiv({ cls: "iter-detail-list" });
-          for (const sub of tree.subgoals) {
-            const row = list.createDiv({ cls: `iter-detail-row${sub.done ? " is-done" : ""}` });
-            const checkBtn = row.createEl("button", {
-              cls: `iter-icon-button iter-check-btn${sub.done ? " is-done" : ""}`,
-              type: "button",
-              attr: {
-                "aria-pressed": String(sub.done),
-                "aria-label": sub.done ? `Mark ${sub.title} incomplete` : `Complete ${sub.title}`
-              }
-            });
-            setIcon(checkBtn, sub.done ? "check-circle-2" : "circle");
-            checkBtn.addEventListener("click", async () => {
-              try {
-                await toggleSubgoal(this.app, sub.file);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not update subgoal.");
-              }
-            });
-            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
-            textBtn.createSpan({ text: sub.title, cls: "iter-detail-title" });
-            if (sub.target) textBtn.createSpan({ text: sub.target, cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
-          }
-        }
-        const habCol = columns.createDiv({ cls: "iter-inspector-section" });
-        const habHeader = habCol.createDiv({ cls: "iter-section-header" });
-        habHeader.createEl("h3", { text: "Habits" });
-        const addHabBtn = habHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
-        const habPlus = addHabBtn.createSpan({ cls: "iter-btn-icon" });
-        setIcon(habPlus, "plus");
-        addHabBtn.createSpan({ text: "Habit" });
-        addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
-        if (!tree.habits.length) {
-          habCol.createEl("p", { text: "No watering habits yet.", cls: "iter-section-empty" });
-        } else {
-          const list = habCol.createDiv({ cls: "iter-detail-list" });
-          for (const habit of tree.habits) {
-            const resting = !habit.isDueToday && !habit.wateredToday;
-            const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? " is-watered" : ""}` });
-            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
-            textBtn.createSpan({ text: habit.title, cls: "iter-detail-title" });
-            const subMeta = [habit.cadenceLabel];
-            if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
-            if (habit.target) subMeta.push(habit.target);
-            textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
-            textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
-            const waterBtn = row.createEl("button", {
-              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
-              type: "button",
-              attr: { "aria-pressed": String(habit.wateredToday) }
-            });
-            const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
-            setIcon(drop, "droplet");
-            waterBtn.createSpan({
-              text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
-            });
-            waterBtn.addEventListener("click", async () => {
-              try {
-                const watered = await waterHabit(this.app, habit.file);
-                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
-                this.plugin.scheduleRefresh();
-              } catch (error) {
-                new Notice2(error?.message || "Could not water habit.");
-              }
-            });
-          }
-        }
-      }
-    };
-    module2.exports = {
-      GardenView: GardenView2,
-      GARDEN_VIEW: GARDEN_VIEW2
+      waterHabit: waterHabit2
     };
   }
 });
@@ -2812,7 +958,7 @@ var require_data_model = __commonJS({
       if (!treeName || treeName.startsWith("_")) return null;
       return `${ROOT}/${treeName}`;
     }
-    function readGoalDocument(app, file) {
+    function readGoalDocument2(app, file) {
       const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
       const kind = resolveGoalKind(file, fm);
       const treePath = resolveParentTreePath(file?.path);
@@ -3534,7 +1680,7 @@ var require_data_model = __commonJS({
         metricKey: typeof raw.metricKey === "string" ? raw.metricKey.trim() : ""
       };
     }
-    async function addWidget(app, file, config) {
+    async function addWidget2(app, file, config) {
       const widget = buildWidgetPayload(config);
       await app.fileManager.processFrontMatter(file, (fm) => {
         const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
@@ -3744,7 +1890,7 @@ var require_data_model = __commonJS({
       normalizeEntry,
       normalizeRelation,
       normalizePipelineRef,
-      readGoalDocument,
+      readGoalDocument: readGoalDocument2,
       discoverChildDatasets,
       datasetMatchesFilter,
       resolveDatasetEntries,
@@ -3763,12 +1909,168 @@ var require_data_model = __commonJS({
       addDatasetEntry,
       updateDatasetEntry,
       removeDatasetEntry,
-      addWidget,
+      addWidget: addWidget2,
       updateWidget,
       removeWidget,
       moveWidget,
       duplicateWidget,
       buildSmartWidgetSuggestions
+    };
+  }
+});
+
+// src/widget-art.js
+var require_widget_art = __commonJS({
+  "src/widget-art.js"(exports2, module2) {
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    function svgEl(tag, attrs = {}) {
+      const node = document.createElementNS(SVG_NS, tag);
+      if (typeof node.isShown !== "function") {
+        node.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
+      }
+      return node;
+    }
+    function round(num) {
+      return Math.round(num * 10) / 10;
+    }
+    function computeChartGeometry(points, options = {}) {
+      const width = options.width ?? 420;
+      const height = options.height ?? 140;
+      const pad = options.pad ?? { top: 14, right: 14, bottom: 24, left: 38 };
+      const plotW = Math.max(40, width - pad.left - pad.right);
+      const plotH = Math.max(30, height - pad.top - pad.bottom);
+      if (!points.length) {
+        return { width, height, pad, plotW, plotH, minVal: 0, maxVal: 0, coords: [] };
+      }
+      const values = points.map((p) => p.value);
+      let minVal = Math.min(...values);
+      let maxVal = Math.max(...values);
+      if (options.variant === "bar") {
+        minVal = Math.min(0, minVal);
+      }
+      if (minVal === maxVal) {
+        const delta = minVal === 0 ? 1 : Math.abs(minVal) * 0.2;
+        minVal = Math.max(0, minVal - delta);
+        maxVal = maxVal + delta;
+      }
+      const span = maxVal - minVal || 1;
+      const count = points.length;
+      const coords = points.map((point, index) => {
+        const xRatio = count === 1 ? 0.5 : index / (count - 1);
+        const x = options.variant === "bar" ? pad.left + (index + 0.5) / count * plotW : pad.left + xRatio * plotW;
+        const yRatio = (point.value - minVal) / span;
+        const y = pad.top + plotH - yRatio * plotH;
+        return {
+          ...point,
+          x: round(x),
+          y: round(y)
+        };
+      });
+      return { width, height, pad, plotW, plotH, minVal, maxVal, coords };
+    }
+    function formatAxisVal(val) {
+      if (!Number.isFinite(val)) return "";
+      if (Math.abs(val) >= 1e3) return `${Math.round(val / 100) / 10}k`;
+      return Number.isInteger(val) ? String(val) : String(Math.round(val * 10) / 10);
+    }
+    function renderChartSvg(container, points, { variant = "line", unit = "", onPointClick } = {}) {
+      const geo = computeChartGeometry(points, { variant });
+      const { width, height, pad, plotW, plotH, minVal, maxVal, coords } = geo;
+      const svg = svgEl("svg", {
+        viewBox: `0 0 ${width} ${height}`,
+        class: `iter-chart-svg is-${variant}`,
+        role: "img",
+        "aria-label": `Progress ${variant} chart`
+      });
+      const baselineY = pad.top + plotH;
+      for (const ratio of [0, 0.5, 1]) {
+        const y = round(pad.top + plotH * (1 - ratio));
+        svg.appendChild(svgEl("line", {
+          x1: pad.left,
+          y1: y,
+          x2: pad.left + plotW,
+          y2: y,
+          class: ratio === 0 ? "iter-chart-axis" : "iter-chart-grid"
+        }));
+      }
+      const minLabel = svgEl("text", { x: pad.left - 6, y: baselineY + 3, class: "iter-chart-label is-y" });
+      minLabel.textContent = formatAxisVal(minVal);
+      svg.appendChild(minLabel);
+      const maxLabel = svgEl("text", { x: pad.left - 6, y: pad.top + 4, class: "iter-chart-label is-y" });
+      maxLabel.textContent = formatAxisVal(maxVal);
+      svg.appendChild(maxLabel);
+      if (!coords.length) return svg;
+      if (variant === "bar") {
+        const slotW = plotW / coords.length;
+        const barW = Math.min(28, Math.max(6, slotW * 0.58));
+        for (const pt of coords) {
+          const barH = Math.max(3, baselineY - pt.y);
+          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
+          const rect = svgEl("rect", {
+            x: round(pt.x - barW / 2),
+            y: round(baselineY - barH),
+            width: round(barW),
+            height: round(barH),
+            rx: Math.min(4, round(barW / 3)),
+            class: `iter-chart-bar${clickable ? " is-clickable" : ""}`
+          });
+          const tip = svgEl("title");
+          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
+          rect.appendChild(tip);
+          if (clickable) {
+            rect.addEventListener("click", () => onPointClick(pt));
+          }
+          svg.appendChild(rect);
+        }
+      } else {
+        if (coords.length > 1) {
+          const linePoints = coords.map((c) => `${c.x},${c.y}`).join(" ");
+          const areaPoints = `${coords[0].x},${baselineY} ${linePoints} ${coords[coords.length - 1].x},${baselineY}`;
+          svg.appendChild(svgEl("polygon", { points: areaPoints, class: "iter-chart-area" }));
+          svg.appendChild(svgEl("polyline", { points: linePoints, class: "iter-chart-line" }));
+        }
+        for (const pt of coords) {
+          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
+          const circle = svgEl("circle", {
+            cx: pt.x,
+            cy: pt.y,
+            r: coords.length === 1 ? 4.5 : 3.5,
+            class: `iter-chart-dot${clickable ? " is-clickable" : ""}`
+          });
+          const tip = svgEl("title");
+          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
+          circle.appendChild(tip);
+          if (clickable) {
+            circle.addEventListener("click", () => onPointClick(pt));
+          }
+          svg.appendChild(circle);
+        }
+      }
+      const firstDate = coords[0]?.date;
+      const lastDate = coords[coords.length - 1]?.date;
+      if (firstDate) {
+        const leftText = svgEl("text", { x: pad.left, y: height - 5, class: "iter-chart-label is-x-start" });
+        leftText.textContent = firstDate;
+        svg.appendChild(leftText);
+      }
+      if (lastDate && lastDate !== firstDate) {
+        const rightText = svgEl("text", { x: pad.left + plotW, y: height - 5, class: "iter-chart-label is-x-end" });
+        rightText.textContent = lastDate;
+        svg.appendChild(rightText);
+      }
+      container.appendChild(svg);
+      return svg;
+    }
+    module2.exports = {
+      computeChartGeometry,
+      renderChartSvg
     };
   }
 });
@@ -3789,7 +2091,7 @@ var require_pipeline = __commonJS({
       stripMd,
       toFiniteNumber,
       formatNumber,
-      readGoalDocument,
+      readGoalDocument: readGoalDocument2,
       discoverChildDatasets,
       datasetMatchesFilter,
       resolveDatasetEntries
@@ -5041,162 +3343,6 @@ var require_pipeline = __commonJS({
   }
 });
 
-// src/widget-art.js
-var require_widget_art = __commonJS({
-  "src/widget-art.js"(exports2, module2) {
-    var SVG_NS = "http://www.w3.org/2000/svg";
-    function svgEl(tag, attrs = {}) {
-      const node = document.createElementNS(SVG_NS, tag);
-      if (typeof node.isShown !== "function") {
-        node.isShown = function() {
-          return Boolean(this.isConnected);
-        };
-      }
-      for (const [key, value] of Object.entries(attrs)) {
-        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
-      }
-      return node;
-    }
-    function round(num) {
-      return Math.round(num * 10) / 10;
-    }
-    function computeChartGeometry(points, options = {}) {
-      const width = options.width ?? 420;
-      const height = options.height ?? 140;
-      const pad = options.pad ?? { top: 14, right: 14, bottom: 24, left: 38 };
-      const plotW = Math.max(40, width - pad.left - pad.right);
-      const plotH = Math.max(30, height - pad.top - pad.bottom);
-      if (!points.length) {
-        return { width, height, pad, plotW, plotH, minVal: 0, maxVal: 0, coords: [] };
-      }
-      const values = points.map((p) => p.value);
-      let minVal = Math.min(...values);
-      let maxVal = Math.max(...values);
-      if (options.variant === "bar") {
-        minVal = Math.min(0, minVal);
-      }
-      if (minVal === maxVal) {
-        const delta = minVal === 0 ? 1 : Math.abs(minVal) * 0.2;
-        minVal = Math.max(0, minVal - delta);
-        maxVal = maxVal + delta;
-      }
-      const span = maxVal - minVal || 1;
-      const count = points.length;
-      const coords = points.map((point, index) => {
-        const xRatio = count === 1 ? 0.5 : index / (count - 1);
-        const x = options.variant === "bar" ? pad.left + (index + 0.5) / count * plotW : pad.left + xRatio * plotW;
-        const yRatio = (point.value - minVal) / span;
-        const y = pad.top + plotH - yRatio * plotH;
-        return {
-          ...point,
-          x: round(x),
-          y: round(y)
-        };
-      });
-      return { width, height, pad, plotW, plotH, minVal, maxVal, coords };
-    }
-    function formatAxisVal(val) {
-      if (!Number.isFinite(val)) return "";
-      if (Math.abs(val) >= 1e3) return `${Math.round(val / 100) / 10}k`;
-      return Number.isInteger(val) ? String(val) : String(Math.round(val * 10) / 10);
-    }
-    function renderChartSvg(container, points, { variant = "line", unit = "", onPointClick } = {}) {
-      const geo = computeChartGeometry(points, { variant });
-      const { width, height, pad, plotW, plotH, minVal, maxVal, coords } = geo;
-      const svg = svgEl("svg", {
-        viewBox: `0 0 ${width} ${height}`,
-        class: `iter-chart-svg is-${variant}`,
-        role: "img",
-        "aria-label": `Progress ${variant} chart`
-      });
-      const baselineY = pad.top + plotH;
-      for (const ratio of [0, 0.5, 1]) {
-        const y = round(pad.top + plotH * (1 - ratio));
-        svg.appendChild(svgEl("line", {
-          x1: pad.left,
-          y1: y,
-          x2: pad.left + plotW,
-          y2: y,
-          class: ratio === 0 ? "iter-chart-axis" : "iter-chart-grid"
-        }));
-      }
-      const minLabel = svgEl("text", { x: pad.left - 6, y: baselineY + 3, class: "iter-chart-label is-y" });
-      minLabel.textContent = formatAxisVal(minVal);
-      svg.appendChild(minLabel);
-      const maxLabel = svgEl("text", { x: pad.left - 6, y: pad.top + 4, class: "iter-chart-label is-y" });
-      maxLabel.textContent = formatAxisVal(maxVal);
-      svg.appendChild(maxLabel);
-      if (!coords.length) return svg;
-      if (variant === "bar") {
-        const slotW = plotW / coords.length;
-        const barW = Math.min(28, Math.max(6, slotW * 0.58));
-        for (const pt of coords) {
-          const barH = Math.max(3, baselineY - pt.y);
-          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
-          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
-          const rect = svgEl("rect", {
-            x: round(pt.x - barW / 2),
-            y: round(baselineY - barH),
-            width: round(barW),
-            height: round(barH),
-            rx: Math.min(4, round(barW / 3)),
-            class: `iter-chart-bar${clickable ? " is-clickable" : ""}`
-          });
-          const tip = svgEl("title");
-          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
-          rect.appendChild(tip);
-          if (clickable) {
-            rect.addEventListener("click", () => onPointClick(pt));
-          }
-          svg.appendChild(rect);
-        }
-      } else {
-        if (coords.length > 1) {
-          const linePoints = coords.map((c) => `${c.x},${c.y}`).join(" ");
-          const areaPoints = `${coords[0].x},${baselineY} ${linePoints} ${coords[coords.length - 1].x},${baselineY}`;
-          svg.appendChild(svgEl("polygon", { points: areaPoints, class: "iter-chart-area" }));
-          svg.appendChild(svgEl("polyline", { points: linePoints, class: "iter-chart-line" }));
-        }
-        for (const pt of coords) {
-          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
-          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
-          const circle = svgEl("circle", {
-            cx: pt.x,
-            cy: pt.y,
-            r: coords.length === 1 ? 4.5 : 3.5,
-            class: `iter-chart-dot${clickable ? " is-clickable" : ""}`
-          });
-          const tip = svgEl("title");
-          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
-          circle.appendChild(tip);
-          if (clickable) {
-            circle.addEventListener("click", () => onPointClick(pt));
-          }
-          svg.appendChild(circle);
-        }
-      }
-      const firstDate = coords[0]?.date;
-      const lastDate = coords[coords.length - 1]?.date;
-      if (firstDate) {
-        const leftText = svgEl("text", { x: pad.left, y: height - 5, class: "iter-chart-label is-x-start" });
-        leftText.textContent = firstDate;
-        svg.appendChild(leftText);
-      }
-      if (lastDate && lastDate !== firstDate) {
-        const rightText = svgEl("text", { x: pad.left + plotW, y: height - 5, class: "iter-chart-label is-x-end" });
-        rightText.textContent = lastDate;
-        svg.appendChild(rightText);
-      }
-      container.appendChild(svg);
-      return svg;
-    }
-    module2.exports = {
-      computeChartGeometry,
-      renderChartSvg
-    };
-  }
-});
-
 // src/canvas-editor.js
 var require_canvas_editor = __commonJS({
   "src/canvas-editor.js"(exports2, module2) {
@@ -5350,7 +3496,7 @@ var require_canvas_editor = __commonJS({
         chip.addEventListener("click", () => onPick(label));
       }
     }
-    var WorkflowEditorModal = class extends Modal {
+    var WorkflowEditorModal2 = class extends Modal {
       constructor(app, { doc, initialTitle = "", initialPipeline = null, onSubmit }) {
         super(app);
         this.goalDoc = doc;
@@ -6600,10 +4746,1916 @@ var require_canvas_editor = __commonJS({
       }
     };
     module2.exports = {
-      WorkflowEditorModal,
+      WorkflowEditorModal: WorkflowEditorModal2,
       renderWidgetDisplayBody,
       NODE_WIDTH,
       PORT_OFFSET_Y
+    };
+  }
+});
+
+// src/catalog.js
+var require_catalog = __commonJS({
+  "src/catalog.js"(exports2, module2) {
+    var {
+      ROOT,
+      WE_PATH,
+      isFolder,
+      normalizeModule,
+      normalizeFrequency,
+      normalizeDays,
+      normalizeStyle,
+      formatCadenceLabel,
+      formatCadenceShort,
+      isScheduledOnDate,
+      normalizeWaterLog,
+      isWateredInPeriod,
+      computeHabitStreak,
+      toDateKey,
+      parseDateKey
+    } = require_storage();
+    function compareNames(a, b) {
+      return a.localeCompare(b, void 0, { sensitivity: "base", numeric: true });
+    }
+    function getFrontmatter(app, file) {
+      if (!file) return null;
+      return app.metadataCache.getFileCache(file)?.frontmatter ?? null;
+    }
+    function readString(fm, key, fallback = "") {
+      const val = fm?.[key];
+      return typeof val === "string" && val.trim() ? val.trim() : fallback;
+    }
+    function isHiddenName(name) {
+      return !name || name.startsWith("_") || name.startsWith(".");
+    }
+    function stripExt(file) {
+      return file.name.endsWith(".md") ? file.name.slice(0, -3) : file.name;
+    }
+    function parseTargets(raw) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      return Object.entries(raw).filter(([user, target]) => typeof user === "string" && user.trim() && target !== void 0 && target !== null && String(target).trim()).map(([user, target]) => ({ user: user.trim(), target: String(target).trim() }));
+    }
+    function readSubgoals(app, treeFolder) {
+      const dir = treeFolder.children.find((child) => isFolder(child) && child.name === "subgoals");
+      if (!dir) return [];
+      return dir.children.filter((child) => !isFolder(child) && child.extension === "md" && !isHiddenName(child.name)).map((file) => {
+        const fm = getFrontmatter(app, file);
+        return {
+          file,
+          title: readString(fm, "title", stripExt(file)),
+          done: Boolean(fm?.done),
+          target: readString(fm, "target", "")
+        };
+      }).sort((a, b) => Number(a.done) - Number(b.done) || compareNames(a.title, b.title));
+    }
+    function readHabits(app, treeFolder, now = /* @__PURE__ */ new Date()) {
+      const dir = treeFolder.children.find((child) => isFolder(child) && child.name === "habits");
+      if (!dir) return [];
+      const today = toDateKey(now);
+      return dir.children.filter((child) => !isFolder(child) && child.extension === "md" && !isHiddenName(child.name)).map((file) => {
+        const fm = getFrontmatter(app, file);
+        const frequency = normalizeFrequency(fm?.frequency);
+        const days = normalizeDays(fm?.days);
+        const waterLog = normalizeWaterLog(fm?.water_log);
+        const lastWatered = typeof fm?.last_watered === "string" && fm.last_watered.trim() ? fm.last_watered.trim() : waterLog.length ? waterLog[waterLog.length - 1] : null;
+        const isDueToday = isScheduledOnDate(frequency, days, today);
+        const wateredInPeriod = isWateredInPeriod(lastWatered, waterLog, frequency, now, days);
+        const wateredToday = waterLog.includes(today) || lastWatered === today;
+        const streak = computeHabitStreak(
+          lastWatered && !waterLog.includes(lastWatered) ? [...waterLog, lastWatered] : waterLog,
+          frequency,
+          now,
+          days
+        );
+        return {
+          file,
+          title: readString(fm, "title", stripExt(file)),
+          frequency,
+          days,
+          cadenceLabel: formatCadenceLabel(frequency, days),
+          cadenceShort: formatCadenceShort(frequency, days),
+          isDueToday,
+          target: readString(fm, "target", ""),
+          lastWatered,
+          waterLog,
+          wateredInPeriod,
+          wateredToday,
+          streak
+        };
+      }).sort((a, b) => compareNames(a.title, b.title));
+    }
+    function readExtraEntries(directory, reservedNames = /* @__PURE__ */ new Set()) {
+      if (!isFolder(directory)) return [];
+      const folders = [];
+      const files = [];
+      for (const child of directory.children) {
+        if (isHiddenName(child.name) || reservedNames.has(child.name)) continue;
+        if (isFolder(child)) {
+          folders.push({
+            kind: "folder",
+            name: child.name,
+            path: child.path,
+            entry: child,
+            children: readExtraEntries(child)
+          });
+        } else {
+          files.push({
+            kind: "file",
+            name: stripExt(child),
+            path: child.path,
+            file: child
+          });
+        }
+      }
+      folders.sort((a, b) => compareNames(a.name, b.name));
+      files.sort((a, b) => compareNames(a.name, b.name));
+      return [...folders, ...files];
+    }
+    function computeTreeStats(subgoals, habits) {
+      const subgoalTotal = subgoals.length;
+      const subgoalDone = subgoals.filter((item) => item.done).length;
+      const dueHabits = habits.filter((item) => item.isDueToday);
+      const dueTotal = dueHabits.length;
+      const dueWatered = dueHabits.filter((item) => item.wateredInPeriod).length;
+      const habitTotal = dueTotal > 0 ? dueTotal : habits.length;
+      const habitWatered = dueTotal > 0 ? dueWatered : habits.filter((item) => item.wateredInPeriod).length;
+      const totalWaterings = habits.reduce((sum, item) => sum + item.waterLog.length, 0);
+      let progress = 0;
+      if (subgoalTotal > 0 && habitTotal > 0) {
+        const subgoalRatio = subgoalDone / subgoalTotal;
+        const periodRatio = habitWatered / habitTotal;
+        const consistency = 1 - Math.exp(-totalWaterings / 8);
+        progress = 0.5 * subgoalRatio + 0.25 * periodRatio + 0.25 * consistency;
+      } else if (subgoalTotal > 0) {
+        progress = subgoalDone / subgoalTotal;
+      } else if (habitTotal > 0) {
+        const periodRatio = habitWatered / habitTotal;
+        const consistency = 1 - Math.exp(-totalWaterings / 8);
+        progress = 0.45 * periodRatio + 0.55 * consistency;
+      }
+      const growth = Math.max(0.18, Math.min(1, 0.18 + 0.82 * progress));
+      let stageLabel = "Seedling";
+      if (growth >= 0.9) stageLabel = "Flourishing";
+      else if (growth >= 0.7) stageLabel = "Canopy";
+      else if (growth >= 0.48) stageLabel = "Young Tree";
+      else if (growth >= 0.28) stageLabel = "Sapling";
+      let hydrationState = "calm";
+      if (habits.length > 0) {
+        if (dueTotal === 0) {
+          hydrationState = habitWatered > 0 ? "hydrated" : "calm";
+        } else if (dueWatered === dueTotal) {
+          hydrationState = "hydrated";
+        } else if (dueWatered > 0) {
+          hydrationState = "partial";
+        } else {
+          hydrationState = "thirsty";
+        }
+      }
+      return {
+        subgoalDone,
+        subgoalTotal,
+        habitWatered,
+        habitTotal,
+        totalWaterings,
+        growth,
+        stageLabel,
+        hydrationState
+      };
+    }
+    function isTreeFolder(folder) {
+      if (!isFolder(folder)) return false;
+      return folder.children.some(
+        (child) => !isFolder(child) && child.name === "_tree.md" || isFolder(child) && (child.name === "subgoals" || child.name === "habits")
+      );
+    }
+    function listGarden2(app, now = /* @__PURE__ */ new Date()) {
+      const indexFile = app.vault.getAbstractFileByPath(WE_PATH);
+      const indexFm = !isFolder(indexFile) ? getFrontmatter(app, indexFile) : null;
+      const members = Array.isArray(indexFm?.members) ? indexFm.members.filter((m) => typeof m === "string" && m.trim()).map((m) => m.trim()) : [];
+      const root = app.vault.getAbstractFileByPath(ROOT);
+      if (!isFolder(root)) {
+        return { indexFile: isFolder(indexFile) ? null : indexFile, members, trees: [], looseItems: [] };
+      }
+      const trees = [];
+      const looseFolders = [];
+      const looseFiles = [];
+      for (const entry of root.children) {
+        if (isHiddenName(entry.name)) continue;
+        if (isFolder(entry) && isTreeFolder(entry)) {
+          const treeFile = entry.children.find((child) => !isFolder(child) && child.name === "_tree.md") ?? null;
+          const fm = getFrontmatter(app, treeFile);
+          const subgoals = readSubgoals(app, entry);
+          const habits = readHabits(app, entry, now);
+          const extras = readExtraEntries(entry, /* @__PURE__ */ new Set(["subgoals", "habits"]));
+          trees.push({
+            path: entry.path,
+            folder: entry,
+            indexFile: treeFile,
+            title: readString(fm, "title", entry.name),
+            module: normalizeModule(fm?.module),
+            goal: readString(fm, "goal", ""),
+            style: normalizeStyle(fm?.style),
+            endless: Boolean(fm?.endless),
+            due: fm?.endless ? "" : typeof fm?.due === "string" && parseDateKey(fm.due) ? fm.due.trim() : "",
+            targets: parseTargets(fm?.targets),
+            subgoals,
+            habits,
+            extras,
+            stats: computeTreeStats(subgoals, habits)
+          });
+        } else if (isFolder(entry)) {
+          looseFolders.push({
+            kind: "folder",
+            name: entry.name,
+            path: entry.path,
+            entry,
+            children: readExtraEntries(entry)
+          });
+        } else {
+          looseFiles.push({
+            kind: "file",
+            name: stripExt(entry),
+            path: entry.path,
+            file: entry
+          });
+        }
+      }
+      trees.sort((a, b) => compareNames(a.title, b.title));
+      looseFolders.sort((a, b) => compareNames(a.name, b.name));
+      looseFiles.sort((a, b) => compareNames(a.name, b.name));
+      return {
+        indexFile: isFolder(indexFile) ? null : indexFile,
+        members,
+        trees,
+        looseItems: [...looseFolders, ...looseFiles]
+      };
+    }
+    function findTreeContext2(app, file) {
+      const path = file?.path;
+      if (typeof path !== "string" || !path.startsWith(`${ROOT}/`)) return null;
+      const rest = path.slice(ROOT.length + 1);
+      const treeName = rest.split("/")[0];
+      if (!treeName || isHiddenName(treeName)) return null;
+      const treePath = `${ROOT}/${treeName}`;
+      const folder = app.vault.getAbstractFileByPath(treePath);
+      return isTreeFolder(folder) ? treePath : null;
+    }
+    module2.exports = {
+      compareNames,
+      computeTreeStats,
+      isTreeFolder,
+      listGarden: listGarden2,
+      findTreeContext: findTreeContext2
+    };
+  }
+});
+
+// src/schedule-picker.js
+var require_schedule_picker = __commonJS({
+  "src/schedule-picker.js"(exports2, module2) {
+    var { WEEKDAYS, normalizeFrequency, normalizeDays, formatCadenceLabel } = require_storage();
+    var CADENCE_OPTIONS = [
+      { id: "daily", label: "Daily" },
+      { id: "weekdays", label: "Specific days" },
+      { id: "weekly", label: "Weekly" },
+      { id: "monthly", label: "Monthly" }
+    ];
+    function renderSchedulePicker(container, { frequency = "daily", days = [], onChange } = {}) {
+      let currentFreq = normalizeFrequency(frequency);
+      let currentDays = new Set(normalizeDays(days));
+      const root = container.createDiv({ cls: "iter-schedule-picker" });
+      const cadenceRow = root.createDiv({ cls: "iter-cadence-pills", attr: { role: "radiogroup", "aria-label": "Habit repetitivity" } });
+      const weekdayWrap = root.createDiv({ cls: "iter-weekday-wrap" });
+      const weekdayGrid = weekdayWrap.createDiv({ cls: "iter-weekday-grid", attr: { role: "group", "aria-label": "Days of the week" } });
+      const summaryEl = weekdayWrap.createDiv({ cls: "iter-schedule-summary" });
+      const cadenceButtons = /* @__PURE__ */ new Map();
+      const dayButtons = /* @__PURE__ */ new Map();
+      const snapshot = () => ({
+        frequency: currentFreq,
+        days: currentFreq === "weekdays" ? normalizeDays(Array.from(currentDays)) : []
+      });
+      const syncUi = () => {
+        for (const [id, btn] of cadenceButtons) {
+          const active = id === currentFreq;
+          btn.toggleClass?.("is-active", active);
+          if (!btn.toggleClass) {
+            btn.className = `iter-cadence-pill${active ? " is-active" : ""}`;
+          }
+          btn.setAttribute("aria-checked", String(active));
+        }
+        const showDays = currentFreq === "weekdays";
+        weekdayWrap.style.display = showDays ? "" : "none";
+        const orderedDays = normalizeDays(Array.from(currentDays));
+        for (const [id, btn] of dayButtons) {
+          const selected = currentDays.has(id);
+          btn.toggleClass?.("is-selected", selected);
+          if (!btn.toggleClass) {
+            btn.className = `iter-weekday-pill${selected ? " is-selected" : ""}`;
+          }
+          btn.setAttribute("aria-pressed", String(selected));
+        }
+        if (showDays) {
+          summaryEl.textContent = orderedDays.length ? `Water on ${formatCadenceLabel("weekdays", orderedDays)}` : "Select one or more days of the week";
+          summaryEl.toggleClass?.("is-empty", orderedDays.length === 0);
+        }
+      };
+      for (const option of CADENCE_OPTIONS) {
+        const btn = cadenceRow.createEl("button", {
+          text: option.label,
+          type: "button",
+          cls: "iter-cadence-pill",
+          attr: { role: "radio" }
+        });
+        cadenceButtons.set(option.id, btn);
+        btn.addEventListener("click", () => {
+          if (currentFreq === option.id) return;
+          currentFreq = option.id;
+          syncUi();
+          onChange?.(snapshot());
+        });
+      }
+      for (const day of WEEKDAYS) {
+        const btn = weekdayGrid.createEl("button", {
+          text: day.label,
+          type: "button",
+          cls: "iter-weekday-pill",
+          attr: { title: day.full, "aria-label": day.full }
+        });
+        dayButtons.set(day.id, btn);
+        btn.addEventListener("click", () => {
+          if (currentDays.has(day.id)) currentDays.delete(day.id);
+          else currentDays.add(day.id);
+          syncUi();
+          onChange?.(snapshot());
+        });
+      }
+      syncUi();
+      return {
+        getValue: snapshot,
+        setValue(nextFreq, nextDays = []) {
+          currentFreq = normalizeFrequency(nextFreq);
+          currentDays = new Set(normalizeDays(nextDays));
+          syncUi();
+        }
+      };
+    }
+    module2.exports = {
+      CADENCE_OPTIONS,
+      renderSchedulePicker
+    };
+  }
+});
+
+// src/modals.js
+var require_modals = __commonJS({
+  "src/modals.js"(exports2, module2) {
+    var { Modal, Notice: Notice2 } = require("obsidian");
+    var { MODULES, STYLES } = require_storage();
+    var { renderSchedulePicker } = require_schedule_picker();
+    var STYLE_LABELS = {
+      auto: "Auto (from module)",
+      canopy: "Canopy",
+      bonsai: "Bonsai",
+      pine: "Pine",
+      willow: "Willow"
+    };
+    var BaseIterModal = class extends Modal {
+      constructor(app, title, submitLabel, onSubmit) {
+        super(app);
+        this.modalTitle = title;
+        this.submitLabel = submitLabel;
+        this.onSubmit = onSubmit;
+        this.submitting = false;
+      }
+      buildForm(contentEl) {
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: this.modalTitle, cls: "iter-modal-title" });
+        return contentEl.createEl("form", { cls: "iter-modal-form" });
+      }
+      addField(form, labelText, buildInput) {
+        const field = form.createDiv({ cls: "iter-modal-field" });
+        const label = field.createEl("label", { text: labelText, cls: "iter-modal-label" });
+        const input = buildInput(field);
+        const id = `iter-field-${Math.random().toString(36).slice(2, 9)}`;
+        input.id = id;
+        label.setAttribute("for", id);
+        return input;
+      }
+      addActions(form, collectValues, focusOnError) {
+        const actions = form.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const submit = actions.createEl("button", { text: this.submitLabel, type: "submit", cls: "mod-cta" });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (this.submitting) return;
+          this.submitting = true;
+          submit.disabled = true;
+          try {
+            await this.onSubmit(collectValues());
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+            focusOnError?.focus();
+          } finally {
+            this.submitting = false;
+            submit.disabled = false;
+          }
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    var CreateTreeModal2 = class extends BaseIterModal {
+      constructor(app, { onSubmit }) {
+        super(app, "Create tree", "Plant tree", onSubmit);
+      }
+      onOpen() {
+        const form = this.buildForm(this.contentEl);
+        const nameInput = this.addField(form, "Tree name", (parent) => {
+          const input = parent.createEl("input", { type: "text", placeholder: "Gym, Learn Japanese\u2026", cls: "iter-modal-input" });
+          input.required = true;
+          return input;
+        });
+        const row = form.createDiv({ cls: "iter-modal-row" });
+        const moduleSelect = this.addField(row, "Module", (parent) => {
+          const select = parent.createEl("select", { cls: "iter-modal-select" });
+          for (const mod of MODULES) {
+            select.createEl("option", { value: mod.id, text: mod.label });
+          }
+          return select;
+        });
+        const styleSelect = this.addField(row, "Tree form", (parent) => {
+          const select = parent.createEl("select", { cls: "iter-modal-select" });
+          for (const style of STYLES) {
+            select.createEl("option", { value: style, text: STYLE_LABELS[style] || style });
+          }
+          return select;
+        });
+        const goalInput = this.addField(
+          form,
+          "Long-term goal (optional)",
+          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. Reach 70kg at 12% body fat", cls: "iter-modal-input" })
+        );
+        let endless = false;
+        const completionField = form.createDiv({ cls: "iter-modal-field" });
+        completionField.createEl("span", { text: "Expected completion", cls: "iter-modal-label" });
+        const horizonPills = completionField.createDiv({ cls: "iter-cadence-pills" });
+        const targetBtn = horizonPills.createEl("button", {
+          text: "Target date",
+          type: "button",
+          cls: "iter-cadence-pill is-active"
+        });
+        const endlessBtn = horizonPills.createEl("button", {
+          text: "Never-ending",
+          type: "button",
+          cls: "iter-cadence-pill"
+        });
+        const dueWrap = completionField.createDiv({ cls: "iter-tree-due-slot" });
+        const dueInput = dueWrap.createEl("input", {
+          type: "date",
+          cls: "iter-modal-input"
+        });
+        const endlessHint = completionField.createDiv({
+          text: "Grows continuously through subgoals and habits without an end date.",
+          cls: "iter-schedule-summary"
+        });
+        const syncHorizon = () => {
+          targetBtn.toggleClass("is-active", !endless);
+          endlessBtn.toggleClass("is-active", endless);
+          targetBtn.setAttribute("aria-pressed", String(!endless));
+          endlessBtn.setAttribute("aria-pressed", String(endless));
+          dueWrap.style.display = endless ? "none" : "";
+          endlessHint.style.display = endless ? "" : "none";
+        };
+        targetBtn.addEventListener("click", () => {
+          endless = false;
+          syncHorizon();
+        });
+        endlessBtn.addEventListener("click", () => {
+          endless = true;
+          dueInput.value = "";
+          syncHorizon();
+        });
+        syncHorizon();
+        this.addActions(
+          form,
+          () => ({
+            name: nameInput.value,
+            module: moduleSelect.value,
+            style: styleSelect.value,
+            goal: goalInput.value,
+            endless,
+            due: endless ? "" : dueInput.value
+          }),
+          nameInput
+        );
+        nameInput.focus();
+      }
+    };
+    var CreateSubgoalModal2 = class extends BaseIterModal {
+      constructor(app, { trees, initialTreePath, onSubmit }) {
+        super(app, "Create subgoal", "Create subgoal", onSubmit);
+        this.trees = trees;
+        this.initialTreePath = initialTreePath;
+      }
+      onOpen() {
+        const form = this.buildForm(this.contentEl);
+        const treeSelect = this.addField(form, "Tree", (parent) => {
+          const select = parent.createEl("select", { cls: "iter-modal-select" });
+          for (const tree of this.trees) {
+            const option = select.createEl("option", { value: tree.path, text: tree.title });
+            if (tree.path === this.initialTreePath) option.selected = true;
+          }
+          return select;
+        });
+        const nameInput = this.addField(form, "Subgoal", (parent) => {
+          const input = parent.createEl("input", { type: "text", placeholder: "e.g. Bench 80kg", cls: "iter-modal-input" });
+          input.required = true;
+          return input;
+        });
+        const targetInput = this.addField(
+          form,
+          "Milestone target (optional)",
+          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. 80kg x 5 reps", cls: "iter-modal-input" })
+        );
+        this.addActions(
+          form,
+          () => ({
+            treePath: treeSelect.value,
+            name: nameInput.value,
+            target: targetInput.value
+          }),
+          nameInput
+        );
+        nameInput.focus();
+      }
+    };
+    var CreateHabitModal2 = class extends BaseIterModal {
+      constructor(app, { trees, initialTreePath, onSubmit }) {
+        super(app, "Create habit", "Create habit", onSubmit);
+        this.trees = trees;
+        this.initialTreePath = initialTreePath;
+      }
+      onOpen() {
+        const form = this.buildForm(this.contentEl);
+        const treeSelect = this.addField(form, "Tree", (parent) => {
+          const select = parent.createEl("select", { cls: "iter-modal-select" });
+          for (const tree of this.trees) {
+            const option = select.createEl("option", { value: tree.path, text: tree.title });
+            if (tree.path === this.initialTreePath) option.selected = true;
+          }
+          return select;
+        });
+        const nameInput = this.addField(form, "Habit", (parent) => {
+          const input = parent.createEl("input", { type: "text", placeholder: "e.g. Go to the Gym", cls: "iter-modal-input" });
+          input.required = true;
+          return input;
+        });
+        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
+        scheduleField.createEl("span", { text: "Repetitivity", cls: "iter-modal-label" });
+        const picker = renderSchedulePicker(scheduleField, { frequency: "daily", days: [] });
+        const targetInput = this.addField(
+          form,
+          "Daily/period target (optional)",
+          (parent) => parent.createEl("input", { type: "text", placeholder: "e.g. 3000 kcal / 10 new words", cls: "iter-modal-input" })
+        );
+        this.addActions(
+          form,
+          () => {
+            const schedule = picker.getValue();
+            return {
+              treePath: treeSelect.value,
+              frequency: schedule.frequency,
+              days: schedule.days,
+              name: nameInput.value,
+              target: targetInput.value
+            };
+          },
+          nameInput
+        );
+        nameInput.focus();
+      }
+    };
+    var EditHabitScheduleModal2 = class extends BaseIterModal {
+      constructor(app, { title, frequency, days, onSubmit }) {
+        super(app, `Repetitivity \xB7 ${title}`, "Save schedule", onSubmit);
+        this.frequency = frequency;
+        this.days = days;
+      }
+      onOpen() {
+        const form = this.buildForm(this.contentEl);
+        const scheduleField = form.createDiv({ cls: "iter-modal-field" });
+        scheduleField.createEl("span", { text: "Watering schedule", cls: "iter-modal-label" });
+        const picker = renderSchedulePicker(scheduleField, {
+          frequency: this.frequency,
+          days: this.days
+        });
+        this.addActions(form, () => picker.getValue());
+      }
+    };
+    var ConfirmDeleteModal2 = class extends Modal {
+      constructor(app, { title, message, confirmLabel = "Delete", onConfirm }) {
+        super(app);
+        this.modalTitle = title;
+        this.message = message;
+        this.confirmLabel = confirmLabel;
+        this.onConfirm = onConfirm;
+        this.submitting = false;
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass("iter-modal");
+        contentEl.createEl("h2", { text: this.modalTitle, cls: "iter-modal-title" });
+        contentEl.createEl("p", { text: this.message, cls: "iter-modal-message" });
+        const actions = contentEl.createDiv({ cls: "iter-modal-actions" });
+        const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
+        cancel.addEventListener("click", () => this.close());
+        const confirm = actions.createEl("button", {
+          text: this.confirmLabel,
+          type: "button",
+          cls: "mod-warning"
+        });
+        confirm.addEventListener("click", async () => {
+          if (this.submitting) return;
+          this.submitting = true;
+          confirm.disabled = true;
+          try {
+            await this.onConfirm();
+            this.close();
+          } catch (error) {
+            new Notice2(error instanceof Error ? error.message : String(error));
+          } finally {
+            this.submitting = false;
+            confirm.disabled = false;
+          }
+        });
+        confirm.focus();
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    module2.exports = {
+      CreateTreeModal: CreateTreeModal2,
+      CreateSubgoalModal: CreateSubgoalModal2,
+      CreateHabitModal: CreateHabitModal2,
+      EditHabitScheduleModal: EditHabitScheduleModal2,
+      ConfirmDeleteModal: ConfirmDeleteModal2
+    };
+  }
+});
+
+// src/panel-view.js
+var require_panel_view = __commonJS({
+  "src/panel-view.js"(exports2, module2) {
+    var { ItemView, Menu, Notice: Notice2, setIcon } = require("obsidian");
+    var { ROOT, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
+    var { listGarden: listGarden2 } = require_catalog();
+    var PANEL_VIEW2 = "iter-panel";
+    var MODULE_ICONS = {
+      gym: "dumbbell",
+      learning: "book-open",
+      creative: "sparkles",
+      health: "heart",
+      general: "trees"
+    };
+    function iconButton(parent, icon, label, callback, extraClass = "") {
+      const button = parent.createEl("button", {
+        cls: `iter-icon-button ${extraClass}`.trim(),
+        type: "button"
+      });
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      setIcon(button, icon);
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void callback(event);
+      });
+      return button;
+    }
+    var IterPanelView2 = class extends ItemView {
+      constructor(leaf, plugin) {
+        super(leaf);
+        this.plugin = plugin;
+        this.expansion = /* @__PURE__ */ new Map();
+        this.renderTimer = null;
+      }
+      getViewType() {
+        return PANEL_VIEW2;
+      }
+      getDisplayText() {
+        return "Iter";
+      }
+      getIcon() {
+        return "sprout";
+      }
+      async onOpen() {
+        this.contentEl.addClass("iter-panel");
+        const schedule = (file) => {
+          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          }
+        };
+        for (const event of ["create", "delete", "modify"]) {
+          this.registerEvent(this.app.vault.on(event, schedule));
+        }
+        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          } else {
+            schedule(file);
+          }
+        }));
+        this.registerEvent(this.app.metadataCache.on("changed", schedule));
+        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
+        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleRender()));
+        this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleRender()));
+        this.render();
+      }
+      async onClose() {
+        if (this.renderTimer !== null) {
+          clearTimeout(this.renderTimer);
+          this.renderTimer = null;
+        }
+      }
+      scheduleRender() {
+        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
+        this.renderTimer = setTimeout(() => {
+          this.renderTimer = null;
+          this.render();
+        }, 90);
+      }
+      isActiveFile(file) {
+        if (!file) return false;
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        if (this.plugin?.goalViewType && recent?.view?.getViewType?.() === this.plugin.goalViewType && recent?.view?.file?.path === file.path) {
+          return true;
+        }
+        const active = this.app.workspace.getActiveFile?.();
+        return Boolean(active && active.path === file.path);
+      }
+      isGardenActive() {
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        return Boolean(this.plugin?.gardenViewType && recent?.view?.getViewType?.() === this.plugin.gardenViewType);
+      }
+      render() {
+        const container = this.contentEl;
+        container.empty();
+        const garden = listGarden2(this.app);
+        const toolbar = container.createDiv({ cls: "iter-toolbar" });
+        toolbar.createEl("span", { text: "Iter", cls: "iter-toolbar-title" });
+        const toolbarActions = toolbar.createDiv({ cls: "iter-toolbar-actions" });
+        iconButton(toolbarActions, "plus", "Create tree", () => this.plugin.promptCreateTree());
+        const weRow = container.createEl("button", {
+          cls: `iter-we-row${this.isGardenActive() ? " is-active" : ""}`,
+          type: "button"
+        });
+        weRow.setAttribute("aria-label", "Open We garden dashboard");
+        if (this.isGardenActive()) weRow.setAttribute("aria-current", "page");
+        const weIcon = weRow.createSpan({ cls: "iter-we-icon" });
+        setIcon(weIcon, "sprout");
+        weRow.createSpan({ text: "We", cls: "iter-we-label" });
+        const countText = garden.trees.length === 1 ? "1 tree" : `${garden.trees.length} trees`;
+        weRow.createSpan({ text: countText, cls: "iter-we-meta" });
+        weRow.addEventListener("click", () => {
+          void this.plugin.openGarden();
+        });
+        const body = container.createDiv({ cls: "iter-panel-list" });
+        if (!garden.trees.length && !garden.looseItems.length) {
+          const empty = body.createDiv({ cls: "iter-panel-empty" });
+          empty.createEl("p", { text: "Your Iter folder is ready." });
+          const plantBtn = empty.createEl("button", { text: "Plant first tree", type: "button", cls: "iter-ghost-action" });
+          plantBtn.addEventListener("click", () => this.plugin.promptCreateTree());
+          return;
+        }
+        if (garden.trees.length > 0) {
+          const filterRow = container.createDiv({ cls: "iter-panel-filter-row" });
+          container.insertBefore?.(filterRow, body);
+          const searchIn = filterRow.createEl("input", {
+            type: "search",
+            placeholder: "Filter goals & habits\u2026",
+            cls: "iter-panel-search"
+          });
+          searchIn.value = this.filterQuery || "";
+          const dueBtn = filterRow.createEl("button", {
+            text: "Due",
+            type: "button",
+            cls: `iter-panel-due-toggle${this.onlyDueToday ? " is-active" : ""}`,
+            attr: { title: "Show only habits due today", "aria-pressed": String(this.onlyDueToday) }
+          });
+          searchIn.addEventListener("input", () => {
+            this.filterQuery = searchIn.value;
+            this.renderListItems(body, garden);
+          });
+          dueBtn.addEventListener("click", () => {
+            this.onlyDueToday = !this.onlyDueToday;
+            dueBtn.toggleClass?.("is-active", this.onlyDueToday);
+            dueBtn.setAttribute("aria-pressed", String(this.onlyDueToday));
+            this.renderListItems(body, garden);
+          });
+        }
+        this.renderListItems(body, garden);
+      }
+      renderListItems(body, garden) {
+        body.empty();
+        const q = (this.filterQuery || "").trim().toLowerCase();
+        const onlyDue = Boolean(this.onlyDueToday);
+        for (const tree of garden.trees) {
+          if (!q && !onlyDue) {
+            this.renderTree(body, tree);
+            continue;
+          }
+          const treeMatch = q && tree.title.toLowerCase().includes(q);
+          const subgoals = onlyDue ? [] : tree.subgoals.filter((s) => treeMatch || !q || s.title.toLowerCase().includes(q));
+          const habits = tree.habits.filter((h) => {
+            if (onlyDue && (!h.isDueToday || h.wateredInPeriod || h.wateredToday)) return false;
+            if (q && !treeMatch && !h.title.toLowerCase().includes(q)) return false;
+            return true;
+          });
+          if (treeMatch || subgoals.length > 0 || habits.length > 0) {
+            this.renderTree(body, { ...tree, subgoals, habits, extras: q || onlyDue ? [] : tree.extras });
+          }
+        }
+        if (!q && !onlyDue && garden.looseItems.length) {
+          const misc = body.createDiv({ cls: "iter-misc-section" });
+          for (const item of garden.looseItems) {
+            this.renderExtraEntry(misc, item);
+          }
+        }
+      }
+      renderToggle(row, key, label, defaultExpanded = true) {
+        const expanded = this.expansion.get(key) ?? defaultExpanded;
+        const toggle = iconButton(
+          row,
+          expanded ? "chevron-down" : "chevron-right",
+          `${expanded ? "Collapse" : "Expand"} ${label}`,
+          () => {
+            this.expansion.set(key, !expanded);
+            this.render();
+          },
+          "iter-toggle"
+        );
+        toggle.setAttribute("aria-expanded", String(expanded));
+        return expanded;
+      }
+      showTreeMenu(event, tree, { allowDelete = true } = {}) {
+        const menu = new Menu();
+        menu.addItem(
+          (item) => item.setTitle("Create subgoal").setIcon("target").onClick(() => this.plugin.promptCreateSubgoal(tree.path))
+        );
+        menu.addItem(
+          (item) => item.setTitle("Create habit").setIcon("droplet").onClick(() => this.plugin.promptCreateHabit(tree.path))
+        );
+        menu.addSeparator();
+        menu.addItem(
+          (item) => item.setTitle("Focus in We garden").setIcon("sprout").onClick(() => void this.plugin.openGarden(tree.path))
+        );
+        if (tree.indexFile) {
+          menu.addItem(
+            (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(tree.indexFile))
+          );
+          menu.addItem(
+            (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(tree.indexFile))
+          );
+        }
+        if (allowDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(() => this.plugin.promptDeleteTree(tree));
+            item.setWarning?.(true);
+          });
+        }
+        menu.showAtMouseEvent(event);
+      }
+      showGoalItemMenu(event, file, extraActions = [], onDelete = null) {
+        const menu = new Menu();
+        menu.addItem(
+          (item) => item.setTitle("Open goal view").setIcon("layout-dashboard").onClick(() => void this.plugin.openGoal(file))
+        );
+        menu.addItem(
+          (item) => item.setTitle("Open markdown").setIcon("file-text").onClick(() => void this.plugin.openFile(file))
+        );
+        if (extraActions.length) {
+          menu.addSeparator();
+          for (const action of extraActions) {
+            menu.addItem((item) => item.setTitle(action.label).setIcon(action.icon).onClick(action.run));
+          }
+        }
+        if (onDelete) {
+          menu.addSeparator();
+          menu.addItem((item) => {
+            item.setTitle("Delete").setIcon("trash").onClick(onDelete);
+            item.setWarning?.(true);
+          });
+        }
+        menu.showAtMouseEvent(event);
+      }
+      renderTree(parent, tree) {
+        const section = parent.createDiv({ cls: "iter-tree-node" });
+        const row = section.createDiv({ cls: "iter-row iter-tree-row" });
+        const expanded = this.renderToggle(row, tree.path, tree.title, true);
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute("title", tree.goal ? `${tree.title} \u2014 ${tree.goal}` : tree.title);
+        if (this.isActiveFile(tree.indexFile)) titleBtn.setAttribute("aria-current", "page");
+        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
+        setIcon(iconEl, MODULE_ICONS[tree.module] || "trees");
+        titleBtn.createSpan({ text: tree.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => {
+          if (tree.indexFile) void this.plugin.openGoal(tree.indexFile);
+          else void this.plugin.openGarden(tree.path);
+        });
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showTreeMenu(event, tree, { allowDelete: true });
+        });
+        if (tree.stats.habitTotal > 0) {
+          const dot = row.createSpan({
+            cls: `iter-hydration-dot is-${tree.stats.hydrationState}`,
+            attr: {
+              title: `${tree.stats.habitWatered}/${tree.stats.habitTotal} habits watered`
+            }
+          });
+          dot.setAttribute("aria-hidden", "true");
+        }
+        iconButton(
+          row,
+          "plus",
+          `Add to ${tree.title}`,
+          (event) => this.showTreeMenu(event, tree, { allowDelete: false }),
+          "iter-row-action"
+        );
+        if (!expanded) return;
+        const childrenEl = section.createDiv({ cls: "iter-tree-children" });
+        const hasItems = tree.subgoals.length > 0 || tree.habits.length > 0 || tree.extras.length > 0;
+        if (!hasItems) {
+          childrenEl.createDiv({ cls: "iter-tree-empty", text: "No subgoals or habits yet" });
+          return;
+        }
+        for (const subgoal of tree.subgoals) {
+          this.renderSubgoal(childrenEl, subgoal);
+        }
+        for (const habit of tree.habits) {
+          this.renderHabit(childrenEl, habit);
+        }
+        for (const extra of tree.extras) {
+          this.renderExtraEntry(childrenEl, extra);
+        }
+      }
+      renderSubgoal(parent, subgoal) {
+        const row = parent.createDiv({ cls: `iter-row iter-subgoal-row${subgoal.done ? " is-done" : ""}` });
+        const toggleBtn = iconButton(
+          row,
+          subgoal.done ? "check-circle-2" : "circle",
+          subgoal.done ? `Mark "${subgoal.title}" incomplete` : `Complete "${subgoal.title}"`,
+          async () => {
+            try {
+              await toggleSubgoal(this.app, subgoal.file);
+              this.plugin.scheduleRefresh();
+            } catch (error) {
+              new Notice2(error?.message || "Could not update subgoal.");
+            }
+          },
+          `iter-check-btn${subgoal.done ? " is-done" : ""}`
+        );
+        toggleBtn.setAttribute("aria-pressed", String(subgoal.done));
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute("title", subgoal.target ? `${subgoal.title} \xB7 ${subgoal.target}` : subgoal.title);
+        if (this.isActiveFile(subgoal.file)) titleBtn.setAttribute("aria-current", "page");
+        titleBtn.createSpan({ text: subgoal.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(subgoal.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            subgoal.file,
+            [
+              {
+                label: subgoal.done ? "Mark incomplete" : "Mark done",
+                icon: subgoal.done ? "circle" : "check-circle-2",
+                run: async () => {
+                  await toggleSubgoal(this.app, subgoal.file);
+                  this.plugin.scheduleRefresh();
+                }
+              }
+            ],
+            () => this.plugin.promptDeleteGoalItem("goal", subgoal)
+          );
+        });
+      }
+      renderHabit(parent, habit) {
+        const resting = !habit.isDueToday && !habit.wateredToday;
+        const row = parent.createDiv({
+          cls: `iter-row iter-habit-row${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
+        });
+        const waterBtn = iconButton(
+          row,
+          "droplet",
+          habit.wateredToday ? `Undo today's watering for "${habit.title}"` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water "${habit.title}" anyway` : `Water "${habit.title}"`,
+          async () => {
+            try {
+              const watered = await waterHabit2(this.app, habit.file);
+              new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+              this.plugin.scheduleRefresh();
+            } catch (error) {
+              new Notice2(error?.message || "Could not water habit.");
+            }
+          },
+          `iter-water-btn${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`
+        );
+        waterBtn.setAttribute("aria-pressed", String(habit.wateredToday));
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        titleBtn.setAttribute(
+          "title",
+          habit.target ? `${habit.title} (${habit.cadenceLabel}) \xB7 ${habit.target}` : `${habit.title} (${habit.cadenceLabel})`
+        );
+        if (this.isActiveFile(habit.file)) titleBtn.setAttribute("aria-current", "page");
+        titleBtn.createSpan({ text: habit.title, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.showGoalItemMenu(
+            event,
+            habit.file,
+            [
+              {
+                label: habit.wateredToday ? "Undo today's watering" : "Water now",
+                icon: "droplet",
+                run: async () => {
+                  await waterHabit2(this.app, habit.file);
+                  this.plugin.scheduleRefresh();
+                }
+              },
+              {
+                label: "Edit repetitivity",
+                icon: "calendar-days",
+                run: () => this.plugin.promptEditHabitSchedule(habit)
+              }
+            ],
+            () => this.plugin.promptDeleteGoalItem("habit", habit)
+          );
+        });
+        if (habit.streak > 0) {
+          row.createSpan({
+            text: `${habit.streak}\u{1F525}`,
+            cls: "iter-streak-mini-badge",
+            attr: { title: `${habit.streak} streak` }
+          });
+        }
+        row.createSpan({
+          text: habit.cadenceShort,
+          cls: "iter-cadence-badge",
+          attr: { title: `${habit.cadenceLabel} habit` }
+        });
+      }
+      renderExtraEntry(parent, entry) {
+        if (entry.kind === "folder") {
+          const section = parent.createDiv({ cls: "iter-extra-folder" });
+          const row2 = section.createDiv({ cls: "iter-row iter-folder-row" });
+          const expanded = this.renderToggle(row2, entry.path, entry.name, false);
+          const label = row2.createSpan({ cls: "iter-row-title iter-static-label" });
+          const iconEl2 = label.createSpan({ cls: "iter-row-icon" });
+          setIcon(iconEl2, "folder");
+          label.createSpan({ text: entry.name, cls: "iter-row-name" });
+          if (!expanded) return;
+          const children = section.createDiv({ cls: "iter-tree-children" });
+          for (const child of entry.children) {
+            this.renderExtraEntry(children, child);
+          }
+          return;
+        }
+        const row = parent.createDiv({ cls: "iter-row iter-file-row" });
+        row.createSpan({ cls: "iter-toggle-spacer" });
+        const titleBtn = row.createEl("button", { cls: "iter-row-title", type: "button" });
+        if (this.isActiveFile(entry.file)) titleBtn.setAttribute("aria-current", "page");
+        const iconEl = titleBtn.createSpan({ cls: "iter-row-icon" });
+        setIcon(iconEl, "file-text");
+        titleBtn.createSpan({ text: entry.name, cls: "iter-row-name" });
+        titleBtn.addEventListener("click", () => void this.plugin.openFile(entry.file));
+      }
+    };
+    module2.exports = {
+      IterPanelView: IterPanelView2,
+      PANEL_VIEW: PANEL_VIEW2
+    };
+  }
+});
+
+// src/tree-art.js
+var require_tree_art = __commonJS({
+  "src/tree-art.js"(exports2, module2) {
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    function hashString(input) {
+      let hash = 2166136261;
+      const text = String(input || "iter");
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+    function createRng(seedValue) {
+      let state = seedValue || 1;
+      return () => {
+        state = Math.imul(1664525, state) + 1013904223 >>> 0;
+        return state / 4294967296;
+      };
+    }
+    function resolveStyle(tree) {
+      if (tree?.style && tree.style !== "auto") return tree.style;
+      switch (tree?.module) {
+        case "gym":
+          return "bonsai";
+        case "learning":
+          return "pine";
+        case "creative":
+          return "willow";
+        default:
+          return "canopy";
+      }
+    }
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+    function round(num) {
+      return Math.round(num * 10) / 10;
+    }
+    function buildCanopyGeometry(growth, rand) {
+      const lean = (rand() - 0.5) * 14;
+      const baseY = 128;
+      const height = 28 + growth * 58;
+      const topY = baseY - height;
+      const topX = 80 + lean * 0.45;
+      const midX = 80 - lean * 0.35;
+      const midY = baseY - height * 0.5;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(midX)} ${round(midY)} ${round(topX)} ${round(topY)}`, width: round(2.2 + growth * 2.4) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      if (growth < 0.25) {
+        canopies.push(
+          { kind: "ellipse", cx: round(topX - 8), cy: round(topY - 2), rx: 8, ry: 4.5, rotate: -26, tone: "a" },
+          { kind: "ellipse", cx: round(topX + 8), cy: round(topY - 4), rx: 7.5, ry: 4, rotate: 24, tone: "b" }
+        );
+        return { trunks, branches, canopies, blossoms };
+      }
+      const leftBranchX = topX - (14 + growth * 14);
+      const leftBranchY = topY + height * 0.28;
+      const rightBranchX = topX + (14 + growth * 14);
+      const rightBranchY = topY + height * 0.22;
+      branches.push(
+        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.52)} Q ${round(topX - 10)} ${round(leftBranchY + 8)} ${round(leftBranchX)} ${round(leftBranchY)}`, width: round(1.5 + growth * 1.1) },
+        { d: `M ${round((midX + topX) / 2)} ${round(baseY - height * 0.58)} Q ${round(topX + 10)} ${round(rightBranchY + 8)} ${round(rightBranchX)} ${round(rightBranchY)}`, width: round(1.5 + growth * 1.1) }
+      );
+      const scale = 0.65 + growth * 0.52;
+      canopies.push(
+        { kind: "ellipse", cx: round(leftBranchX), cy: round(leftBranchY - 4), rx: round(18 * scale), ry: round(13 * scale), rotate: -8, tone: "b" },
+        { kind: "ellipse", cx: round(rightBranchX), cy: round(rightBranchY - 5), rx: round(19 * scale), ry: round(14 * scale), rotate: 8, tone: "b" },
+        { kind: "ellipse", cx: round(topX), cy: round(topY - 8), rx: round(24 * scale), ry: round(18 * scale), rotate: 0, tone: "a" }
+      );
+      if (growth >= 0.55) {
+        canopies.push(
+          { kind: "ellipse", cx: round(topX - 11), cy: round(topY - 14), rx: round(15 * scale), ry: round(11 * scale), rotate: -5, tone: "c" },
+          { kind: "ellipse", cx: round(topX + 10), cy: round(topY - 12), rx: round(14 * scale), ry: round(11 * scale), rotate: 6, tone: "a" }
+        );
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX - 12), cy: round(topY - 10), r: 2.3 },
+          { cx: round(topX + 8), cy: round(topY - 17), r: 2.1 },
+          { cx: round(rightBranchX + 4), cy: round(rightBranchY - 7), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildBonsaiGeometry(growth, rand) {
+      const dir = rand() > 0.5 ? 1 : -1;
+      const baseY = 128;
+      const height = 28 + growth * 50;
+      const bendX = 80 - dir * (16 + growth * 12);
+      const apexX = 80 + dir * (12 + growth * 14);
+      const apexY = baseY - height;
+      const trunks = [
+        { d: `M 80 ${baseY} C ${round(80 - dir * 24)} ${round(baseY - height * 0.35)}, ${round(bendX)} ${round(baseY - height * 0.72)}, ${round(apexX)} ${round(apexY)}`, width: round(2.8 + growth * 2.6) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      if (growth < 0.25) {
+        canopies.push(
+          { kind: "ellipse", cx: round(apexX), cy: round(apexY - 4), rx: 11, ry: 5, rotate: dir * 6, tone: "a" }
+        );
+        return { trunks, branches, canopies, blossoms };
+      }
+      const sideX = 80 - dir * (22 + growth * 14);
+      const sideY = baseY - height * 0.54;
+      branches.push(
+        { d: `M ${round(80 - dir * 10)} ${round(baseY - height * 0.45)} Q ${round(sideX + dir * 8)} ${round(sideY + 6)} ${round(sideX)} ${round(sideY)}`, width: round(1.8 + growth) }
+      );
+      const padScale = 0.7 + growth * 0.48;
+      canopies.push(
+        { kind: "ellipse", cx: round(sideX), cy: round(sideY - 4), rx: round(19 * padScale), ry: round(8 * padScale), rotate: -dir * 4, tone: "b" },
+        { kind: "ellipse", cx: round(apexX), cy: round(apexY - 5), rx: round(24 * padScale), ry: round(9.5 * padScale), rotate: dir * 3, tone: "a" }
+      );
+      if (growth >= 0.58) {
+        const upperX = apexX - dir * 16;
+        const upperY = apexY + 12;
+        branches.push(
+          { d: `M ${round(apexX - dir * 4)} ${round(apexY + 16)} Q ${round(upperX + dir * 6)} ${round(upperY + 4)} ${round(upperX)} ${round(upperY)}`, width: 1.6 }
+        );
+        canopies.push(
+          { kind: "ellipse", cx: round(upperX), cy: round(upperY - 4), rx: round(15 * padScale), ry: round(7 * padScale), rotate: 0, tone: "c" }
+        );
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(apexX - 8), cy: round(apexY - 8), r: 2.2 },
+          { cx: round(apexX + 9), cy: round(apexY - 5), r: 2 },
+          { cx: round(sideX), cy: round(sideY - 6), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildPineGeometry(growth, rand) {
+      const sway = (rand() - 0.5) * 6;
+      const baseY = 128;
+      const height = 32 + growth * 60;
+      const topY = baseY - height;
+      const topX = 80 + sway;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(80 - sway * 0.5)} ${round(baseY - height * 0.5)} ${round(topX)} ${round(topY + 8)}`, width: round(2.2 + growth * 2) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      const tierCount = growth < 0.25 ? 1 : growth < 0.5 ? 2 : growth < 0.8 ? 3 : 4;
+      for (let i = 0; i < tierCount; i += 1) {
+        const t = (i + 1) / (tierCount + 0.35);
+        const tierY = baseY - height * (0.28 + t * 0.68);
+        const halfWidth = (10 + growth * 20) * (1 - i * 0.2);
+        const tierHeight = 14 + growth * 10;
+        const peakY = tierY - tierHeight;
+        const cx = 80 + sway * t;
+        const d = [
+          `M ${round(cx)} ${round(peakY)}`,
+          `Q ${round(cx + halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx + halfWidth)} ${round(tierY)}`,
+          `Q ${round(cx)} ${round(tierY + 4)} ${round(cx - halfWidth)} ${round(tierY)}`,
+          `Q ${round(cx - halfWidth * 0.55)} ${round(tierY - tierHeight * 0.25)} ${round(cx)} ${round(peakY)} Z`
+        ].join(" ");
+        canopies.push({ kind: "path", d, tone: i % 2 === 0 ? "a" : "b" });
+      }
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX), cy: round(topY - 2), r: 2.2 },
+          { cx: round(topX - 9), cy: round(topY + 18), r: 1.9 },
+          { cx: round(topX + 10), cy: round(topY + 26), r: 1.9 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function buildWillowGeometry(growth, rand) {
+      const lean = (rand() - 0.5) * 10;
+      const baseY = 128;
+      const height = 28 + growth * 54;
+      const topY = baseY - height;
+      const topX = 80 + lean * 0.4;
+      const trunks = [
+        { d: `M 80 ${baseY} Q ${round(80 - lean * 0.4)} ${round(baseY - height * 0.48)} ${round(topX)} ${round(topY + 6)}`, width: round(2.2 + growth * 2.2) }
+      ];
+      const branches = [];
+      const canopies = [];
+      const blossoms = [];
+      const frondCount = growth < 0.25 ? 2 : growth < 0.55 ? 4 : 6;
+      const span = 14 + growth * 22;
+      for (let i = 0; i < frondCount; i += 1) {
+        const ratio = frondCount === 1 ? 0.5 : i / (frondCount - 1);
+        const offset = (ratio - 0.5) * 2 * span;
+        const endX = topX + offset;
+        const drop = 16 + growth * 24 - Math.abs(offset) * 0.22;
+        const endY = topY + 6 + drop;
+        const ctrlX = topX + offset * 0.72;
+        const ctrlY = topY - 4;
+        branches.push({
+          d: `M ${round(topX)} ${round(topY + 6)} Q ${round(ctrlX)} ${round(ctrlY)} ${round(endX)} ${round(endY)}`,
+          width: 1.4,
+          soft: true
+        });
+        canopies.push({
+          kind: "ellipse",
+          cx: round(endX),
+          cy: round(endY - 4),
+          rx: 3.8,
+          ry: 7.5,
+          rotate: round(offset * 0.35),
+          tone: i % 2 === 0 ? "a" : "b"
+        });
+      }
+      canopies.unshift({
+        kind: "ellipse",
+        cx: round(topX),
+        cy: round(topY - 2),
+        rx: round(12 + growth * 12),
+        ry: round(7 + growth * 5),
+        rotate: 0,
+        tone: "c"
+      });
+      if (growth >= 0.85) {
+        blossoms.push(
+          { cx: round(topX - 8), cy: round(topY - 3), r: 2.1 },
+          { cx: round(topX + 9), cy: round(topY + 1), r: 2 }
+        );
+      }
+      return { trunks, branches, canopies, blossoms };
+    }
+    function computeTreeGeometry(tree) {
+      const growth = clamp(tree?.stats?.growth ?? 0.2, 0.15, 1);
+      const style = resolveStyle(tree);
+      const rand = createRng(hashString(`${tree?.title || "Iter"}:${style}`));
+      let shapes;
+      if (style === "bonsai") shapes = buildBonsaiGeometry(growth, rand);
+      else if (style === "pine") shapes = buildPineGeometry(growth, rand);
+      else if (style === "willow") shapes = buildWillowGeometry(growth, rand);
+      else shapes = buildCanopyGeometry(growth, rand);
+      return {
+        style,
+        growth,
+        hydrationState: tree?.stats?.hydrationState ?? "calm",
+        ...shapes
+      };
+    }
+    function svgEl(tag, attrs = {}) {
+      const node = document.createElementNS(SVG_NS, tag);
+      if (typeof node.isShown !== "function") {
+        node.isShown = function() {
+          return Boolean(this.isConnected);
+        };
+      }
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value !== void 0 && value !== null) node.setAttribute(key, String(value));
+      }
+      return node;
+    }
+    function appendPot(svg, hydrationState) {
+      svg.appendChild(svgEl("ellipse", {
+        cx: 80,
+        cy: 164,
+        rx: 28,
+        ry: 3.5,
+        class: "iter-svg-shadow"
+      }));
+      svg.appendChild(svgEl("path", {
+        d: "M 55 135 L 105 135 L 98 159 Q 97 162 93 162 L 67 162 Q 63 162 62 159 Z",
+        class: "iter-svg-pot"
+      }));
+      svg.appendChild(svgEl("rect", {
+        x: 51,
+        y: 129,
+        width: 58,
+        height: 6,
+        rx: 3,
+        class: "iter-svg-rim"
+      }));
+      svg.appendChild(svgEl("path", {
+        d: "M 56 129 Q 80 125 104 129",
+        class: "iter-svg-soil"
+      }));
+      if (hydrationState === "hydrated" || hydrationState === "partial") {
+        const dewGroup = svgEl("g", {
+          class: hydrationState === "hydrated" ? "iter-svg-dew is-hydrated" : "iter-svg-dew is-partial"
+        });
+        dewGroup.appendChild(svgEl("path", {
+          d: "M 116 142 C 116 142 120 147.5 120 150 A 4 4 0 1 1 112 150 C 112 147.5 116 142 116 142 Z"
+        }));
+        svg.appendChild(dewGroup);
+      }
+    }
+    function renderTreeSvg(container, tree, options = {}) {
+      const geo = computeTreeGeometry(tree);
+      const svg = svgEl("svg", {
+        viewBox: "0 0 160 176",
+        class: `iter-tree-svg is-${geo.hydrationState} style-${geo.style}${options.large ? " is-large" : ""}`,
+        role: "img",
+        "aria-label": `${tree?.title || "Tree"} (${tree?.stats?.stageLabel || "Seedling"})`
+      });
+      const treeGroup = svgEl("g", { class: "iter-svg-plant" });
+      const canopyGroup = svgEl("g", { class: "iter-svg-canopy" });
+      for (const trunk of geo.trunks) {
+        treeGroup.appendChild(svgEl("path", {
+          d: trunk.d,
+          "stroke-width": trunk.width,
+          class: "iter-svg-trunk"
+        }));
+      }
+      for (const branch of geo.branches) {
+        treeGroup.appendChild(svgEl("path", {
+          d: branch.d,
+          "stroke-width": branch.width,
+          class: branch.soft ? "iter-svg-branch is-soft" : "iter-svg-branch"
+        }));
+      }
+      for (const shape of geo.canopies) {
+        if (shape.kind === "path") {
+          canopyGroup.appendChild(svgEl("path", {
+            d: shape.d,
+            class: `iter-svg-foliage tone-${shape.tone}`
+          }));
+        } else {
+          const transform = shape.rotate ? `rotate(${shape.rotate} ${shape.cx} ${shape.cy})` : null;
+          canopyGroup.appendChild(svgEl("ellipse", {
+            cx: shape.cx,
+            cy: shape.cy,
+            rx: shape.rx,
+            ry: shape.ry,
+            transform,
+            class: `iter-svg-foliage tone-${shape.tone}`
+          }));
+        }
+      }
+      for (const blossom of geo.blossoms) {
+        canopyGroup.appendChild(svgEl("circle", {
+          cx: blossom.cx,
+          cy: blossom.cy,
+          r: blossom.r,
+          class: "iter-svg-blossom"
+        }));
+      }
+      treeGroup.appendChild(canopyGroup);
+      svg.appendChild(treeGroup);
+      appendPot(svg, geo.hydrationState);
+      container.appendChild(svg);
+      return svg;
+    }
+    function renderEmptyPotSvg(container) {
+      const svg = svgEl("svg", {
+        viewBox: "0 0 160 176",
+        class: "iter-tree-svg is-empty-pot",
+        "aria-hidden": "true"
+      });
+      svg.appendChild(svgEl("path", {
+        d: "M 80 128 Q 78 112 72 106",
+        "stroke-width": 2,
+        class: "iter-svg-trunk"
+      }));
+      svg.appendChild(svgEl("ellipse", {
+        cx: 72,
+        cy: 103,
+        rx: 6,
+        ry: 3.2,
+        transform: "rotate(-25 72 103)",
+        class: "iter-svg-foliage tone-a"
+      }));
+      appendPot(svg, "calm");
+      container.appendChild(svg);
+      return svg;
+    }
+    module2.exports = {
+      resolveStyle,
+      computeTreeGeometry,
+      renderTreeSvg,
+      renderEmptyPotSvg
+    };
+  }
+});
+
+// src/garden-view.js
+var require_garden_view = __commonJS({
+  "src/garden-view.js"(exports2, module2) {
+    var { ItemView, Notice: Notice2, setIcon } = require("obsidian");
+    var { MODULES, ROOT, toggleSubgoal, waterHabit: waterHabit2 } = require_storage();
+    var { listGarden: listGarden2 } = require_catalog();
+    var { renderTreeSvg, renderEmptyPotSvg } = require_tree_art();
+    var GARDEN_VIEW2 = "iter-garden";
+    var MODULE_LABELS = Object.fromEntries(MODULES.map((item) => [item.id, item.label]));
+    var HYDRATION_LABELS = {
+      hydrated: "Watered",
+      partial: "Partly watered",
+      thirsty: "Needs water",
+      calm: "No habits yet"
+    };
+    var GardenView2 = class extends ItemView {
+      constructor(leaf, plugin) {
+        super(leaf);
+        this.plugin = plugin;
+        this.selectedTreePath = null;
+        this.renderTimer = null;
+      }
+      getViewType() {
+        return GARDEN_VIEW2;
+      }
+      getDisplayText() {
+        return "We";
+      }
+      getIcon() {
+        return "sprout";
+      }
+      async setState(state, result) {
+        if (state?.selectedTreePath !== void 0) {
+          this.selectedTreePath = state.selectedTreePath;
+          this.render();
+        }
+        await super.setState(state, result);
+      }
+      getState() {
+        return { selectedTreePath: this.selectedTreePath };
+      }
+      async onOpen() {
+        this.contentEl.addClass("iter-garden");
+        const schedule = (file) => {
+          if (!file || file.path === ROOT || file.path.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          }
+        };
+        for (const event of ["create", "delete", "modify"]) {
+          this.registerEvent(this.app.vault.on(event, schedule));
+        }
+        this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+          if (oldPath === this.selectedTreePath) {
+            this.selectedTreePath = file.path;
+          }
+          if (oldPath === ROOT || oldPath.startsWith(`${ROOT}/`)) {
+            this.scheduleRender();
+          } else {
+            schedule(file);
+          }
+        }));
+        this.registerEvent(this.app.metadataCache.on("changed", schedule));
+        this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
+        this.render();
+      }
+      async onClose() {
+        if (this.renderTimer !== null) {
+          clearTimeout(this.renderTimer);
+          this.renderTimer = null;
+        }
+      }
+      scheduleRender() {
+        if (this.renderTimer !== null) clearTimeout(this.renderTimer);
+        this.renderTimer = setTimeout(() => {
+          this.renderTimer = null;
+          this.render();
+        }, 90);
+      }
+      selectTree(treePath) {
+        this.selectedTreePath = this.selectedTreePath === treePath ? null : treePath;
+        this.render();
+      }
+      render() {
+        const container = this.contentEl;
+        container.empty();
+        const garden = listGarden2(this.app);
+        if (this.selectedTreePath && !garden.trees.some((tree) => tree.path === this.selectedTreePath)) {
+          this.selectedTreePath = null;
+        }
+        const shell = container.createDiv({ cls: "iter-garden-shell" });
+        this.renderHeader(shell, garden);
+        if (!garden.trees.length) {
+          this.renderEmptyState(shell);
+          return;
+        }
+        this.renderTodayQueue(shell, garden);
+        const grid = shell.createDiv({ cls: "iter-garden-grid" });
+        for (const tree of garden.trees) {
+          this.renderPotCard(grid, tree);
+        }
+        const selected = this.selectedTreePath ? garden.trees.find((tree) => tree.path === this.selectedTreePath) : null;
+        if (selected) {
+          this.renderInspector(shell, selected);
+        }
+      }
+      renderHeader(shell, garden) {
+        const header = shell.createDiv({ cls: "iter-garden-header" });
+        const titleGroup = header.createDiv({ cls: "iter-garden-heading" });
+        titleGroup.createEl("h1", { text: "We", cls: "iter-garden-title" });
+        const totalSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalTotal, 0);
+        const doneSubgoals = garden.trees.reduce((sum, t) => sum + t.stats.subgoalDone, 0);
+        const totalHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitTotal, 0);
+        const wateredHabits = garden.trees.reduce((sum, t) => sum + t.stats.habitWatered, 0);
+        const parts = [];
+        if (garden.trees.length) {
+          parts.push(`${garden.trees.length} ${garden.trees.length === 1 ? "tree" : "trees"}`);
+          if (totalSubgoals) parts.push(`${doneSubgoals}/${totalSubgoals} subgoals`);
+          if (totalHabits) parts.push(`${wateredHabits}/${totalHabits} watered`);
+        } else {
+          parts.push("Shared long-term garden");
+        }
+        titleGroup.createEl("p", { text: parts.join(" \xB7 "), cls: "iter-garden-subtitle" });
+        const actions = header.createDiv({ cls: "iter-garden-actions" });
+        if (garden.members.length) {
+          const membersWrap = actions.createDiv({ cls: "iter-members-strip" });
+          for (const member of garden.members) {
+            membersWrap.createSpan({ text: member, cls: "iter-member-pill" });
+          }
+        }
+        const newTreeBtn = actions.createEl("button", {
+          cls: "iter-primary-pill",
+          type: "button"
+        });
+        const plusIcon = newTreeBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(plusIcon, "plus");
+        newTreeBtn.createSpan({ text: "New tree" });
+        newTreeBtn.addEventListener("click", () => this.plugin.promptCreateTree());
+      }
+      renderTodayQueue(shell, garden) {
+        const dueHabits = [];
+        for (const tree of garden.trees) {
+          for (const habit of tree.habits) {
+            if (habit.isDueToday || habit.wateredToday) {
+              dueHabits.push({ tree, habit });
+            }
+          }
+        }
+        if (!dueHabits.length) return;
+        const doneCount = dueHabits.filter((item) => item.habit.wateredInPeriod || item.habit.wateredToday).length;
+        const remaining = dueHabits.filter((item) => !item.habit.wateredInPeriod && !item.habit.wateredToday);
+        const banner = shell.createDiv({ cls: "iter-today-queue" });
+        const head = banner.createDiv({ cls: "iter-today-queue-head" });
+        const titleWrap = head.createDiv({ cls: "iter-today-queue-title-wrap" });
+        const dropIcon = titleWrap.createSpan({ cls: "iter-btn-icon" });
+        setIcon(dropIcon, "droplet");
+        titleWrap.createSpan({ text: "Today\u2019s watering queue", cls: "iter-today-queue-title" });
+        titleWrap.createSpan({
+          text: `${doneCount}/${dueHabits.length} watered`,
+          cls: `iter-today-queue-count${remaining.length === 0 ? " is-complete" : ""}`
+        });
+        if (remaining.length > 1) {
+          const waterAllBtn = head.createEl("button", {
+            text: `Water all due (${remaining.length})`,
+            type: "button",
+            cls: "iter-ghost-action iter-water-all-btn"
+          });
+          waterAllBtn.addEventListener("click", async () => {
+            for (const item of remaining) {
+              await waterHabit2(this.app, item.habit.file);
+            }
+            new Notice2(`Watered ${remaining.length} due habits!`);
+            this.plugin.scheduleRefresh();
+          });
+        }
+        const pills = banner.createDiv({ cls: "iter-today-queue-pills" });
+        for (const { tree, habit } of dueHabits) {
+          const done = habit.wateredInPeriod || habit.wateredToday;
+          const pill = pills.createEl("button", {
+            type: "button",
+            cls: `iter-today-pill${done ? " is-watered" : ""}`,
+            attr: {
+              "aria-pressed": String(habit.wateredToday),
+              title: `${tree.title} \xB7 ${habit.title} (${habit.cadenceLabel})`
+            }
+          });
+          const icon = pill.createSpan({ cls: "iter-chip-icon" });
+          setIcon(icon, done ? "check-circle-2" : "droplet");
+          pill.createSpan({ text: `${tree.title}: ${habit.title}`, cls: "iter-today-pill-label" });
+          if (habit.streak > 0) {
+            pill.createSpan({ text: `${habit.streak}d`, cls: "iter-today-pill-streak" });
+          }
+          pill.addEventListener("click", async () => {
+            const watered = await waterHabit2(this.app, habit.file);
+            new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+            this.plugin.scheduleRefresh();
+          });
+        }
+      }
+      renderEmptyState(shell) {
+        const empty = shell.createDiv({ cls: "iter-garden-empty" });
+        const art = empty.createDiv({ cls: "iter-empty-art" });
+        renderEmptyPotSvg(art);
+        empty.createEl("h2", { text: "Your garden is quiet", cls: "iter-empty-title" });
+        empty.createEl("p", {
+          text: "Plant a tree for a long-term goal, break it into subgoals, and water it with daily, weekly, or monthly habits.",
+          cls: "iter-empty-copy"
+        });
+        const btn = empty.createEl("button", { text: "Create tree", cls: "mod-cta", type: "button" });
+        btn.addEventListener("click", () => this.plugin.promptCreateTree());
+      }
+      renderPotCard(grid, tree) {
+        const selected = this.selectedTreePath === tree.path;
+        const card = grid.createDiv({
+          cls: `iter-pot-card${selected ? " is-selected" : ""} is-${tree.stats.hydrationState}`
+        });
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-pressed", String(selected));
+        card.setAttribute("aria-label", `${tree.title}, ${tree.stats.stageLabel}`);
+        card.addEventListener("click", () => this.selectTree(tree.path));
+        card.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            this.selectTree(tree.path);
+          }
+        });
+        const stage = card.createDiv({ cls: "iter-pot-stage" });
+        renderTreeSvg(stage, tree);
+        const meta = card.createDiv({ cls: "iter-pot-meta" });
+        const nameRow = meta.createDiv({ cls: "iter-pot-name-row" });
+        nameRow.createSpan({ text: tree.title, cls: "iter-pot-title" });
+        const rightBadges = nameRow.createDiv({ cls: "iter-pot-badges" });
+        rightBadges.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.indexFile) {
+          const openBtn = rightBadges.createEl("button", {
+            cls: "iter-icon-button iter-pot-open-btn",
+            type: "button",
+            attr: {
+              "aria-label": `Open ${tree.title} goal view`,
+              title: `Open ${tree.title} goal view`
+            }
+          });
+          setIcon(openBtn, "arrow-up-right");
+          openBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.plugin.openGoal(tree.indexFile);
+          });
+        }
+        if (tree.goal) {
+          meta.createEl("p", { text: tree.goal, cls: "iter-pot-goal" });
+        }
+        const statsParts = [tree.stats.stageLabel];
+        if (tree.stats.subgoalTotal > 0) {
+          statsParts.push(`${tree.stats.subgoalDone}/${tree.stats.subgoalTotal} subgoals`);
+        }
+        if (tree.stats.habitTotal > 0) {
+          statsParts.push(`${tree.stats.habitWatered}/${tree.stats.habitTotal} watered`);
+        }
+        meta.createDiv({ text: statsParts.join(" \xB7 "), cls: "iter-pot-stats" });
+        if (tree.habits.length > 0) {
+          const waterBar = card.createDiv({ cls: "iter-pot-water-bar" });
+          const visibleHabits = tree.habits.slice(0, 3);
+          for (const habit of visibleHabits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
+            const chip = waterBar.createEl("button", {
+              cls: `iter-water-chip${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
+              type: "button",
+              attr: {
+                "aria-pressed": String(habit.wateredToday),
+                title: habit.wateredToday ? `Undo today's water: ${habit.title}` : resting ? `Rest day (${habit.cadenceLabel}) \u2014 click to water ${habit.title}` : `Water ${habit.title} (${habit.cadenceLabel})`
+              }
+            });
+            const drop = chip.createSpan({ cls: "iter-chip-icon" });
+            setIcon(drop, "droplet");
+            chip.createSpan({ text: habit.title, cls: "iter-chip-label" });
+            chip.addEventListener("click", async (event) => {
+              event.stopPropagation();
+              try {
+                const watered = await waterHabit2(this.app, habit.file);
+                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not water habit.");
+              }
+            });
+          }
+          if (tree.habits.length > 3) {
+            waterBar.createSpan({ text: `+${tree.habits.length - 3}`, cls: "iter-more-habits" });
+          }
+        }
+      }
+      renderInspector(shell, tree) {
+        const panel = shell.createDiv({ cls: "iter-inspector" });
+        const visual = panel.createDiv({ cls: "iter-inspector-visual" });
+        renderTreeSvg(visual, tree, { large: true });
+        const growthPct = Math.round(tree.stats.growth * 100);
+        visual.createDiv({
+          text: `${tree.stats.stageLabel} \xB7 ${growthPct}%`,
+          cls: "iter-inspector-stage"
+        });
+        visual.createDiv({
+          text: HYDRATION_LABELS[tree.stats.hydrationState],
+          cls: `iter-hydration-badge is-${tree.stats.hydrationState}`
+        });
+        const details = panel.createDiv({ cls: "iter-inspector-details" });
+        const top = details.createDiv({ cls: "iter-inspector-top" });
+        const heading = top.createDiv({ cls: "iter-inspector-heading" });
+        heading.createEl("h2", { text: tree.title, cls: "iter-inspector-title" });
+        heading.createSpan({ text: MODULE_LABELS[tree.module] || tree.module, cls: "iter-module-pill" });
+        if (tree.endless) {
+          heading.createSpan({
+            text: "Never-ending",
+            cls: "iter-kind-pill is-endless",
+            attr: { title: "Grows continuously without an expected completion date" }
+          });
+        }
+        const topActions = top.createDiv({ cls: "iter-inspector-top-actions" });
+        if (tree.indexFile) {
+          const noteBtn = topActions.createEl("button", { cls: "iter-ghost-action", type: "button" });
+          const noteIcon = noteBtn.createSpan({ cls: "iter-btn-icon" });
+          setIcon(noteIcon, "target");
+          noteBtn.createSpan({ text: "Open goal" });
+          noteBtn.addEventListener("click", () => void this.plugin.openGoal(tree.indexFile));
+        }
+        const closeBtn = topActions.createEl("button", {
+          cls: "iter-icon-button",
+          type: "button",
+          attr: { "aria-label": "Close inspector", title: "Close" }
+        });
+        setIcon(closeBtn, "x");
+        closeBtn.addEventListener("click", () => {
+          this.selectedTreePath = null;
+          this.render();
+        });
+        if (tree.goal) {
+          details.createEl("p", { text: tree.goal, cls: "iter-inspector-goal" });
+        }
+        if (tree.targets.length > 0) {
+          const targetsWrap = details.createDiv({ cls: "iter-targets-strip" });
+          for (const item of tree.targets) {
+            const pill = targetsWrap.createDiv({ cls: "iter-target-pill" });
+            pill.createSpan({ text: item.user, cls: "iter-target-user" });
+            pill.createSpan({ text: item.target, cls: "iter-target-value" });
+          }
+        }
+        const columns = details.createDiv({ cls: "iter-inspector-columns" });
+        const subCol = columns.createDiv({ cls: "iter-inspector-section" });
+        const subHeader = subCol.createDiv({ cls: "iter-section-header" });
+        subHeader.createEl("h3", { text: "Subgoals" });
+        const addSubBtn = subHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const subPlus = addSubBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(subPlus, "plus");
+        addSubBtn.createSpan({ text: "Subgoal" });
+        addSubBtn.addEventListener("click", () => this.plugin.promptCreateSubgoal(tree.path));
+        if (!tree.subgoals.length) {
+          subCol.createEl("p", { text: "No subgoals yet.", cls: "iter-section-empty" });
+        } else {
+          const list = subCol.createDiv({ cls: "iter-detail-list" });
+          for (const sub of tree.subgoals) {
+            const row = list.createDiv({ cls: `iter-detail-row${sub.done ? " is-done" : ""}` });
+            const checkBtn = row.createEl("button", {
+              cls: `iter-icon-button iter-check-btn${sub.done ? " is-done" : ""}`,
+              type: "button",
+              attr: {
+                "aria-pressed": String(sub.done),
+                "aria-label": sub.done ? `Mark ${sub.title} incomplete` : `Complete ${sub.title}`
+              }
+            });
+            setIcon(checkBtn, sub.done ? "check-circle-2" : "circle");
+            checkBtn.addEventListener("click", async () => {
+              try {
+                await toggleSubgoal(this.app, sub.file);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not update subgoal.");
+              }
+            });
+            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
+            textBtn.createSpan({ text: sub.title, cls: "iter-detail-title" });
+            if (sub.target) textBtn.createSpan({ text: sub.target, cls: "iter-detail-sub" });
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(sub.file));
+          }
+        }
+        const habCol = columns.createDiv({ cls: "iter-inspector-section" });
+        const habHeader = habCol.createDiv({ cls: "iter-section-header" });
+        habHeader.createEl("h3", { text: "Habits" });
+        const addHabBtn = habHeader.createEl("button", { cls: "iter-ghost-action", type: "button" });
+        const habPlus = addHabBtn.createSpan({ cls: "iter-btn-icon" });
+        setIcon(habPlus, "plus");
+        addHabBtn.createSpan({ text: "Habit" });
+        addHabBtn.addEventListener("click", () => this.plugin.promptCreateHabit(tree.path));
+        if (!tree.habits.length) {
+          habCol.createEl("p", { text: "No watering habits yet.", cls: "iter-section-empty" });
+        } else {
+          const list = habCol.createDiv({ cls: "iter-detail-list" });
+          for (const habit of tree.habits) {
+            const resting = !habit.isDueToday && !habit.wateredToday;
+            const row = list.createDiv({ cls: `iter-detail-row${habit.wateredInPeriod ? " is-watered" : ""}` });
+            const textBtn = row.createEl("button", { cls: "iter-detail-link", type: "button" });
+            textBtn.createSpan({ text: habit.title, cls: "iter-detail-title" });
+            const subMeta = [habit.cadenceLabel];
+            if (habit.streak > 0) subMeta.push(`${habit.streak} streak`);
+            if (habit.target) subMeta.push(habit.target);
+            textBtn.createSpan({ text: subMeta.join(" \xB7 "), cls: "iter-detail-sub" });
+            textBtn.addEventListener("click", () => void this.plugin.openGoal(habit.file));
+            const waterBtn = row.createEl("button", {
+              cls: `iter-water-action${habit.wateredInPeriod ? " is-watered" : ""}${resting ? " is-rest" : ""}`,
+              type: "button",
+              attr: { "aria-pressed": String(habit.wateredToday) }
+            });
+            const drop = waterBtn.createSpan({ cls: "iter-btn-icon" });
+            setIcon(drop, "droplet");
+            waterBtn.createSpan({
+              text: habit.wateredToday ? "Watered" : habit.wateredInPeriod ? "Done" : resting ? "Rest day" : "Water"
+            });
+            waterBtn.addEventListener("click", async () => {
+              try {
+                const watered = await waterHabit2(this.app, habit.file);
+                new Notice2(watered ? `Watered ${habit.title}` : `Unwatered ${habit.title} for today`);
+                this.plugin.scheduleRefresh();
+              } catch (error) {
+                new Notice2(error?.message || "Could not water habit.");
+              }
+            });
+          }
+        }
+      }
+    };
+    module2.exports = {
+      GardenView: GardenView2,
+      GARDEN_VIEW: GARDEN_VIEW2
     };
   }
 });
@@ -7600,7 +7652,7 @@ var require_goal_view = __commonJS({
       ROOT,
       toDateKey,
       toggleSubgoal,
-      waterHabit,
+      waterHabit: waterHabit2,
       updateHabitSchedule: updateHabitSchedule2,
       formatCadenceLabel,
       isScheduledOnDate,
@@ -7610,7 +7662,7 @@ var require_goal_view = __commonJS({
     var { renderSchedulePicker } = require_schedule_picker();
     var {
       DATASET_TYPES,
-      readGoalDocument,
+      readGoalDocument: readGoalDocument2,
       resolveDatasetEntries,
       resolveNumericSeries,
       computeStat,
@@ -7624,7 +7676,7 @@ var require_goal_view = __commonJS({
       addDatasetEntry,
       updateDatasetEntry,
       removeDatasetEntry,
-      addWidget,
+      addWidget: addWidget2,
       updateWidget,
       removeWidget,
       moveWidget,
@@ -7636,7 +7688,7 @@ var require_goal_view = __commonJS({
       describeRelation
     } = require_data_model();
     var { evaluatePipeline, buildPipelineFromSimpleConfig } = require_pipeline();
-    var { WorkflowEditorModal, renderWidgetDisplayBody } = require_canvas_editor();
+    var { WorkflowEditorModal: WorkflowEditorModal2, renderWidgetDisplayBody } = require_canvas_editor();
     var {
       AddDatasetModal,
       AddWidgetModal,
@@ -7674,12 +7726,12 @@ var require_goal_view = __commonJS({
       }
       getDisplayText() {
         if (!this.file) return "Goal";
-        const doc = readGoalDocument(this.app, this.file);
+        const doc = readGoalDocument2(this.app, this.file);
         return doc.title || "Goal";
       }
       getIcon() {
         if (!this.file) return "target";
-        const doc = readGoalDocument(this.app, this.file);
+        const doc = readGoalDocument2(this.app, this.file);
         if (doc.kind === "tree") return "trees";
         if (doc.kind === "habit") return "droplet";
         return "target";
@@ -7704,7 +7756,7 @@ var require_goal_view = __commonJS({
           if (!changedFile) return true;
           if (changedFile.path === this.file.path) return true;
           if (changedFile.path.startsWith(`${ROOT}/`)) return true;
-          const doc = readGoalDocument(this.app, this.file);
+          const doc = readGoalDocument2(this.app, this.file);
           return doc.datasets.some(
             (ds) => (ds.type === "note" || ds.type === "note_time") && ds.entries.some((e) => e.path === changedFile.path)
           );
@@ -7762,7 +7814,7 @@ var require_goal_view = __commonJS({
           backBtn.addEventListener("click", () => void this.plugin.openGarden());
           return;
         }
-        const doc = readGoalDocument(this.app, this.file);
+        const doc = readGoalDocument2(this.app, this.file);
         const shell = container.createDiv({ cls: "iter-goal-shell" });
         this.renderHeader(shell, doc);
         this.renderOverview(shell, doc);
@@ -7826,7 +7878,7 @@ var require_goal_view = __commonJS({
             text: wateredToday ? "Watered today" : watered ? `Done (${cadenceLabel})` : !dueToday ? `Rest day (${cadenceLabel})` : `Water (${cadenceLabel})`
           });
           waterBtn.addEventListener("click", async () => {
-            const res = await waterHabit(this.app, this.file);
+            const res = await waterHabit2(this.app, this.file);
             new Notice2(res ? `Watered ${doc.title}` : `Unwatered ${doc.title} for today`);
             this.render();
             this.plugin.scheduleRefresh();
@@ -7914,12 +7966,12 @@ var require_goal_view = __commonJS({
         const headerActions = header.createDiv({ cls: "iter-goal-top-actions" });
         const openCanvasEditor = (draftConfig = null) => {
           const initialPipeline = draftConfig ? buildPipelineFromSimpleConfig(draftConfig, doc) : null;
-          new WorkflowEditorModal(this.app, {
+          new WorkflowEditorModal2(this.app, {
             doc,
             initialTitle: draftConfig?.title || "",
             initialPipeline,
             onSubmit: async (cfg) => {
-              await addWidget(this.app, this.file, cfg);
+              await addWidget2(this.app, this.file, cfg);
               this.render();
             }
           }).open();
@@ -7947,7 +7999,7 @@ var require_goal_view = __commonJS({
             treePath: doc.treePath,
             onOpenCanvas: (draft) => openCanvasEditor(draft),
             onSubmit: async (config) => {
-              await addWidget(this.app, this.file, config);
+              await addWidget2(this.app, this.file, config);
               this.render();
             }
           }).open();
@@ -7966,7 +8018,7 @@ var require_goal_view = __commonJS({
             setIcon(iconSpan, sug.icon || "plus");
             chip.createSpan({ text: sug.label });
             chip.addEventListener("click", async () => {
-              await addWidget(this.app, this.file, sug.config);
+              await addWidget2(this.app, this.file, sug.config);
               this.render();
             });
           }
@@ -8048,7 +8100,7 @@ var require_goal_view = __commonJS({
           });
           setIcon(editBtn, "sliders-horizontal");
           editBtn.addEventListener("click", () => {
-            new WorkflowEditorModal(this.app, {
+            new WorkflowEditorModal2(this.app, {
               doc,
               initialTitle: widget.title,
               initialPipeline: widget.pipeline,
@@ -8100,7 +8152,7 @@ var require_goal_view = __commonJS({
               initialWidget: widget,
               onOpenCanvas: (draft) => {
                 const initialPipeline = buildPipelineFromSimpleConfig(draft, doc);
-                new WorkflowEditorModal(this.app, {
+                new WorkflowEditorModal2(this.app, {
                   doc,
                   initialTitle: draft?.title || widget.title || "",
                   initialPipeline,
@@ -8549,10 +8601,13 @@ var {
   createTree,
   createSubgoal,
   createHabit,
+  waterHabit,
   updateHabitSchedule,
   deleteTree,
   deleteGoalFile
 } = require_storage();
+var { readGoalDocument, addWidget } = require_data_model();
+var { WorkflowEditorModal } = require_canvas_editor();
 var { listGarden, findTreeContext } = require_catalog();
 var {
   CreateTreeModal,
@@ -8647,6 +8702,50 @@ var IterPlugin = class extends Plugin {
         if (!file || !findTreeContext(this.app, file)) return false;
         if (!checking) void this.openGoal(file);
         return true;
+      }
+    });
+    this.addCommand({
+      id: "water-due-habits",
+      name: "Water all due habits for today",
+      callback: async () => {
+        const garden = listGarden(this.app);
+        const due = [];
+        for (const tree of garden.trees) {
+          for (const habit of tree.habits) {
+            if (habit.isDueToday && !habit.wateredInPeriod && !habit.wateredToday) {
+              due.push(habit);
+            }
+          }
+        }
+        if (!due.length) {
+          new Notice("All due habits for today are already watered!");
+          return;
+        }
+        for (const habit of due) {
+          await waterHabit(this.app, habit.file);
+        }
+        new Notice(`Watered ${due.length} due ${due.length === 1 ? "habit" : "habits"}!`);
+        this.scheduleRefresh();
+      }
+    });
+    this.addCommand({
+      id: "open-canvas-editor",
+      name: "Open Canvas widget editor",
+      callback: () => {
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        const goalFile = recent?.view?.getViewType?.() === GOAL_VIEW ? recent.view.file : this.app.workspace.getActiveFile?.();
+        if (!goalFile || !findTreeContext(this.app, goalFile)) {
+          new Notice("Open an Iter tree, subgoal, or habit first.");
+          return;
+        }
+        const doc = readGoalDocument(this.app, goalFile);
+        new WorkflowEditorModal(this.app, {
+          doc,
+          onSubmit: async (cfg) => {
+            await addWidget(this.app, goalFile, cfg);
+            this.scheduleRefresh();
+          }
+        }).open();
       }
     });
     const onReady = () => {

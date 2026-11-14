@@ -4,10 +4,13 @@ const {
   createTree,
   createSubgoal,
   createHabit,
+  waterHabit,
   updateHabitSchedule,
   deleteTree,
   deleteGoalFile,
 } = require('./storage');
+const { readGoalDocument, addWidget } = require('./data-model');
+const { WorkflowEditorModal } = require('./canvas-editor');
 const { listGarden, findTreeContext } = require('./catalog');
 const {
   CreateTreeModal,
@@ -114,6 +117,54 @@ class IterPlugin extends Plugin {
         if (!file || !findTreeContext(this.app, file)) return false;
         if (!checking) void this.openGoal(file);
         return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'water-due-habits',
+      name: 'Water all due habits for today',
+      callback: async () => {
+        const garden = listGarden(this.app);
+        const due = [];
+        for (const tree of garden.trees) {
+          for (const habit of tree.habits) {
+            if (habit.isDueToday && !habit.wateredInPeriod && !habit.wateredToday) {
+              due.push(habit);
+            }
+          }
+        }
+        if (!due.length) {
+          new Notice('All due habits for today are already watered!');
+          return;
+        }
+        for (const habit of due) {
+          await waterHabit(this.app, habit.file);
+        }
+        new Notice(`Watered ${due.length} due ${due.length === 1 ? 'habit' : 'habits'}!`);
+        this.scheduleRefresh();
+      },
+    });
+
+    this.addCommand({
+      id: 'open-canvas-editor',
+      name: 'Open Canvas widget editor',
+      callback: () => {
+        const recent = this.app.workspace.getMostRecentLeaf?.();
+        const goalFile = recent?.view?.getViewType?.() === GOAL_VIEW
+          ? recent.view.file
+          : this.app.workspace.getActiveFile?.();
+        if (!goalFile || !findTreeContext(this.app, goalFile)) {
+          new Notice('Open an Iter tree, subgoal, or habit first.');
+          return;
+        }
+        const doc = readGoalDocument(this.app, goalFile);
+        new WorkflowEditorModal(this.app, {
+          doc,
+          onSubmit: async cfg => {
+            await addWidget(this.app, goalFile, cfg);
+            this.scheduleRefresh();
+          },
+        }).open();
       },
     });
 
