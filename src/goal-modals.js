@@ -9,6 +9,8 @@ const {
   RELATION_CHILD_KINDS,
   RELATION_DATA_FILTERS,
   RELATION_PER_CHILD,
+  parseMetricKeysInput,
+  toFiniteNumber,
   datasetMatchesFilter,
   stripMd,
 } = require('./data-model');
@@ -310,8 +312,12 @@ class AddDatasetModal extends Modal {
         extraInput.placeholder = 'e.g. kg, words, kcal';
       } else if (t === 'note_time') {
         extraField.style.display = '';
-        extraLabel.textContent = 'Frontmatter metric property (optional)';
-        extraInput.placeholder = 'score (reads score from linked notes)';
+        extraLabel.textContent = 'Frontmatter properties (optional, comma-separated)';
+        extraInput.placeholder = 'score (or multiple: chapters, pages)';
+      } else if (t === 'note') {
+        extraField.style.display = '';
+        extraLabel.textContent = 'Frontmatter properties (optional, comma-separated)';
+        extraInput.placeholder = 'e.g. chapters, pages, author (leave blank for plain notes)';
       } else {
         extraField.style.display = 'none';
       }
@@ -338,13 +344,20 @@ class AddDatasetModal extends Modal {
             throw new Error('Select at least one child data list.');
           }
         }
+        const parsedKeys = parseMetricKeysInput(extraInput.value);
+        const metricKeys = type === 'note_time'
+          ? (parsedKeys.length ? parsedKeys : ['score'])
+          : type === 'note'
+            ? parsedKeys
+            : [];
         await this.onSubmit({
           name: nameInput.value,
           type,
           unit: type === 'rollup'
             ? (rollupControls?.getUnit() ?? '')
             : (type === 'number_time' ? extraInput.value : ''),
-          metricKey: type === 'note_time' ? (extraInput.value.trim() || 'score') : 'score',
+          metricKey: metricKeys[0] || '',
+          metricKeys,
           relation,
         });
         this.close();
@@ -399,13 +412,14 @@ const TREE_WIDGET_PRESETS = [
 ];
 
 class AddWidgetModal extends Modal {
-  constructor(app, { datasets = [], childDatasets = [], goalKind = 'goal', treePath = null, onSubmit }) {
+  constructor(app, { datasets = [], childDatasets = [], goalKind = 'goal', treePath = null, onSubmit, onOpenCanvas = null }) {
     super(app);
     this.datasets = datasets;
     this.childDatasets = childDatasets;
     this.goalKind = goalKind;
     this.treePath = treePath;
     this.onSubmit = onSubmit;
+    this.onOpenCanvas = onOpenCanvas;
     this.submitting = false;
   }
 
@@ -413,10 +427,21 @@ class AddWidgetModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('iter-modal');
-    contentEl.createEl('h2', { text: 'Add widget', cls: 'iter-modal-title' });
+
+    const headBar = contentEl.createDiv({ cls: 'iter-modal-headbar' });
+    headBar.createEl('h2', { text: 'Add widget', cls: 'iter-modal-title' });
 
     const isTree = this.goalKind === 'tree' && Boolean(this.treePath);
     const canUseDataWidgets = this.datasets.length > 0 || isTree;
+
+    let canvasSwitchBtn = null;
+    if (this.onOpenCanvas) {
+      canvasSwitchBtn = headBar.createEl('button', {
+        text: 'Advanced Canvas →',
+        type: 'button',
+        cls: 'iter-btn-ghost iter-canvas-switch-btn',
+      });
+    }
 
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
     const row = form.createDiv({ cls: 'iter-modal-row' });
@@ -463,6 +488,7 @@ class AddWidgetModal extends Modal {
       cls: 'iter-modal-input',
     });
 
+    const metricSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
     const dynamicSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
 
     let aggSelect = null;
@@ -471,12 +497,93 @@ class AddWidgetModal extends Modal {
     let targetInput = null;
     let variantSelect = null;
     let relControls = null;
+    let metricInput = null;
 
     const isRollupSumDefault = () => {
       const val = dsSelect.value || '';
       if (val.startsWith('__rel:') && val.endsWith(':numeric')) return true;
       const localDs = this.datasets.find(d => d.id === val);
       return localDs?.type === 'rollup' && localDs?.relation?.dataFilter === 'numeric';
+    };
+
+    const getSourceKeysInfo = () => {
+      const val = dsSelect.value || '';
+      const keys = [];
+      const seen = new Set();
+      const pushKey = k => {
+        if (typeof k === 'string' && k.trim() && !seen.has(k.trim())) {
+          seen.add(k.trim());
+          keys.push(k.trim());
+        }
+      };
+      const localDs = this.datasets.find(d => d.id === val);
+      if (localDs) {
+        for (const k of localDs.metricKeys || []) pushKey(k);
+        if (localDs.type === 'rollup') {
+          for (const ch of this.childDatasets) {
+            for (const k of ch.dataset.metricKeys || []) pushKey(k);
+          }
+        }
+        return {
+          keys,
+          preferDefault: localDs.type === 'note' || localDs.type === 'note_time',
+          show: keys.length > 0 || localDs.type === 'note' || localDs.type === 'note_time' || localDs.type === 'rollup',
+        };
+      }
+      if (val.startsWith('__child:')) {
+        const idx = Number(val.slice('__child:'.length));
+        const childItem = this.childDatasets[idx];
+        if (childItem) {
+          for (const k of childItem.dataset.metricKeys || []) pushKey(k);
+          return {
+            keys,
+            preferDefault: childItem.dataset.type === 'note' || childItem.dataset.type === 'note_time',
+            show: keys.length > 0 || childItem.dataset.type === 'note' || childItem.dataset.type === 'note_time',
+          };
+        }
+      }
+      if (val.startsWith('__rel:')) {
+        for (const ch of this.childDatasets) {
+          for (const k of ch.dataset.metricKeys || []) pushKey(k);
+        }
+        return { keys, preferDefault: false, show: true };
+      }
+      return { keys: [], preferDefault: false, show: false };
+    };
+
+    const rebuildMetricSlot = () => {
+      metricSlot.empty();
+      metricInput = null;
+      const wType = typeSelect.value;
+      if (wType === 'streak' || wType === 'note_navigator') {
+        metricSlot.style.display = 'none';
+        return;
+      }
+      const info = getSourceKeysInfo();
+      if (!info.show) {
+        metricSlot.style.display = 'none';
+        return;
+      }
+      metricSlot.style.display = '';
+      const field = metricSlot.createDiv({ cls: 'iter-modal-field' });
+      field.createEl('label', { text: 'Frontmatter property filter (optional)', cls: 'iter-modal-label' });
+      metricInput = field.createEl('input', {
+        type: 'text',
+        placeholder: info.keys.length ? `e.g. ${info.keys.slice(0, 3).join(', ')} (blank = auto)` : 'e.g. pages, chapters, score',
+        cls: 'iter-modal-input',
+      });
+      if (info.preferDefault && info.keys.length) {
+        metricInput.value = info.keys[0];
+      }
+      if (info.keys.length) {
+        const chips = field.createDiv({ cls: 'iter-chip-suggestions' });
+        for (const k of info.keys.slice(0, 6)) {
+          const btn = chips.createEl('button', { text: k, type: 'button', cls: 'iter-suggest-chip' });
+          btn.addEventListener('click', () => {
+            metricInput.value = k;
+          });
+        }
+      }
     };
 
     const rebuildRelationSlot = () => {
@@ -576,10 +683,71 @@ class AddWidgetModal extends Modal {
       }
 
       rebuildRelationSlot();
+      rebuildMetricSlot();
     };
+
+    const collectDraftConfig = ({ validatePick = true } = {}) => {
+      const wType = typeSelect.value;
+      const sourceVal = dsSelect.value || '';
+      let datasetId = '';
+      let relation = null;
+      let unit = '';
+
+      if (wType !== 'streak') {
+        if (sourceVal.startsWith('__rel:')) {
+          if (relControls) {
+            relation = relControls.getRelation();
+            unit = relControls.getUnit();
+          } else {
+            const preset = TREE_WIDGET_PRESETS.find(p => p.value === sourceVal);
+            relation = preset ? { ...preset.initial } : null;
+          }
+          if (validatePick && relation?.mode === 'pick' && !relation.refs?.length) {
+            throw new Error('Select at least one child data list.');
+          }
+        } else if (sourceVal.startsWith('__child:')) {
+          const idx = Number(sourceVal.slice('__child:'.length));
+          const childItem = this.childDatasets[idx];
+          if (!childItem) {
+            if (validatePick) throw new Error('Selected child data list no longer exists.');
+          } else {
+            relation = {
+              mode: 'pick',
+              dataFilter: 'any',
+              perChildAgg: 'all',
+              refs: [{ filePath: childItem.filePath, datasetId: childItem.dataset.id }],
+            };
+          }
+        } else {
+          datasetId = sourceVal;
+        }
+      }
+
+      return {
+        type: wType,
+        datasetId,
+        relation,
+        unit,
+        metricKey: metricInput?.value?.trim() || '',
+        title: titleInput.value,
+        agg: aggSelect?.value ?? 'latest',
+        mode: modeSelect?.value ?? 'latest',
+        target: targetInput?.value ?? null,
+        variant: variantSelect?.value ?? 'line',
+      };
+    };
+
+    if (canvasSwitchBtn) {
+      canvasSwitchBtn.addEventListener('click', () => {
+        const draft = collectDraftConfig({ validatePick: false });
+        this.close();
+        this.onOpenCanvas(draft);
+      });
+    }
 
     dsSelect.addEventListener('change', () => {
       rebuildRelationSlot();
+      rebuildMetricSlot();
       if (aggSelect && !aggTouched) {
         aggSelect.value = isRollupSumDefault() ? 'sum' : 'latest';
       }
@@ -598,50 +766,7 @@ class AddWidgetModal extends Modal {
       this.submitting = true;
       submit.disabled = true;
       try {
-        const wType = typeSelect.value;
-        const sourceVal = dsSelect.value || '';
-        let datasetId = '';
-        let relation = null;
-        let unit = '';
-
-        if (wType !== 'streak') {
-          if (sourceVal.startsWith('__rel:')) {
-            if (relControls) {
-              relation = relControls.getRelation();
-              unit = relControls.getUnit();
-            } else {
-              const preset = TREE_WIDGET_PRESETS.find(p => p.value === sourceVal);
-              relation = preset ? { ...preset.initial } : null;
-            }
-            if (relation?.mode === 'pick' && !relation.refs?.length) {
-              throw new Error('Select at least one child data list.');
-            }
-          } else if (sourceVal.startsWith('__child:')) {
-            const idx = Number(sourceVal.slice('__child:'.length));
-            const childItem = this.childDatasets[idx];
-            if (!childItem) throw new Error('Selected child data list no longer exists.');
-            relation = {
-              mode: 'pick',
-              dataFilter: 'any',
-              perChildAgg: 'all',
-              refs: [{ filePath: childItem.filePath, datasetId: childItem.dataset.id }],
-            };
-          } else {
-            datasetId = sourceVal;
-          }
-        }
-
-        await this.onSubmit({
-          type: wType,
-          datasetId,
-          relation,
-          unit,
-          title: titleInput.value,
-          agg: aggSelect?.value ?? 'latest',
-          mode: modeSelect?.value ?? 'latest',
-          target: targetInput?.value ?? null,
-          variant: variantSelect?.value ?? 'line',
-        });
+        await this.onSubmit(collectDraftConfig({ validatePick: true }));
         this.close();
       } catch (error) {
         new Notice(error instanceof Error ? error.message : String(error));
@@ -681,10 +806,14 @@ class NotePickerModal extends FuzzySuggestModal {
 }
 
 class NoteTimeMetaModal extends Modal {
-  constructor(app, { noteFile, metricKey = 'score', onSubmit }) {
+  constructor(app, { noteFile, showDate = true, metricKey = 'score', metricKeys = null, onSubmit }) {
     super(app);
     this.noteFile = noteFile;
-    this.metricKey = metricKey;
+    this.showDate = Boolean(showDate);
+    const resolvedKeys = Array.isArray(metricKeys)
+      ? metricKeys.filter(k => typeof k === 'string' && k.trim()).map(k => k.trim())
+      : (typeof metricKey === 'string' && metricKey.trim() ? [metricKey.trim()] : []);
+    this.metricKeys = resolvedKeys;
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
@@ -695,23 +824,36 @@ class NoteTimeMetaModal extends Modal {
     contentEl.addClass('iter-modal');
     contentEl.createEl('h2', { text: `Add "${stripMd(this.noteFile.name)}"`, cls: 'iter-modal-title' });
 
+    const fm = this.app.metadataCache?.getFileCache?.(this.noteFile)?.frontmatter ?? null;
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
-    const row = form.createDiv({ cls: 'iter-modal-row' });
+    let dateInput = null;
 
-    const dateField = row.createDiv({ cls: 'iter-modal-field' });
-    dateField.createEl('label', { text: 'Date', cls: 'iter-modal-label' });
-    const dateInput = dateField.createEl('input', { type: 'date', cls: 'iter-modal-input' });
-    dateInput.value = toDateKey();
-    dateInput.required = true;
+    if (this.showDate) {
+      const dateField = form.createDiv({ cls: 'iter-modal-field' });
+      dateField.createEl('label', { text: 'Date', cls: 'iter-modal-label' });
+      dateInput = dateField.createEl('input', { type: 'date', cls: 'iter-modal-input' });
+      dateInput.value = toDateKey();
+      dateInput.required = true;
+    }
 
-    const scoreField = row.createDiv({ cls: 'iter-modal-field' });
-    scoreField.createEl('label', { text: `${this.metricKey} (optional)`, cls: 'iter-modal-label' });
-    const scoreInput = scoreField.createEl('input', {
-      type: 'number',
-      step: 'any',
-      placeholder: `Reads "${this.metricKey}" frontmatter if blank`,
-      cls: 'iter-modal-input',
-    });
+    const propInputs = new Map();
+    if (this.metricKeys.length) {
+      const grid = form.createDiv({ cls: this.metricKeys.length > 1 ? 'iter-modal-row' : 'iter-modal-dynamic' });
+      for (const key of this.metricKeys) {
+        const field = grid.createDiv({ cls: 'iter-modal-field' });
+        field.createEl('label', { text: `${key} (optional)`, cls: 'iter-modal-label' });
+        const fmExisting = fm?.[key];
+        const placeholder = fmExisting !== undefined && fmExisting !== null && fmExisting !== ''
+          ? `Frontmatter: ${fmExisting} (blank = sync)`
+          : `Reads "${key}" frontmatter if blank`;
+        const input = field.createEl('input', {
+          type: 'text',
+          placeholder,
+          cls: 'iter-modal-input',
+        });
+        propInputs.set(key, input);
+      }
+    }
 
     const actions = form.createDiv({ cls: 'iter-modal-actions' });
     const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
@@ -724,11 +866,26 @@ class NoteTimeMetaModal extends Modal {
       this.submitting = true;
       submit.disabled = true;
       try {
-        await this.onSubmit({
-          path: this.noteFile.path,
-          date: dateInput.value,
-          value: scoreInput.value === '' ? null : Number(scoreInput.value),
-        });
+        const props = {};
+        let hasProps = false;
+        for (const [key, input] of propInputs.entries()) {
+          const raw = typeof input.value === 'string' ? input.value.trim() : '';
+          if (!raw) continue;
+          const num = toFiniteNumber(raw);
+          props[key] = num !== null ? num : raw;
+          hasProps = true;
+        }
+        const primaryKey = this.metricKeys[0] || '';
+        const primaryVal = primaryKey && props[primaryKey] !== undefined
+          ? toFiniteNumber(props[primaryKey])
+          : null;
+
+        const payload = { path: this.noteFile.path };
+        if (this.showDate && dateInput) payload.date = dateInput.value;
+        if (primaryVal !== null) payload.value = primaryVal;
+        if (hasProps) payload.props = props;
+
+        await this.onSubmit(payload);
         this.close();
       } catch (error) {
         new Notice(error instanceof Error ? error.message : String(error));
@@ -738,7 +895,8 @@ class NoteTimeMetaModal extends Modal {
       }
     });
 
-    scoreInput.focus();
+    const firstProp = propInputs.values().next().value;
+    (firstProp || dateInput)?.focus?.();
   }
 
   onClose() {

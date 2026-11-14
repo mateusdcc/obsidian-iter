@@ -1238,12 +1238,20 @@ input.iter-due-input {
   white-space: nowrap;
 }
 
-.iter-widget-remove {
+.iter-widget-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.iter-widget-remove,
+.iter-widget-edit {
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.iter-widget-card:is(:hover, :focus-within) .iter-widget-remove {
+.iter-widget-card:is(:hover, :focus-within) .iter-widget-remove,
+.iter-widget-card:is(:hover, :focus-within) .iter-widget-edit {
   opacity: 1;
 }
 
@@ -1985,4 +1993,485 @@ button.iter-water-action.is-rest:hover {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+/* Multi-property pills, headbar, suggestion chips */
+
+.iter-modal-headbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.iter-modal-headbar .iter-modal-title {
+  margin: 0;
+}
+
+.iter-canvas-switch-btn {
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-prop-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.iter-chip-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+button.iter-suggest-chip {
+  height: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+button.iter-suggest-chip:hover {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+/* ---------- n8n-style Workflow Canvas Editor ---------- */
+
+.modal.iter-flow-modal {
+  width: min(1180px, 94vw);
+  max-width: 94vw;
+  height: min(760px, 88vh);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal.iter-flow-modal .modal-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.iter-flow-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  background: var(--background-primary);
+}
+
+.iter-flow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: color-mix(in srgb, var(--background-secondary) 75%, var(--background-primary));
+}
+
+.iter-flow-title-group {
+  flex: 0 1 230px;
+  min-width: 160px;
+}
+
+input.iter-flow-title-input {
+  width: 100%;
+  font-weight: var(--font-medium);
+}
+
+.iter-flow-palette {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+}
+
+button.iter-flow-add-btn {
+  height: auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+button.iter-flow-add-btn:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+button.iter-flow-add-btn.cat-source:hover {
+  border-color: var(--iter-sage-1);
+}
+
+button.iter-flow-add-btn.cat-filter:hover {
+  border-color: var(--iter-water);
+}
+
+button.iter-flow-add-btn.cat-output:hover {
+  border-color: var(--iter-blossom);
+}
+
+.iter-flow-tools-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+select.iter-flow-tpl-select {
+  max-width: 175px;
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-flow-body {
+  display: grid;
+  grid-template-columns: 1fr 330px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 860px) {
+  .iter-flow-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 290px;
+  }
+}
+
+.iter-flow-canvas-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.iter-flow-canvas-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-flow-status-pill {
+  color: var(--text-muted);
+  font-weight: var(--font-medium);
+}
+
+.iter-flow-zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.iter-flow-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  cursor: grab;
+  background-color: var(--background-primary);
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--text-faint) 28%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 20px 20px;
+  user-select: none;
+}
+
+.iter-flow-viewport:active {
+  cursor: grabbing;
+}
+
+.iter-flow-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2400px;
+  height: 1600px;
+  transform-origin: 0 0;
+}
+
+.iter-flow-wires {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.iter-wire-path {
+  fill: none;
+  stroke: var(--background-modifier-border-hover);
+  stroke-width: 2.2;
+  transition: stroke 120ms ease;
+}
+
+.iter-wire-path.is-active {
+  stroke: color-mix(in srgb, var(--interactive-accent) 68%, var(--text-muted));
+}
+
+.iter-wire-path.is-selected {
+  stroke: var(--text-error);
+  stroke-width: 3;
+}
+
+.iter-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.iter-wire-temp {
+  fill: none;
+  stroke: var(--interactive-accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
+/* Flow nodes */
+
+.iter-flow-node {
+  position: absolute;
+  width: 218px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-secondary);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+  cursor: grab;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.iter-flow-node:active {
+  cursor: grabbing;
+}
+
+.iter-flow-node.is-selected {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 26%, transparent), 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.iter-flow-node-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 65%, transparent);
+}
+
+.iter-flow-cat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--interactive-accent);
+}
+
+.iter-flow-cat-dot.cat-source {
+  background: var(--iter-sage-1);
+}
+
+.iter-flow-cat-dot.cat-filter {
+  background: var(--iter-water);
+}
+
+.iter-flow-cat-dot.cat-transform {
+  background: var(--interactive-accent);
+}
+
+.iter-flow-cat-dot.cat-output {
+  background: var(--iter-blossom);
+}
+
+.iter-flow-node-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-flow-count-pill {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: var(--font-medium);
+}
+
+.iter-flow-node-body {
+  padding: 8px 12px 10px;
+}
+
+.iter-flow-node-summary {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.iter-flow-port {
+  position: absolute;
+  top: 37px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid var(--interactive-accent);
+  background: var(--background-primary);
+  cursor: crosshair;
+  z-index: 2;
+  transition: transform 100ms ease, background 100ms ease;
+}
+
+button.iter-flow-port.is-in {
+  left: -8px;
+  border-color: var(--text-muted);
+}
+
+button.iter-flow-port.is-out {
+  right: -8px;
+}
+
+button.iter-flow-port:hover,
+button.iter-flow-port.is-armed {
+  transform: scale(1.22);
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* Right inspector & live preview */
+
+.iter-flow-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--background-secondary) 45%, var(--background-primary));
+}
+
+.iter-flow-inspector {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+}
+
+.iter-flow-ins-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.iter-flow-ins-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: var(--font-semibold);
+}
+
+.iter-flow-ins-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.iter-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.iter-rule-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+}
+
+.iter-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iter-flow-peek {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iter-flow-peek-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.iter-flow-peek-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  font-size: var(--font-ui-smaller);
+}
+
+.iter-flow-peek-label {
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iter-flow-preview {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--background-primary);
 }

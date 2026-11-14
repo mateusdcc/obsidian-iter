@@ -8,8 +8,10 @@ const { GardenView } = require('../src/garden-view');
 const { GoalView } = require('../src/goal-view');
 const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('../src/modals');
 const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal } = require('../src/goal-modals');
+const { WorkflowEditorModal } = require('../src/canvas-editor');
 const { renderSchedulePicker } = require('../src/schedule-picker');
 const {
+  readGoalDocument,
   addDataset,
   addDatasetEntry,
   addWidget,
@@ -26,6 +28,7 @@ function createMockElement(tagName, attrs = {}) {
     className: '',
     textContent: '',
     value: '',
+    checked: false,
     required: false,
     disabled: false,
     style: {},
@@ -35,6 +38,11 @@ function createMockElement(tagName, attrs = {}) {
         cur.add(part);
         this.className = Array.from(cur).join(' ');
       }
+    },
+    removeClass(cls) {
+      const cur = new Set(this.className.split(/\s+/).filter(Boolean));
+      for (const part of String(cls).split(/\s+/).filter(Boolean)) cur.delete(part);
+      this.className = Array.from(cur).join(' ');
     },
     toggleClass(cls, force) {
       const cur = new Set(this.className.split(/\s+/).filter(Boolean));
@@ -609,6 +617,235 @@ test('GoalView, AddWidgetModal, and AddDatasetModal support tree child rollups a
     assert.equal(openedGoals.length, 1);
     assert.ok(openedGoals[0].startsWith('Iter/Reading/'));
     assert.ok(subgoal);
+  } finally {
+    global.document = prevDocument;
+  }
+});
+
+test('multi-property frontmatter modals, Advanced Canvas switch, WorkflowEditorModal, and GoalView flow widgets work end-to-end', async () => {
+  const prevDocument = global.document;
+  global.document = {
+    createElementNS(_ns, tag) {
+      return createMockElement(tag);
+    },
+  };
+
+  const fire = async (el, eventName) => {
+    for (const fn of el.listeners.get(eventName) || []) {
+      await fn({
+        target: el,
+        clientX: 120,
+        clientY: 120,
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    }
+  };
+
+  try {
+    const app = createMockApp();
+    await ensureStructure(app.vault);
+    const readingTree = await createTree(app.vault, { name: 'Reading', endless: true });
+    const essayHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Philosophical Essay' });
+    const bookHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Literature Book', frequency: 'monthly' });
+
+    const noteOne = await app.vault.create(
+      'Notes/Descartes.md',
+      '---\nchapters: 4\npages: 55\n---\nMeditations\n',
+    );
+    await app.vault.create(
+      'Notes/Kant.md',
+      '---\nchapters: 2\npages: 80\n---\nCritique\n',
+    );
+
+    const bookPages = await addDataset(app, bookHabit, { name: 'Pages read', type: 'number_time', unit: 'pages' });
+    await addDatasetEntry(app, bookHabit, bookPages.id, { value: 210, date: '2026-11-05' });
+
+    // a) AddDatasetModal supports multiple Frontmatter properties on BOTH 'note' and 'note_time'
+    let createdNoteDs = null;
+    const noteDsModal = new AddDatasetModal(app, {
+      goalKind: 'habit',
+      onSubmit: async cfg => { createdNoteDs = cfg; },
+    });
+    noteDsModal.contentEl = createMockElement('div');
+    noteDsModal.onOpen();
+
+    const noteTypeSelect = noteDsModal.contentEl.findAll(el => el.tagName === 'SELECT')[0];
+    noteTypeSelect.value = 'note';
+    await fire(noteTypeSelect, 'change');
+
+    const noteInputs = noteDsModal.contentEl.findAll(el => el.tagName === 'INPUT');
+    const noteExtraInput = noteInputs.find(
+      i => (i.placeholder || i.getAttribute('placeholder') || '').includes('chapters, pages'),
+    );
+    assert.ok(noteExtraInput);
+    noteInputs[0].value = 'Reading Notes';
+    noteExtraInput.value = 'chapters, pages';
+    await fire(noteDsModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+
+    assert.ok(createdNoteDs);
+    assert.equal(createdNoteDs.type, 'note');
+    assert.deepEqual(createdNoteDs.metricKeys, ['chapters', 'pages']);
+    assert.equal(createdNoteDs.metricKey, 'chapters');
+
+    let createdNoteTimeDs = null;
+    const ntDsModal = new AddDatasetModal(app, {
+      goalKind: 'habit',
+      onSubmit: async cfg => { createdNoteTimeDs = cfg; },
+    });
+    ntDsModal.contentEl = createMockElement('div');
+    ntDsModal.onOpen();
+    ntDsModal.contentEl.findAll(el => el.tagName === 'SELECT')[0].value = 'note_time';
+    await fire(ntDsModal.contentEl.findAll(el => el.tagName === 'SELECT')[0], 'change');
+    const ntInputs = ntDsModal.contentEl.findAll(el => el.tagName === 'INPUT');
+    ntInputs[0].value = 'Timed Essays';
+    ntInputs.find(i => (i.placeholder || i.getAttribute('placeholder') || '').includes('chapters, pages')).value = 'chapters, pages';
+    await fire(ntDsModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.deepEqual(createdNoteTimeDs.metricKeys, ['chapters', 'pages']);
+
+    // b) NoteTimeMetaModal with showDate: false + multi-property hints omits Date input & submits props
+    let metaResult = null;
+    const metaModal = new NoteTimeMetaModal(app, {
+      noteFile: noteOne,
+      showDate: false,
+      metricKeys: ['chapters', 'pages'],
+      onSubmit: async res => { metaResult = res; },
+    });
+    metaModal.contentEl = createMockElement('div');
+    metaModal.onOpen();
+    assert.equal(metaModal.contentEl.findAll(el => el.getAttribute('type') === 'date').length, 0);
+    const propInputs = metaModal.contentEl.findAll(el => el.tagName === 'INPUT');
+    assert.equal(propInputs.length, 2);
+    assert.ok(propInputs[0].getAttribute('placeholder').includes('Frontmatter: 4'));
+    assert.ok(propInputs[1].getAttribute('placeholder').includes('Frontmatter: 55'));
+    propInputs[1].value = '60';
+    await fire(metaModal.contentEl.findAll(el => el.tagName === 'FORM')[0], 'submit');
+    assert.equal(metaResult.path, 'Notes/Descartes.md');
+    assert.equal(metaResult.date, undefined);
+    assert.deepEqual(metaResult.props, { pages: 60 });
+
+    // Persist multi-property note & note_time lists on habit
+    const savedNotesDs = await addDataset(app, essayHabit, createdNoteDs);
+    await addDatasetEntry(app, essayHabit, savedNotesDs.id, { path: 'Notes/Descartes.md' });
+    await addDatasetEntry(app, essayHabit, savedNotesDs.id, { path: 'Notes/Kant.md' });
+
+    const savedTimedDs = await addDataset(app, essayHabit, createdNoteTimeDs);
+    await addDatasetEntry(app, essayHabit, savedTimedDs.id, { path: 'Notes/Descartes.md', date: '2026-11-01' });
+    await addDatasetEntry(app, essayHabit, savedTimedDs.id, { path: 'Notes/Kant.md', date: '2026-11-04' });
+
+    // c) AddWidgetModal exposes Frontmatter property chips and Advanced Canvas switch
+    const essayDoc = await readGoalDocument(app, essayHabit);
+    let switchedDraft = null;
+    let closeCount = 0;
+    const addWModal = new AddWidgetModal(app, {
+      doc: essayDoc,
+      datasets: essayDoc.datasets,
+      goalKind: 'habit',
+      onOpenCanvas: draft => { switchedDraft = draft; },
+      onSubmit: async () => {},
+    });
+    addWModal.close = () => { closeCount += 1; };
+    addWModal.contentEl = createMockElement('div');
+    addWModal.onOpen();
+
+    const chips = addWModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-suggest-chip'));
+    assert.ok(chips.some(c => c.textContent === 'pages'));
+    const pagesChip = chips.find(c => c.textContent === 'pages');
+    await fire(pagesChip, 'click');
+    const propFilterInput = addWModal.contentEl.findAll(
+      el => el.tagName === 'INPUT' && (el.getAttribute('placeholder') || '').includes('(blank = auto)'),
+    )[0];
+    assert.ok(propFilterInput);
+    assert.equal(propFilterInput.value, 'pages');
+
+    const switchBtn = addWModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-canvas-switch-btn'))[0];
+    await fire(switchBtn, 'click');
+    assert.equal(closeCount, 1);
+    assert.ok(switchedDraft);
+    assert.equal(switchedDraft.metricKey, 'pages');
+
+    // d) WorkflowEditorModal renders nodes, wires, palette add, port wiring, templates, and saves pipeline widget
+    const treeDoc = await readGoalDocument(app, readingTree);
+    let savedFlowWidget = null;
+    const flowModal = new WorkflowEditorModal(app, {
+      doc: treeDoc,
+      initialTitle: 'Page Reads',
+      onSubmit: async payload => { savedFlowWidget = payload; },
+    });
+    flowModal.contentEl = createMockElement('div');
+    flowModal.onOpen();
+
+    // Load 'filter_field' template (prefers 'pages' field)
+    const tplSelect = flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-tpl-select'))[0];
+    tplSelect.value = 'filter_field';
+    await fire(tplSelect, 'change');
+    assert.equal(flowModal.pipeline.nodes.length, 4);
+    assert.equal(flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-flow-node')).length, 4);
+    assert.ok(flowModal.svgEl.children.some(ch => ch.getAttribute('class')?.includes('iter-wire-path')));
+    // Default Reading Tree has Notes(Descartes pages=55, Kant pages=80) in BOTH note & note_time plus bookPages(210) -> check live count > 0 & preview
+    assert.ok(flowModal.statusEl.textContent.includes('Live:'));
+    assert.ok(flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-stat-number')).length > 0);
+
+    // Palette '+ Math' button adds a Math node
+    const mathBtn = flowModal.contentEl.findAll(
+      el => el.className.split(/\s+/).includes('iter-flow-add-btn') && el.findAll(s => s.textContent === '+ Math').length > 0,
+    )[0];
+    await fire(mathBtn, 'click');
+    assert.equal(flowModal.pipeline.nodes.length, 5);
+
+    // Click output port of Math -> input port of Widget Output adds edge
+    const edgesBeforeWire = flowModal.pipeline.edges.length;
+    const outPorts = flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('is-out'));
+    await fire(outPorts[outPorts.length - 1], 'click');
+    const inPorts = flowModal.contentEl.findAll(el => el.className.split(/\s+/).includes('is-in'));
+    // Output node is index 3 in template -> last input or find output node's inPort
+    const outCard = flowModal.nodeEls.get('n_out');
+    const outInPort = outCard.findAll(el => el.className.split(/\s+/).includes('is-in'))[0];
+    await fire(outInPort, 'click');
+    assert.equal(flowModal.pipeline.edges.length, edgesBeforeWire + 1);
+
+    // Save widget via Save widget button
+    const saveBtn = flowModal.contentEl.findAll(el => el.tagName === 'BUTTON' && el.textContent === 'Save widget')[0];
+    await fire(saveBtn, 'click');
+    assert.ok(savedFlowWidget);
+    assert.equal(savedFlowWidget.type, 'pipeline');
+    assert.equal(savedFlowWidget.title, 'Page Reads');
+
+    // e) Persist pipeline widget on Reading tree and multi-property note_navigator on habit; render in GoalView
+    const treeWidget = await addWidget(app, readingTree, savedFlowWidget);
+    await addWidget(app, essayHabit, {
+      title: 'Pages per Note',
+      type: 'note_navigator',
+      datasetId: savedNotesDs.id,
+      metricKey: 'pages',
+    });
+
+    const habitLeaf = { app, setViewState: async () => {} };
+    const habitView = new GoalView(habitLeaf, { openGoalFile: async () => {}, openGarden: async () => {} });
+    habitView.contentEl = createMockElement('div');
+    await habitView.setState({ file: essayHabit.path });
+    const propPills = habitView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-prop-pills'));
+    assert.ok(propPills.length >= 2);
+    const navScorePills = habitView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-note-score-pill'));
+    assert.ok(navScorePills.some(p => p.textContent === 'chapters: 4'));
+    assert.ok(navScorePills.some(p => p.textContent === 'pages: 55'));
+
+    const treeLeaf = { app, setViewState: async () => {} };
+    const treeView = new GoalView(treeLeaf, { openGoalFile: async () => {}, openGarden: async () => {} });
+    treeView.contentEl = createMockElement('div');
+    await treeView.setState({ file: readingTree.path });
+    assert.ok(treeView.contentEl.findAll(el => el.textContent === 'Canvas editor').length >= 1);
+    assert.ok(treeView.contentEl.findAll(el => el.textContent === 'Page Reads').length >= 1);
+
+    // Clicking 'Edit flow' on pipeline widget opens WorkflowEditorModal preloaded with that pipeline
+    const editFlowBtn = treeView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-widget-edit'))[0];
+    assert.ok(editFlowBtn);
+    await fire(editFlowBtn, 'click');
+    assert.ok(app.lastModal instanceof WorkflowEditorModal);
+    assert.equal(app.lastModal.title, treeWidget.title);
+    app.lastModal.contentEl = createMockElement('div');
+    app.lastModal.onOpen();
+    assert.equal(app.lastModal.pipeline.nodes.length, 5);
   } finally {
     global.document = prevDocument;
   }

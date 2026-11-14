@@ -26,13 +26,15 @@ const {
   addDatasetEntry,
   removeDatasetEntry,
   addWidget,
+  updateWidget,
   removeWidget,
   discoverChildDatasets,
   resolveVirtualDataset,
   resolveWidgetDataset,
   describeRelation,
 } = require('./data-model');
-const { renderChartSvg } = require('./widget-art');
+const { evaluatePipeline, buildPipelineFromSimpleConfig } = require('./pipeline');
+const { WorkflowEditorModal, renderWidgetDisplayBody } = require('./canvas-editor');
 const {
   AddDatasetModal,
   AddWidgetModal,
@@ -362,14 +364,35 @@ class GoalView extends ItemView {
     const header = section.createDiv({ cls: 'iter-section-bar' });
     header.createEl('h2', { text: 'Widgets', cls: 'iter-section-heading' });
 
-    const addBtn = header.createEl('button', { cls: 'iter-ghost-action', type: 'button' });
+    const headerActions = header.createDiv({ cls: 'iter-goal-top-actions' });
+
+    const openCanvasEditor = (draftConfig = null) => {
+      const initialPipeline = draftConfig ? buildPipelineFromSimpleConfig(draftConfig, doc) : null;
+      new WorkflowEditorModal(this.app, {
+        doc,
+        initialTitle: draftConfig?.title || '',
+        initialPipeline,
+        onSubmit: async cfg => {
+          await addWidget(this.app, this.file, cfg);
+          this.render();
+        },
+      }).open();
+    };
+
+    const canvasBtn = headerActions.createEl('button', { cls: 'iter-ghost-action iter-canvas-open-btn', type: 'button' });
+    const canvasIcon = canvasBtn.createSpan({ cls: 'iter-btn-icon' });
+    setIcon(canvasIcon, 'sliders-horizontal');
+    canvasBtn.createSpan({ text: 'Canvas editor' });
+    canvasBtn.addEventListener('click', () => openCanvasEditor());
+
+    const addBtn = headerActions.createEl('button', { cls: 'iter-ghost-action', type: 'button' });
     const plus = addBtn.createSpan({ cls: 'iter-btn-icon' });
     setIcon(plus, 'plus');
     addBtn.createSpan({ text: 'Add widget' });
     addBtn.addEventListener('click', () => {
       const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
       if (doc.kind !== 'habit' && !isTree && !doc.datasets.length) {
-        new Notice('Add a data list first, then link a widget to it.');
+        new Notice('Add a data list first, or use the Canvas editor.');
         return;
       }
       const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
@@ -378,6 +401,7 @@ class GoalView extends ItemView {
         childDatasets,
         goalKind: doc.kind,
         treePath: doc.treePath,
+        onOpenCanvas: draft => openCanvasEditor(draft),
         onSubmit: async config => {
           await addWidget(this.app, this.file, config);
           this.render();
@@ -390,7 +414,7 @@ class GoalView extends ItemView {
         text: doc.kind === 'habit'
           ? 'No widgets yet. Add a streak widget or link custom data below.'
           : doc.kind === 'tree'
-            ? 'No widgets yet. Summarize or graph data from this tree or its subgoals & habits.'
+            ? 'No widgets yet. Summarize or graph data from this tree or its subgoals & habits, or open Canvas editor.'
             : doc.datasets.length
               ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
               : 'Add custom data below, then pin widgets here to visualize your progress.',
@@ -408,15 +432,69 @@ class GoalView extends ItemView {
   }
 
   renderWidgetCard(grid, widget, dataset, doc) {
+    const callbacks = {
+      onOpenFile: file => void this.plugin.openFile(file),
+      onOpenGoal: file => void this.plugin.openGoal(file),
+      onMissingNote: path => new Notice(`Note not found: ${path}`),
+    };
+
+    if (widget.type === 'pipeline') {
+      const evalRes = evaluatePipeline(this.app, widget.pipeline, doc);
+      const out = evalRes.output;
+      const wide = out.displayType === 'chart' || out.displayType === 'goal_bar' || out.displayType === 'note_navigator';
+      const card = grid.createDiv({
+        cls: `iter-widget-card type-${out.displayType} is-pipeline${wide ? ' is-wide' : ''}`,
+      });
+
+      const top = card.createDiv({ cls: 'iter-widget-top' });
+      top.createSpan({ text: widget.title || 'Custom Flow', cls: 'iter-widget-title' });
+
+      const actions = top.createDiv({ cls: 'iter-widget-top-actions' });
+      const editBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-edit',
+        type: 'button',
+        attr: { 'aria-label': 'Edit flow in canvas', title: 'Edit flow in canvas' },
+      });
+      setIcon(editBtn, 'sliders-horizontal');
+      editBtn.addEventListener('click', () => {
+        new WorkflowEditorModal(this.app, {
+          doc,
+          initialTitle: widget.title,
+          initialPipeline: widget.pipeline,
+          onSubmit: async updated => {
+            await updateWidget(this.app, this.file, widget.id, updated);
+            this.render();
+          },
+        }).open();
+      });
+
+      const removeBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-remove',
+        type: 'button',
+        attr: { 'aria-label': 'Remove widget', title: 'Remove widget' },
+      });
+      setIcon(removeBtn, 'x');
+      removeBtn.addEventListener('click', async () => {
+        await removeWidget(this.app, this.file, widget.id);
+        this.render();
+      });
+
+      renderWidgetDisplayBody(card, out, callbacks);
+      return;
+    }
+
     const wide = widget.type === 'chart' || widget.type === 'goal_bar' || widget.type === 'note_navigator';
     const card = grid.createDiv({
       cls: `iter-widget-card type-${widget.type}${wide ? ' is-wide' : ''}`,
     });
 
     const top = card.createDiv({ cls: 'iter-widget-top' });
-    const baseTitle = !dataset
+    const rawBaseTitle = !dataset
       ? 'Missing dataset'
       : (dataset.name || (widget.relation ? describeRelation(widget.relation, dataset.sources) : 'Widget'));
+    const baseTitle = dataset && widget.metricKey && widget.metricKey !== dataset.metricKey
+      ? `${rawBaseTitle} (${widget.metricKey})`
+      : rawBaseTitle;
     const defaultTitle = widget.type === 'streak'
       ? 'Streak'
       : !dataset
@@ -492,90 +570,31 @@ class GoalView extends ItemView {
 
     if (widget.type === 'goal_bar') {
       const bar = computeGoalBar(this.app, dataset, widget.mode, widget.target, this.file.path, widget.metricKey);
-      const headerRow = card.createDiv({ cls: 'iter-bar-meta' });
-      const unitSuffix = bar.unit ? ` ${bar.unit}` : '';
-      headerRow.createSpan({
-        text: `${bar.currentDisplay}${unitSuffix} / ${bar.targetDisplay}${unitSuffix}`,
-        cls: 'iter-bar-numbers',
-      });
-      headerRow.createSpan({ text: `${bar.rawPercent}%`, cls: 'iter-bar-percent' });
-
-      const track = card.createDiv({ cls: 'iter-bar-track' });
-      const fill = track.createDiv({ cls: 'iter-bar-fill' });
-      fill.style.width = `${bar.fillPercent}%`;
+      renderWidgetDisplayBody(card, { displayType: 'goal_bar', bar, unit: bar.unit }, callbacks);
       return;
     }
 
     if (widget.type === 'chart') {
       const points = resolveNumericSeries(this.app, dataset, this.file.path, widget.metricKey);
-      if (!points.length) {
-        card.createEl('p', {
-          text: dataset.isVirtual
-            ? 'No matching numeric entries in child data lists yet.'
-            : dataset.type === 'note_time'
-              ? `Add notes with a "${dataset.metricKey || 'score'}" property (or inline value) to plot.`
-              : 'Add numeric entries to plot progress over time.',
-          cls: 'iter-widget-empty',
-        });
-        return;
-      }
-      const latest = points[points.length - 1];
-      const delta = points.length > 1 ? latest.value - points[0].value : null;
-      const summary = card.createDiv({ cls: 'iter-chart-summary' });
-      summary.createSpan({
-        text: `Latest: ${formatNumber(latest.value)}${dataset.unit ? ` ${dataset.unit}` : ''}`,
-      });
-      if (delta !== null) {
-        const sign = delta > 0 ? '+' : '';
-        summary.createSpan({
-          text: `${sign}${formatNumber(delta)} overall`,
-          cls: delta >= 0 ? 'iter-delta-up' : 'iter-delta-down',
-        });
-      }
-      const host = card.createDiv({ cls: 'iter-chart-host' });
-      renderChartSvg(host, points, {
-        variant: widget.variant,
-        unit: dataset.unit,
-        onPointClick: pt => {
-          if (pt.noteFile) void this.plugin.openFile(pt.noteFile);
-          else if (pt.sourceFile) void this.plugin.openGoal(pt.sourceFile);
-        },
-      });
+      const emptyText = dataset.isVirtual
+        ? 'No matching numeric entries in child data lists yet.'
+        : dataset.type === 'note_time' || dataset.type === 'note'
+          ? `Add notes with a "${widget.metricKey || dataset.metricKey || 'score'}" frontmatter property to plot.`
+          : 'Add numeric entries to plot progress over time.';
+      renderWidgetDisplayBody(
+        card,
+        { displayType: 'chart', points, variant: widget.variant, unit: dataset.unit, emptyText },
+        callbacks,
+      );
       return;
     }
 
     if (widget.type === 'note_navigator') {
-      const entries = resolveDatasetEntries(this.app, dataset, this.file.path);
-      if (!entries.length) {
-        card.createEl('p', { text: 'No linked notes yet.', cls: 'iter-widget-empty' });
-        return;
-      }
-      const navList = card.createDiv({ cls: 'iter-note-nav-list' });
+      const entries = resolveDatasetEntries(this.app, dataset, this.file.path, widget.metricKey);
       const ordered = dataset.type === 'note_time'
         ? [...entries].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.index - a.index)
         : entries;
-      for (const entry of ordered) {
-        const itemBtn = navList.createEl('button', { cls: 'iter-note-nav-item', type: 'button' });
-        const icon = itemBtn.createSpan({ cls: 'iter-note-nav-icon' });
-        setIcon(icon, 'file-text');
-        const main = itemBtn.createSpan({ cls: 'iter-note-nav-main' });
-        main.createSpan({ text: entry.label, cls: 'iter-note-nav-title' });
-        if (entry.path) {
-          const folder = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : 'Vault root';
-          const origin = entry.sourceTitle ? `${entry.sourceTitle} · ${folder}` : folder;
-          main.createSpan({ text: origin, cls: 'iter-note-nav-path' });
-        }
-        if (entry.value !== null) {
-          itemBtn.createSpan({ text: formatNumber(entry.value), cls: 'iter-note-score-pill' });
-        }
-        if (entry.date) {
-          itemBtn.createSpan({ text: entry.date, cls: 'iter-note-date-pill' });
-        }
-        itemBtn.addEventListener('click', () => {
-          if (entry.noteFile) void this.plugin.openFile(entry.noteFile);
-          else new Notice(`Note not found: ${entry.path}`);
-        });
-      }
+      renderWidgetDisplayBody(card, { displayType: 'note_navigator', entries: ordered }, callbacks);
     }
   }
 
@@ -624,18 +643,35 @@ class GoalView extends ItemView {
   triggerDatasetAdd(dataset) {
     if (dataset.type === 'rollup') return;
     if (dataset.type === 'note') {
+      const keys = Array.isArray(dataset.metricKeys) ? dataset.metricKeys : [];
       new NotePickerModal(this.app, async noteFile => {
-        await addDatasetEntry(this.app, this.file, dataset.id, { path: noteFile.path });
-        this.render();
+        if (keys.length > 0) {
+          new NoteTimeMetaModal(this.app, {
+            noteFile,
+            showDate: false,
+            metricKeys: keys,
+            onSubmit: async entry => {
+              await addDatasetEntry(this.app, this.file, dataset.id, entry);
+              this.render();
+            },
+          }).open();
+        } else {
+          await addDatasetEntry(this.app, this.file, dataset.id, { path: noteFile.path });
+          this.render();
+        }
       }).open();
       return;
     }
 
     if (dataset.type === 'note_time') {
+      const keys = Array.isArray(dataset.metricKeys) && dataset.metricKeys.length
+        ? dataset.metricKeys
+        : [dataset.metricKey || 'score'];
       new NotePickerModal(this.app, noteFile => {
         new NoteTimeMetaModal(this.app, {
           noteFile,
-          metricKey: dataset.metricKey || 'score',
+          showDate: true,
+          metricKeys: keys,
           onSubmit: async entry => {
             await addDatasetEntry(this.app, this.file, dataset.id, entry);
             this.render();
@@ -714,7 +750,7 @@ class GoalView extends ItemView {
         });
 
         const metaWrap = rowBtn.createDiv({ cls: 'iter-rollup-source-meta' });
-        if (src.stat && src.stat.count > 0 && (src.datasetType === 'number_time' || src.datasetType === 'note_time')) {
+        if (src.stat && src.stat.count > 0 && src.stat.value !== null) {
           metaWrap.createSpan({
             text: `${src.stat.display}${src.unit ? ` ${src.unit}` : ''}`,
             cls: 'iter-note-score-pill',
@@ -807,7 +843,16 @@ class GoalView extends ItemView {
           if (item.noteFile) void this.plugin.openFile(item.noteFile);
           else new Notice(`Note not found: ${item.path}`);
         });
-        if (item.value !== null) {
+        if (Array.isArray(item.propsList) && item.propsList.length > 0) {
+          const pills = row.createDiv({ cls: 'iter-prop-pills' });
+          for (const p of item.propsList) {
+            const valText = p.num !== null ? formatNumber(p.num) : String(p.raw);
+            const labelText = item.propsList.length > 1 || dataset.type === 'note' || p.num === null
+              ? `${p.key}: ${valText}`
+              : valText;
+            pills.createSpan({ text: labelText, cls: 'iter-note-score-pill' });
+          }
+        } else if (item.value !== null) {
           row.createSpan({ text: formatNumber(item.value), cls: 'iter-note-score-pill' });
         }
       } else {

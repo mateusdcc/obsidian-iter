@@ -81,6 +81,7 @@ function normalizeDatasetType(type) {
 }
 
 function normalizeWidgetType(type) {
+  if (type === 'pipeline') return 'pipeline';
   return WIDGET_TYPES.some(item => item.id === type) ? type : 'stat';
 }
 
@@ -94,6 +95,62 @@ function normalizeBarMode(mode) {
 
 function normalizeChartVariant(variant) {
   return CHART_VARIANTS.some(item => item.id === variant) ? variant : 'line';
+}
+
+function parseMetricKeysInput(raw) {
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(',')
+      : [];
+  const seen = new Set();
+  const keys = [];
+  for (const item of list) {
+    if (typeof item !== 'string') continue;
+    const clean = item.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    keys.push(clean);
+  }
+  return keys;
+}
+
+function normalizeMetricKeys(rawKeys, rawSingle, type) {
+  if (rawKeys !== undefined) {
+    const parsed = parseMetricKeysInput(rawKeys);
+    if (parsed.length) return parsed;
+    if (typeof rawSingle === 'string' && rawSingle.trim()) return parseMetricKeysInput(rawSingle);
+    return [];
+  }
+  if (rawSingle !== undefined) {
+    return parseMetricKeysInput(rawSingle);
+  }
+  return type === 'note_time' ? ['score'] : [];
+}
+
+function normalizeEntryProps(rawProps) {
+  if (!rawProps || typeof rawProps !== 'object' || Array.isArray(rawProps)) return null;
+  const out = {};
+  let hasAny = false;
+  for (const [rawKey, rawVal] of Object.entries(rawProps)) {
+    const key = String(rawKey || '').trim();
+    if (!key || rawVal === null || rawVal === undefined || rawVal === '') continue;
+    const num = toFiniteNumber(rawVal);
+    if (num !== null) {
+      out[key] = num;
+      hasAny = true;
+    } else if (typeof rawVal === 'string') {
+      const str = rawVal.trim();
+      if (str) {
+        out[key] = str;
+        hasAny = true;
+      }
+    } else if (typeof rawVal === 'boolean') {
+      out[key] = rawVal;
+      hasAny = true;
+    }
+  }
+  return hasAny ? out : null;
 }
 
 function toFiniteNumber(raw) {
@@ -123,7 +180,8 @@ function normalizeEntry(type, raw) {
   if (type === 'note') {
     const path = typeof raw === 'string' ? raw.trim() : typeof raw?.path === 'string' ? raw.path.trim() : '';
     if (!path) return null;
-    return { path };
+    const props = typeof raw === 'object' ? normalizeEntryProps(raw.props) : null;
+    return props ? { path, props } : { path };
   }
   if (type === 'note_time') {
     if (typeof raw !== 'object') return null;
@@ -131,7 +189,11 @@ function normalizeEntry(type, raw) {
     if (!path) return null;
     const date = typeof raw.date === 'string' && parseDateKey(raw.date) ? raw.date.trim() : toDateKey();
     const value = toFiniteNumber(raw.value);
-    return value !== null ? { path, date, value } : { path, date };
+    const props = normalizeEntryProps(raw.props);
+    const entry = { path, date };
+    if (value !== null) entry.value = value;
+    if (props) entry.props = props;
+    return entry;
   }
   return null;
 }
@@ -184,6 +246,7 @@ function normalizeDataset(raw) {
   const relation = type === 'rollup'
     ? (normalizeRelation(raw.relation) || normalizeRelation({ mode: 'query' }))
     : null;
+  const metricKeys = normalizeMetricKeys(raw.metricKeys, raw.metricKey, type);
   const entries = type === 'rollup'
     ? []
     : (Array.isArray(raw.entries) ? raw.entries.map(item => normalizeEntry(type, item)).filter(Boolean) : []);
@@ -192,20 +255,38 @@ function normalizeDataset(raw) {
     name,
     type,
     unit: typeof raw.unit === 'string' ? raw.unit.trim() : '',
-    metricKey: typeof raw.metricKey === 'string' && raw.metricKey.trim() ? raw.metricKey.trim() : 'score',
+    metricKey: metricKeys[0] || '',
+    metricKeys,
     relation,
     entries,
+  };
+}
+
+function normalizePipelineRef(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const nodes = Array.isArray(raw.nodes) ? raw.nodes.filter(n => n && typeof n === 'object') : [];
+  const edges = Array.isArray(raw.edges) ? raw.edges.filter(e => e && typeof e === 'object') : [];
+  if (!nodes.length) return null;
+  return {
+    version: 1,
+    zoom: Number.isFinite(Number(raw.zoom)) ? Number(raw.zoom) : 1,
+    panX: Number.isFinite(Number(raw.panX)) ? Number(raw.panX) : 0,
+    panY: Number.isFinite(Number(raw.panY)) ? Number(raw.panY) : 0,
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    edges: JSON.parse(JSON.stringify(edges)),
   };
 }
 
 function normalizeWidget(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const type = normalizeWidgetType(raw.type);
-  const relation = type === 'streak' ? null : normalizeRelation(raw.relation);
-  const datasetId = (type === 'streak' || relation)
+  const pipeline = type === 'pipeline' ? normalizePipelineRef(raw.pipeline) : null;
+  if (type === 'pipeline' && !pipeline) return null;
+  const relation = (type === 'streak' || type === 'pipeline') ? null : normalizeRelation(raw.relation);
+  const datasetId = (type === 'streak' || type === 'pipeline' || relation)
     ? ''
     : (typeof raw.datasetId === 'string' ? raw.datasetId.trim() : '');
-  if (type !== 'streak' && !datasetId && !relation) return null;
+  if (type !== 'streak' && type !== 'pipeline' && !datasetId && !relation) return null;
   const title = typeof raw.title === 'string' ? raw.title.trim() : '';
   return {
     id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : generateId('w'),
@@ -213,6 +294,7 @@ function normalizeWidget(raw) {
     type,
     datasetId,
     relation,
+    pipeline,
     unit: typeof raw.unit === 'string' ? raw.unit.trim() : '',
     agg: normalizeStatAgg(raw.agg),
     mode: normalizeBarMode(raw.mode),
@@ -281,40 +363,128 @@ function resolveNoteFile(app, pathOrLink, sourcePath = '') {
   return app.metadataCache.getFirstLinkpathDest?.(pathOrLink, sourcePath) ?? null;
 }
 
-function resolveDatasetEntries(app, dataset, sourcePath = '') {
+const IGNORED_FM_KEYS = new Set(['position', 'datasets', 'widgets', 'water_log', 'days']);
+
+function extractNoteScalarFields(fm) {
+  const fields = {};
+  if (!fm || typeof fm !== 'object') return fields;
+  for (const [key, val] of Object.entries(fm)) {
+    if (!key || IGNORED_FM_KEYS.has(key) || val === null || val === undefined) continue;
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      fields[key] = val;
+    } else if (typeof val === 'string' && val.trim() !== '') {
+      fields[key] = val.trim();
+    } else if (typeof val === 'boolean') {
+      fields[key] = val;
+    }
+  }
+  return fields;
+}
+
+function resolveNoteEntryFields(app, entry, dataset, sourcePath = '', metricOverride = '') {
+  const noteFile = resolveNoteFile(app, entry.path, sourcePath);
+  const fm = noteFile ? app.metadataCache.getFileCache(noteFile)?.frontmatter : null;
+  const fields = extractNoteScalarFields(fm);
+
+  if (entry.props && typeof entry.props === 'object') {
+    for (const [k, v] of Object.entries(entry.props)) {
+      if (fields[k] === undefined && v !== undefined && v !== null && v !== '') {
+        fields[k] = v;
+      }
+    }
+  }
+
+  const primaryKey = dataset.metricKey || dataset.metricKeys?.[0] || (dataset.type === 'note_time' ? 'score' : '');
+  if (dataset.type === 'note_time' && entry.value !== undefined && entry.value !== null && primaryKey && fields[primaryKey] === undefined) {
+    fields[primaryKey] = entry.value;
+  }
+
+  const declaredKeys = Array.isArray(dataset.metricKeys) && dataset.metricKeys.length
+    ? dataset.metricKeys
+    : (primaryKey ? [primaryKey] : []);
+
+  const propsList = [];
+  for (const k of declaredKeys) {
+    const rawVal = fields[k];
+    if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+    const num = toFiniteNumber(rawVal);
+    propsList.push({
+      key: k,
+      raw: rawVal,
+      num,
+    });
+  }
+
+  const activeKey = metricOverride || primaryKey;
+  let value = activeKey ? toFiniteNumber(fields[activeKey]) : null;
+  if (value === null && dataset.type === 'note_time' && (!activeKey || activeKey === primaryKey)) {
+    value = toFiniteNumber(entry.value);
+  }
+
+  const date = dataset.type === 'note_time'
+    ? entry.date
+    : (typeof fields.date === 'string' && parseDateKey(fields.date) ? fields.date.trim() : null);
+
+  return {
+    noteFile,
+    path: noteFile?.path ?? entry.path,
+    label: noteFile ? stripMd(noteFile.name) : stripMd(entry.path.split('/').pop()),
+    date,
+    value,
+    fields,
+    propsList,
+  };
+}
+
+function resolveDatasetEntries(app, dataset, sourcePath = '', metricOverride = '') {
   if (dataset?.isVirtual && Array.isArray(dataset.resolvedEntries)) {
-    return dataset.resolvedEntries;
+    if (!metricOverride || metricOverride === dataset.metricKey) {
+      return dataset.resolvedEntries;
+    }
+    return dataset.resolvedEntries.map(item => {
+      const nextVal = item.fields ? toFiniteNumber(item.fields[metricOverride]) : item.value;
+      return { ...item, value: nextVal };
+    });
   }
   return dataset.entries.map((entry, index) => {
     if (dataset.type === 'number_time') {
-      return { index, date: entry.date, value: entry.value, noteFile: null, label: `${entry.value}${dataset.unit ? ` ${dataset.unit}` : ''}` };
+      return {
+        index,
+        date: entry.date,
+        value: entry.value,
+        noteFile: null,
+        label: `${entry.value}${dataset.unit ? ` ${dataset.unit}` : ''}`,
+        fields: { value: entry.value, date: entry.date, ...(dataset.unit ? { unit: dataset.unit } : {}) },
+        propsList: [],
+      };
     }
     if (dataset.type === 'text') {
-      return { index, date: entry.date ?? null, value: null, noteFile: null, label: entry.value };
+      return {
+        index,
+        date: entry.date ?? null,
+        value: null,
+        noteFile: null,
+        label: entry.value,
+        fields: { value: entry.value, ...(entry.date ? { date: entry.date } : {}) },
+        propsList: [],
+      };
     }
-    if (dataset.type === 'note') {
-      const noteFile = resolveNoteFile(app, entry.path, sourcePath);
-      const name = noteFile ? stripMd(noteFile.name) : stripMd(entry.path.split('/').pop());
-      return { index, date: null, value: null, noteFile, path: noteFile?.path ?? entry.path, label: name };
+    if (dataset.type === 'note' || dataset.type === 'note_time') {
+      const resolved = resolveNoteEntryFields(app, entry, dataset, sourcePath, metricOverride);
+      return {
+        index,
+        ...resolved,
+      };
     }
-    if (dataset.type === 'note_time') {
-      const noteFile = resolveNoteFile(app, entry.path, sourcePath);
-      const fm = noteFile ? app.metadataCache.getFileCache(noteFile)?.frontmatter : null;
-      const key = dataset.metricKey || 'score';
-      const fmVal = toFiniteNumber(fm?.[key]);
-      const value = fmVal !== null ? fmVal : toFiniteNumber(entry.value);
-      const name = noteFile ? stripMd(noteFile.name) : stripMd(entry.path.split('/').pop());
-      return { index, date: entry.date, value, noteFile, path: noteFile?.path ?? entry.path, label: name };
-    }
-    return { index, date: null, value: null, noteFile: null, label: '' };
+    return { index, date: null, value: null, noteFile: null, label: '', fields: {}, propsList: [] };
   });
 }
 
 function resolveNumericSeries(app, dataset, sourcePath = '', metricOverride = '') {
   const effectiveDataset = metricOverride ? { ...dataset, metricKey: metricOverride } : dataset;
-  const resolved = resolveDatasetEntries(app, effectiveDataset, sourcePath);
+  const resolved = resolveDatasetEntries(app, effectiveDataset, sourcePath, metricOverride);
   const timed = resolved.filter(item => item.value !== null && Number.isFinite(item.value));
-  if (dataset.type === 'number_time' || dataset.type === 'note_time') {
+  if (timed.some(item => Boolean(item.date))) {
     timed.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.index - b.index);
   }
   return timed;
@@ -329,11 +499,12 @@ function formatNumber(num) {
 function computeStat(app, dataset, agg, sourcePath = '', metricOverride = '') {
   const normalizedAgg = normalizeStatAgg(agg);
   if (normalizedAgg === 'count') {
+    const entries = resolveDatasetEntries(app, dataset, sourcePath, metricOverride);
     return {
-      value: dataset.entries.length,
-      display: formatNumber(dataset.entries.length),
+      value: entries.length,
+      display: formatNumber(entries.length),
       unit: '',
-      count: dataset.entries.length,
+      count: entries.length,
     };
   }
   const points = resolveNumericSeries(app, dataset, sourcePath, metricOverride);
@@ -456,6 +627,7 @@ function datasetMatchesFilter(ds, dataFilter) {
   if (dataFilter === 'any') return true;
   if (dataFilter === 'numeric') {
     if (ds.type === 'number_time' || ds.type === 'note_time') return true;
+    if (ds.type === 'note' && Array.isArray(ds.metricKeys) && ds.metricKeys.length > 0) return true;
     if (ds.type === 'rollup') {
       const df = ds.relation?.dataFilter || 'numeric';
       return df === 'numeric' || df === 'any';
@@ -583,16 +755,19 @@ function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = 
     let childDs = item.dataset;
     if (childDs.type === 'rollup') {
       childDs = resolveVirtualDataset(app, childDs, item.filePath, targetTreePath, effectiveMetric, nextVisited);
-    } else if (effectiveMetric && childDs.type === 'note_time') {
+    } else if (effectiveMetric && (childDs.type === 'note_time' || childDs.type === 'note')) {
       childDs = { ...childDs, metricKey: effectiveMetric };
     }
 
     resolvedChildren.push(childDs);
-    const childEntries = resolveDatasetEntries(app, childDs, item.filePath);
+    const childEntries = resolveDatasetEntries(app, childDs, item.filePath, effectiveMetric);
     const numericPoints = resolveNumericSeries(app, childDs, item.filePath, effectiveMetric);
 
+    const isNumericChild = childDs.type === 'number_time'
+      || childDs.type === 'note_time'
+      || (childDs.type === 'note' && Boolean(childDs.metricKeys?.length || effectiveMetric));
     const previewAgg = relation.perChildAgg === 'all'
-      ? (childDs.type === 'number_time' || childDs.type === 'note_time' ? 'sum' : 'count')
+      ? (isNumericChild ? 'sum' : 'count')
       : relation.perChildAgg;
     const summaryStat = computeStat(app, childDs, previewAgg, item.filePath, effectiveMetric);
 
@@ -646,12 +821,24 @@ function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = 
     effectiveType = resolvedEntries.some(e => e.date || (e.value !== null && Number.isFinite(e.value))) ? 'note_time' : 'note';
   }
 
+  const metricKeys = [];
+  const seenKeys = new Set();
+  for (const childDs of resolvedChildren) {
+    for (const k of childDs.metricKeys || []) {
+      if (k && !seenKeys.has(k)) {
+        seenKeys.add(k);
+        metricKeys.push(k);
+      }
+    }
+  }
+
   return {
     id: spec?.id || '',
     name: spec?.name || describeRelation(relation, sources),
     type: effectiveType,
     unit: inferRollupUnit(resolvedChildren, explicitUnit),
-    metricKey: effectiveMetric || 'score',
+    metricKey: effectiveMetric || metricKeys[0] || '',
+    metricKeys,
     isVirtual: true,
     relation,
     sources,
@@ -721,7 +908,7 @@ function describeRelation(relation, sources = null) {
   return parts.join(' · ');
 }
 
-async function addDataset(app, file, { name, type, unit = '', metricKey = 'score', relation = null }) {
+async function addDataset(app, file, { name, type, unit = '', metricKey, metricKeys, relation = null }) {
   const cleanName = typeof name === 'string' ? name.trim() : '';
   if (!cleanName) throw new Error('Dataset name is required.');
   const dsType = normalizeDatasetType(type);
@@ -732,12 +919,14 @@ async function addDataset(app, file, { name, type, unit = '', metricKey = 'score
       throw new Error('Select at least one child data list.');
     }
   }
+  const cleanKeys = normalizeMetricKeys(metricKeys, metricKey, dsType);
   const dataset = {
     id: generateId('ds'),
     name: cleanName,
     type: dsType,
     unit: typeof unit === 'string' ? unit.trim() : '',
-    metricKey: typeof metricKey === 'string' && metricKey.trim() ? metricKey.trim() : 'score',
+    metricKey: cleanKeys[0] || '',
+    metricKeys: cleanKeys,
     relation: cleanRelation,
     entries: [],
   };
@@ -789,34 +978,57 @@ async function removeDatasetEntry(app, file, datasetId, entryIndex) {
   });
 }
 
-async function addWidget(app, file, { title = '', type, datasetId = '', relation = null, unit = '', agg = 'latest', mode = 'latest', target = null, variant = 'line', metricKey = '' }) {
-  const wType = normalizeWidgetType(type);
-  const cleanRelation = wType === 'streak' ? null : normalizeRelation(relation);
+function buildWidgetPayload(raw, existingId = '') {
+  const wType = normalizeWidgetType(raw.type);
+  const cleanPipeline = wType === 'pipeline' ? normalizePipelineRef(raw.pipeline) : null;
+  if (wType === 'pipeline' && !cleanPipeline) {
+    throw new Error('Add at least one node before saving this flow widget.');
+  }
+  const cleanRelation = (wType === 'streak' || wType === 'pipeline') ? null : normalizeRelation(raw.relation);
   if (cleanRelation && cleanRelation.mode === 'pick' && !cleanRelation.refs.length) {
     throw new Error('Select at least one child data list.');
   }
-  const resolvedDatasetId = (wType === 'streak' || cleanRelation)
+  const resolvedDatasetId = (wType === 'streak' || wType === 'pipeline' || cleanRelation)
     ? ''
-    : (typeof datasetId === 'string' ? datasetId.trim() : '');
-  if (wType !== 'streak' && !resolvedDatasetId && !cleanRelation) {
+    : (typeof raw.datasetId === 'string' ? raw.datasetId.trim() : '');
+  if (wType !== 'streak' && wType !== 'pipeline' && !resolvedDatasetId && !cleanRelation) {
     throw new Error('Select a data list to link this widget to.');
   }
-  const widget = {
-    id: generateId('w'),
-    title: typeof title === 'string' ? title.trim() : '',
+  return {
+    id: existingId || generateId('w'),
+    title: typeof raw.title === 'string' ? raw.title.trim() : '',
     type: wType,
     datasetId: resolvedDatasetId,
     relation: cleanRelation,
-    unit: typeof unit === 'string' ? unit.trim() : '',
-    agg: normalizeStatAgg(agg),
-    mode: normalizeBarMode(mode),
-    target: toFiniteNumber(target),
-    variant: normalizeChartVariant(variant),
-    metricKey: typeof metricKey === 'string' ? metricKey.trim() : '',
+    pipeline: cleanPipeline,
+    unit: typeof raw.unit === 'string' ? raw.unit.trim() : '',
+    agg: normalizeStatAgg(raw.agg),
+    mode: normalizeBarMode(raw.mode),
+    target: toFiniteNumber(raw.target),
+    variant: normalizeChartVariant(raw.variant),
+    metricKey: typeof raw.metricKey === 'string' ? raw.metricKey.trim() : '',
   };
+}
+
+async function addWidget(app, file, config) {
+  const widget = buildWidgetPayload(config);
   await app.fileManager.processFrontMatter(file, fm => {
     const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
     fm.widgets = [...existing, widget];
+  });
+  return widget;
+}
+
+async function updateWidget(app, file, widgetId, config) {
+  const widget = buildWidgetPayload(config, widgetId);
+  await app.fileManager.processFrontMatter(file, fm => {
+    const existing = Array.isArray(fm.widgets) ? fm.widgets : [];
+    const idx = existing.findIndex(item => item?.id === widgetId);
+    if (idx === -1) {
+      fm.widgets = [...existing, widget];
+    } else {
+      fm.widgets = existing.map((item, i) => (i === idx ? widget : item));
+    }
   });
   return widget;
 }
@@ -840,8 +1052,14 @@ module.exports = {
   RELATION_PER_CHILD,
   generateId,
   stripMd,
+  toFiniteNumber,
+  parseMetricKeysInput,
+  normalizeMetricKeys,
+  normalizeEntryProps,
+  extractNoteScalarFields,
   normalizeEntry,
   normalizeRelation,
+  normalizePipelineRef,
   readGoalDocument,
   discoverChildDatasets,
   datasetMatchesFilter,
@@ -860,5 +1078,6 @@ module.exports = {
   addDatasetEntry,
   removeDatasetEntry,
   addWidget,
+  updateWidget,
   removeWidget,
 };

@@ -9,9 +9,11 @@ const {
   addDatasetEntry,
   removeDatasetEntry,
   addWidget,
+  updateWidget,
   removeWidget,
   computeStat,
   computeGoalBar,
+  resolveDatasetEntries,
   resolveNumericSeries,
   formatDueStatus,
   discoverChildDatasets,
@@ -19,6 +21,13 @@ const {
   resolveWidgetDataset,
   describeRelation,
 } = require('../src/data-model');
+const {
+  collectCanvasContext,
+  evaluatePipeline,
+  buildPipelineTemplate,
+  buildPipelineFromSimpleConfig,
+  autoLayoutPipeline,
+} = require('../src/pipeline');
 const { computeChartGeometry } = require('../src/widget-art');
 
 test('Benching PRs scenario: number_time dataset, goal bar, and PR chart', async () => {
@@ -372,4 +381,287 @@ test('Generic child rollups also support note_time scores and text collections a
   assert.equal(textRollup.type, 'text');
   assert.equal(textRollup.resolvedEntries.length, 1);
   assert.equal(textRollup.resolvedEntries[0].label, 'neko');
+});
+
+test('plain note and note_time support multiple frontmatter properties and per-property widgets', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  await createTree(app.vault, { name: 'Philosophy' });
+  const habit = await createHabit(app.vault, { treePath: 'Iter/Philosophy', name: 'Read Philosophical Essay' });
+
+  await app.vault.create(
+    'Notes/Republic.md',
+    '---\nchapters: 4\npages: 110\nauthor: Plato\n---\n# Notes on Republic\n',
+  );
+  await app.vault.create(
+    'Notes/Ethics.md',
+    '---\nchapters: 2\n---\n# Nicomachean Ethics\n',
+  );
+
+  // Plain 'note' dataset with multiple frontmatter properties
+  const refNotesDs = await addDataset(app, habit, {
+    name: 'Source Texts',
+    type: 'note',
+    unit: '',
+    metricKeys: ['chapters', 'pages', 'author'],
+  });
+  assert.deepEqual(refNotesDs.metricKeys, ['chapters', 'pages', 'author']);
+  assert.equal(refNotesDs.metricKey, 'chapters');
+
+  await addDatasetEntry(app, habit, refNotesDs.id, { path: 'Notes/Republic.md' });
+  await addDatasetEntry(app, habit, refNotesDs.id, {
+    path: 'Notes/Ethics.md',
+    props: { pages: 45, author: 'Aristotle' },
+  });
+
+  // Backwards-compatible metricOverride selects chapters vs pages from one 'note' dataset
+  const entriesDefault = resolveDatasetEntries(app, refNotesDs, habit.path);
+  assert.equal(entriesDefault.length, 2);
+  assert.equal(entriesDefault[0].value, 4);
+  assert.equal(entriesDefault[0].fields.pages, 110);
+  assert.equal(entriesDefault[0].fields.author, 'Plato');
+  assert.deepEqual(
+    entriesDefault[0].propsList.map(p => [p.key, p.raw]),
+    [['chapters', 4], ['pages', 110], ['author', 'Plato']],
+  );
+  // Live frontmatter (chapters: 2) merged with inline props fallback (pages: 45, author: Aristotle)
+  assert.equal(entriesDefault[1].value, 2);
+  assert.equal(entriesDefault[1].fields.pages, 45);
+  assert.equal(entriesDefault[1].fields.author, 'Aristotle');
+
+  const entriesPages = resolveDatasetEntries(app, refNotesDs, habit.path, 'pages');
+  assert.deepEqual(entriesPages.map(e => e.value), [110, 45]);
+
+  const chaptersWidget = await addWidget(app, habit, {
+    title: 'Chapters read',
+    type: 'stat',
+    datasetId: refNotesDs.id,
+    metricKey: 'chapters',
+    agg: 'sum',
+  });
+  const pagesWidget = await addWidget(app, habit, {
+    title: 'Pages read',
+    type: 'stat',
+    datasetId: refNotesDs.id,
+    metricKey: 'pages',
+    agg: 'sum',
+  });
+  const doc = readGoalDocument(app, habit);
+  const byId = new Map(doc.datasets.map(d => [d.id, d]));
+  const dsChapters = resolveWidgetDataset(app, chaptersWidget, byId, doc);
+  const dsPages = resolveWidgetDataset(app, pagesWidget, byId, doc);
+  assert.equal(computeStat(app, dsChapters, 'sum', habit.path, chaptersWidget.metricKey).value, 6);
+  assert.equal(computeStat(app, dsPages, 'sum', habit.path, pagesWidget.metricKey).value, 155);
+  const seriesPages = resolveNumericSeries(app, dsPages, habit.path, pagesWidget.metricKey);
+  assert.deepEqual(seriesPages.map(p => p.value), [110, 45]);
+
+  // 'note_time' dataset with multiple frontmatter params
+  await app.vault.create(
+    'Notes/Essay-1.md',
+    '---\nchapters: 3\npages: 40\n---\nChapter notes\n',
+  );
+  await app.vault.create(
+    'Notes/Essay-2.md',
+    '---\nchapters: 5\npages: 65\n---\nMore notes\n',
+  );
+  const timedDs = await addDataset(app, habit, {
+    name: 'Timed Analyses',
+    type: 'note_time',
+    metricKeys: 'chapters, pages',
+  });
+  assert.deepEqual(timedDs.metricKeys, ['chapters', 'pages']);
+  await addDatasetEntry(app, habit, timedDs.id, { path: 'Notes/Essay-1.md', date: '2026-06-01' });
+  await addDatasetEntry(app, habit, timedDs.id, { path: 'Notes/Essay-2.md', date: '2026-06-08' });
+
+  const chaptersTimedStat = computeStat(app, timedDs, 'sum', habit.path, 'chapters');
+  const pagesTimedStat = computeStat(app, timedDs, 'sum', habit.path, 'pages');
+  assert.equal(chaptersTimedStat.value, 8);
+  assert.equal(pagesTimedStat.value, 105);
+});
+
+test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, math/group/sort/merge, templates, and cycles safely', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  const treeFile = await createTree(app.vault, { name: 'Reading', endless: true });
+  const hEssays = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Philosophical Essays' });
+  const hBook = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Literature Book', frequency: 'monthly' });
+  const hPoems = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read Poems' });
+
+  await waterHabit(app, hPoems, new Date('2026-10-01T12:00:00'));
+  await waterHabit(app, hPoems, new Date('2026-10-02T12:00:00'));
+
+  await app.vault.create('Notes/Montaigne.md', '---\nchapters: 3\npages: 45\ntopic: skeptic\n---\n');
+  await app.vault.create('Notes/Seneca.md', '---\nchapters: 2\npages: 60\ntopic: stoic\n---\n');
+
+  const essayNotes = await addDataset(app, hEssays, {
+    name: 'Chapter Analyses',
+    type: 'note_time',
+    metricKeys: ['chapters', 'pages'],
+  });
+  await addDatasetEntry(app, hEssays, essayNotes.id, { path: 'Notes/Montaigne.md', date: '2026-10-05' });
+  await addDatasetEntry(app, hEssays, essayNotes.id, { path: 'Notes/Seneca.md', date: '2026-09-20' });
+
+  const bookPages = await addDataset(app, hBook, { name: 'Pages read', type: 'number_time', unit: 'pages' });
+  await addDatasetEntry(app, hBook, bookPages.id, { value: 180, date: '2026-10-10' });
+  await addDatasetEntry(app, hBook, bookPages.id, { value: 60, date: '2026-10-12' });
+
+  const booksCount = await addDataset(app, hBook, { name: 'Books read', type: 'number_time', unit: 'books' });
+  await addDatasetEntry(app, hBook, booksCount.id, { value: 2, date: '2026-10-12' });
+
+  const poemsRead = await addDataset(app, hPoems, { name: 'Poems read', type: 'number_time', unit: 'poems' });
+  await addDatasetEntry(app, hPoems, poemsRead.id, { value: 15, date: '2026-10-03' });
+
+  const treeDoc = await readGoalDocument(app, treeFile);
+  const ctx = collectCanvasContext(app, treeDoc);
+  assert.ok(ctx.fieldNames.includes('pages'));
+  assert.ok(ctx.fieldNames.includes('chapters'));
+  assert.ok(ctx.fieldNames.includes('topic'));
+  assert.ok(ctx.datasetNames.includes('Pages read'));
+  assert.equal(ctx.childTitles.length, 3);
+
+  // Page Reads flow: include datasets named like "page" OR entries with numeric "pages" frontmatter -> 45+60+180+60 = 345
+  const pageReadsFlow = {
+    nodes: [
+      { id: 'src', type: 'source', config: { scope: 'tree_children', datasetFilter: 'any' } },
+      {
+        id: 'flt',
+        type: 'filter',
+        config: {
+          match: 'any',
+          rules: [
+            { field: 'datasetName', op: 'contains', value: 'page' },
+            { field: 'pages', op: 'is_number', value: '' },
+          ],
+        },
+      },
+      { id: 'ext', type: 'extract', config: { field: 'pages', fallbackToValue: true, dropMissing: true, unit: 'pages' } },
+      { id: 'out', type: 'output', config: { displayType: 'stat', agg: 'sum', unit: 'pages' } },
+    ],
+    edges: [
+      { id: 'e1', from: 'src', to: 'flt' },
+      { id: 'e2', from: 'flt', to: 'ext' },
+      { id: 'e3', from: 'ext', to: 'out' },
+    ],
+  };
+
+  const res = evaluatePipeline(app, pageReadsFlow, treeDoc, new Date('2026-10-15T12:00:00'));
+  assert.equal(res.nodeResults.get('src').count, 6);
+  assert.equal(res.nodeResults.get('flt').count, 4);
+  assert.equal(res.output.stat.value, 345);
+  assert.equal(res.output.stat.unit, 'pages');
+
+  // Group by habit + chart output + math + sort limit
+  const groupedFlow = {
+    nodes: [
+      ...pageReadsFlow.nodes.slice(0, 3),
+      { id: 'mth', type: 'math', config: { op: 'divide', operand: 2, unit: 'pages/2' } },
+      { id: 'grp', type: 'group', config: { by: 'sourceTitle', agg: 'sum' } },
+      { id: 'srt', type: 'sort', config: { by: 'value_desc', limit: 2 } },
+      { id: 'out', type: 'output', config: { displayType: 'chart', variant: 'bar' } },
+    ],
+    edges: [
+      { id: 'e1', from: 'src', to: 'flt' },
+      { id: 'e2', from: 'flt', to: 'ext' },
+      { id: 'e3', from: 'ext', to: 'mth' },
+      { id: 'e4', from: 'mth', to: 'grp' },
+      { id: 'e5', from: 'grp', to: 'srt' },
+      { id: 'e6', from: 'srt', to: 'out' },
+    ],
+  };
+  const groupedRes = evaluatePipeline(app, groupedFlow, treeDoc, new Date('2026-10-15T12:00:00'));
+  assert.equal(groupedRes.output.displayType, 'chart');
+  assert.equal(groupedRes.output.variant, 'bar');
+  assert.deepEqual(
+    groupedRes.output.points.map(p => [p.label, p.value]),
+    [
+      ['Read Philosophical Essays', 52.5],
+      ['Read Literature Book', 120],
+    ],
+  );
+
+  // this_month + within_days filters + note_navigator + merge dedupe by path
+  const filteredNotesRes = evaluatePipeline(
+    app,
+    {
+      nodes: [
+        { id: 's1', type: 'source', config: { scope: 'tree_children', datasetFilter: 'note' } },
+        { id: 's2', type: 'source', config: { scope: 'tree_children', datasetFilter: 'note' } },
+        { id: 'm', type: 'merge', config: { dedupe: 'path' } },
+        {
+          id: 'f',
+          type: 'filter',
+          config: {
+            match: 'all',
+            rules: [
+              { field: 'date', op: 'this_month', value: '' },
+              { field: 'date', op: 'within_days', value: '12' },
+            ],
+          },
+        },
+        { id: 'o', type: 'output', config: { displayType: 'note_navigator' } },
+      ],
+      edges: [
+        { id: 'e1', from: 's1', to: 'm' },
+        { id: 'e2', from: 's2', to: 'm' },
+        { id: 'e3', from: 'm', to: 'f' },
+        { id: 'e4', from: 'f', to: 'o' },
+      ],
+    },
+    treeDoc,
+    new Date('2026-10-15T12:00:00'),
+  );
+  assert.equal(filteredNotesRes.nodeResults.get('m').count, 2);
+  assert.deepEqual(filteredNotesRes.output.entries.map(e => e.path), ['Notes/Montaigne.md']);
+
+  // Watering log source node + cycle safety
+  const waterRes = evaluatePipeline(
+    app,
+    {
+      nodes: [
+        { id: 'w', type: 'water_source', config: { scope: 'tree_habits', nameMatch: 'Poems' } },
+        { id: 'o', type: 'output', config: { displayType: 'stat', agg: 'sum' } },
+      ],
+      edges: [
+        { id: 'e1', from: 'w', to: 'o' },
+        { id: 'e_cycle', from: 'o', to: 'w' },
+      ],
+    },
+    treeDoc,
+  );
+  assert.equal(waterRes.output.stat.value, 2);
+
+  // Templates & simple-to-canvas converter + persistence via addWidget / updateWidget
+  const tpl = buildPipelineTemplate('filter_field', treeDoc, ctx);
+  assert.equal(tpl.nodes[2].config.field, 'pages');
+  const fromSimple = buildPipelineFromSimpleConfig(
+    {
+      type: 'stat',
+      metricKey: 'pages',
+      unit: 'pg',
+      relation: { mode: 'query', childKinds: 'all', dataFilter: 'any', nameMatch: '' },
+    },
+    treeDoc,
+  );
+  assert.ok(fromSimple.nodes.some(n => n.type === 'extract' && n.config.field === 'pages'));
+  const laidOut = autoLayoutPipeline(fromSimple);
+  assert.ok(laidOut.nodes.every(n => Number.isFinite(n.x) && Number.isFinite(n.y)));
+
+  const savedWidget = await addWidget(app, treeFile, {
+    title: 'Total Pages Read',
+    type: 'pipeline',
+    pipeline: pageReadsFlow,
+  });
+  assert.equal(savedWidget.type, 'pipeline');
+  assert.equal(savedWidget.pipeline.nodes.length, 4);
+
+  const updated = await updateWidget(app, treeFile, savedWidget.id, {
+    title: 'Pages Breakdown',
+    type: 'pipeline',
+    pipeline: groupedFlow,
+  });
+  assert.equal(updated.title, 'Pages Breakdown');
+  const reloadedTree = await readGoalDocument(app, treeFile);
+  assert.equal(reloadedTree.widgets.length, 1);
+  assert.equal(reloadedTree.widgets[0].title, 'Pages Breakdown');
+  assert.equal(reloadedTree.widgets[0].pipeline.nodes.length, 7);
 });
