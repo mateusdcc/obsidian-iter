@@ -364,6 +364,42 @@ function resolveNoteFile(app, pathOrLink, sourcePath = '') {
 }
 
 const IGNORED_FM_KEYS = new Set(['position', 'datasets', 'widgets', 'water_log', 'days']);
+const AUTO_PROP_SKIP_KEYS = new Set([
+  'position',
+  'datasets',
+  'widgets',
+  'water_log',
+  'days',
+  'type',
+  'title',
+  'created',
+  'updated',
+  'tags',
+  'aliases',
+  'cssclasses',
+  'cssclass',
+  'date',
+  'done',
+  'due',
+  'frequency',
+  'target',
+  'module',
+  'style',
+  'endless',
+  'goal',
+  'description',
+  'last_watered',
+]);
+
+function lookupNoteField(fields, key) {
+  if (!fields || typeof fields !== 'object' || !key) return undefined;
+  if (Object.prototype.hasOwnProperty.call(fields, key)) return fields[key];
+  const lower = String(key).trim().toLowerCase();
+  for (const [k, v] of Object.entries(fields)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
+}
 
 function extractNoteScalarFields(fm) {
   const fields = {};
@@ -388,14 +424,14 @@ function resolveNoteEntryFields(app, entry, dataset, sourcePath = '', metricOver
 
   if (entry.props && typeof entry.props === 'object') {
     for (const [k, v] of Object.entries(entry.props)) {
-      if (fields[k] === undefined && v !== undefined && v !== null && v !== '') {
+      if (lookupNoteField(fields, k) === undefined && v !== undefined && v !== null && v !== '') {
         fields[k] = v;
       }
     }
   }
 
   const primaryKey = dataset.metricKey || dataset.metricKeys?.[0] || (dataset.type === 'note_time' ? 'score' : '');
-  if (dataset.type === 'note_time' && entry.value !== undefined && entry.value !== null && primaryKey && fields[primaryKey] === undefined) {
+  if (dataset.type === 'note_time' && entry.value !== undefined && entry.value !== null && primaryKey && lookupNoteField(fields, primaryKey) === undefined) {
     fields[primaryKey] = entry.value;
   }
 
@@ -404,9 +440,11 @@ function resolveNoteEntryFields(app, entry, dataset, sourcePath = '', metricOver
     : (primaryKey ? [primaryKey] : []);
 
   const propsList = [];
+  const seenPropKeys = new Set();
   for (const k of declaredKeys) {
-    const rawVal = fields[k];
+    const rawVal = lookupNoteField(fields, k);
     if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+    seenPropKeys.add(k.toLowerCase());
     const num = toFiniteNumber(rawVal);
     propsList.push({
       key: k,
@@ -415,8 +453,21 @@ function resolveNoteEntryFields(app, entry, dataset, sourcePath = '', metricOver
     });
   }
 
+  // Also surface any extra custom scalar frontmatter properties present on the note
+  for (const [fk, rawVal] of Object.entries(fields)) {
+    const lower = fk.toLowerCase();
+    if (seenPropKeys.has(lower) || AUTO_PROP_SKIP_KEYS.has(lower)) continue;
+    if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+    seenPropKeys.add(lower);
+    propsList.push({
+      key: fk,
+      raw: rawVal,
+      num: toFiniteNumber(rawVal),
+    });
+  }
+
   const activeKey = metricOverride || primaryKey;
-  let value = activeKey ? toFiniteNumber(fields[activeKey]) : null;
+  let value = activeKey ? toFiniteNumber(lookupNoteField(fields, activeKey)) : null;
   if (value === null && dataset.type === 'note_time' && (!activeKey || activeKey === primaryKey)) {
     value = toFiniteNumber(entry.value);
   }
@@ -757,6 +808,11 @@ function resolveVirtualDataset(app, spec, ownerFilePath = '', defaultTreePath = 
       childDs = resolveVirtualDataset(app, childDs, item.filePath, targetTreePath, effectiveMetric, nextVisited);
     } else if (effectiveMetric && (childDs.type === 'note_time' || childDs.type === 'note')) {
       childDs = { ...childDs, metricKey: effectiveMetric };
+    } else if (effectiveMetric && childDs.type === 'number_time') {
+      const needle = effectiveMetric.toLowerCase();
+      const nameHit = (childDs.name || '').toLowerCase().includes(needle);
+      const unitHit = (childDs.unit || '').toLowerCase().includes(needle);
+      if (!nameHit && !unitHit) continue;
     }
 
     resolvedChildren.push(childDs);
@@ -937,6 +993,41 @@ async function addDataset(app, file, { name, type, unit = '', metricKey, metricK
   return dataset;
 }
 
+async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation }) {
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  if (!cleanName) throw new Error('Dataset name is required.');
+  let updated = null;
+  await app.fileManager.processFrontMatter(file, fm => {
+    if (!Array.isArray(fm.datasets)) throw new Error('No datasets found on this goal.');
+    const idx = fm.datasets.findIndex(item => item?.id === datasetId);
+    if (idx === -1) throw new Error('Dataset not found.');
+    const current = normalizeDataset(fm.datasets[idx]) || fm.datasets[idx];
+    const nextType = type ? normalizeDatasetType(type) : current.type;
+    let cleanRelation = null;
+    if (nextType === 'rollup') {
+      cleanRelation = normalizeRelation(relation ?? current.relation) || normalizeRelation({ mode: 'query' });
+      if (cleanRelation.mode === 'pick' && !cleanRelation.refs.length) {
+        throw new Error('Select at least one child data list.');
+      }
+    }
+    const cleanKeys = (metricKeys !== undefined || metricKey !== undefined)
+      ? normalizeMetricKeys(metricKeys, metricKey, nextType)
+      : (current.metricKeys || []);
+    updated = {
+      ...current,
+      name: cleanName,
+      type: nextType,
+      unit: typeof unit === 'string' ? unit.trim() : (current.unit || ''),
+      metricKey: cleanKeys[0] || '',
+      metricKeys: cleanKeys,
+      relation: cleanRelation,
+      entries: nextType === 'rollup' ? [] : (current.entries || []),
+    };
+    fm.datasets[idx] = updated;
+  });
+  return updated;
+}
+
 async function removeDataset(app, file, datasetId) {
   await app.fileManager.processFrontMatter(file, fm => {
     fm.datasets = Array.isArray(fm.datasets)
@@ -1074,6 +1165,7 @@ module.exports = {
   formatDueStatus,
   updateGoalMeta,
   addDataset,
+  updateDataset,
   removeDataset,
   addDatasetEntry,
   removeDatasetEntry,

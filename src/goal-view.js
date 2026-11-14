@@ -22,6 +22,7 @@ const {
   formatNumber,
   updateGoalMeta,
   addDataset,
+  updateDataset,
   removeDataset,
   addDatasetEntry,
   removeDatasetEntry,
@@ -504,7 +505,44 @@ class GoalView extends ItemView {
           : baseTitle;
     top.createSpan({ text: widget.title || defaultTitle, cls: 'iter-widget-title' });
 
-    const removeBtn = top.createEl('button', {
+    const actions = top.createDiv({ cls: 'iter-widget-top-actions' });
+    if (widget.type !== 'streak') {
+      const editBtn = actions.createEl('button', {
+        cls: 'iter-icon-button iter-widget-edit',
+        type: 'button',
+        attr: { 'aria-label': 'Edit widget', title: 'Edit widget or convert to Canvas flow' },
+      });
+      setIcon(editBtn, 'pencil');
+      editBtn.addEventListener('click', () => {
+        const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
+        const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
+        new AddWidgetModal(this.app, {
+          datasets: doc.datasets,
+          childDatasets,
+          goalKind: doc.kind,
+          treePath: doc.treePath,
+          initialWidget: widget,
+          onOpenCanvas: draft => {
+            const initialPipeline = buildPipelineFromSimpleConfig(draft, doc);
+            new WorkflowEditorModal(this.app, {
+              doc,
+              initialTitle: draft?.title || widget.title || '',
+              initialPipeline,
+              onSubmit: async cfg => {
+                await updateWidget(this.app, this.file, widget.id, cfg);
+                this.render();
+              },
+            }).open();
+          },
+          onSubmit: async updated => {
+            await updateWidget(this.app, this.file, widget.id, updated);
+            this.render();
+          },
+        }).open();
+      });
+    }
+
+    const removeBtn = actions.createEl('button', {
       cls: 'iter-icon-button iter-widget-remove',
       type: 'button',
       attr: { 'aria-label': 'Remove widget', title: 'Remove widget' },
@@ -713,6 +751,27 @@ class GoalView extends ItemView {
       setIcon(addEntryBtn, 'plus');
       addEntryBtn.addEventListener('click', () => this.triggerDatasetAdd(dataset));
     }
+
+    const editDsBtn = right.createEl('button', {
+      cls: 'iter-icon-button iter-dataset-edit-btn',
+      type: 'button',
+      attr: { 'aria-label': `Edit ${dataset.name}`, title: `Edit ${dataset.name} settings` },
+    });
+    setIcon(editDsBtn, 'pencil');
+    editDsBtn.addEventListener('click', () => {
+      const isTree = doc?.kind === 'tree' && Boolean(doc?.treePath);
+      const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
+      new AddDatasetModal(this.app, {
+        goalKind: doc?.kind || 'goal',
+        treePath: doc?.treePath || null,
+        childDatasets,
+        initialDataset: dataset,
+        onSubmit: async cfg => {
+          await updateDataset(this.app, this.file, dataset.id, cfg);
+          this.render();
+        },
+      }).open();
+    });
 
     const removeDsBtn = right.createEl('button', {
       cls: 'iter-icon-button iter-dataset-remove-btn',

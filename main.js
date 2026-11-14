@@ -2738,6 +2738,41 @@ var require_data_model = __commonJS({
       return app.metadataCache.getFirstLinkpathDest?.(pathOrLink, sourcePath) ?? null;
     }
     var IGNORED_FM_KEYS = /* @__PURE__ */ new Set(["position", "datasets", "widgets", "water_log", "days"]);
+    var AUTO_PROP_SKIP_KEYS = /* @__PURE__ */ new Set([
+      "position",
+      "datasets",
+      "widgets",
+      "water_log",
+      "days",
+      "type",
+      "title",
+      "created",
+      "updated",
+      "tags",
+      "aliases",
+      "cssclasses",
+      "cssclass",
+      "date",
+      "done",
+      "due",
+      "frequency",
+      "target",
+      "module",
+      "style",
+      "endless",
+      "goal",
+      "description",
+      "last_watered"
+    ]);
+    function lookupNoteField(fields, key) {
+      if (!fields || typeof fields !== "object" || !key) return void 0;
+      if (Object.prototype.hasOwnProperty.call(fields, key)) return fields[key];
+      const lower = String(key).trim().toLowerCase();
+      for (const [k, v] of Object.entries(fields)) {
+        if (k.toLowerCase() === lower) return v;
+      }
+      return void 0;
+    }
     function extractNoteScalarFields(fm) {
       const fields = {};
       if (!fm || typeof fm !== "object") return fields;
@@ -2759,20 +2794,22 @@ var require_data_model = __commonJS({
       const fields = extractNoteScalarFields(fm);
       if (entry.props && typeof entry.props === "object") {
         for (const [k, v] of Object.entries(entry.props)) {
-          if (fields[k] === void 0 && v !== void 0 && v !== null && v !== "") {
+          if (lookupNoteField(fields, k) === void 0 && v !== void 0 && v !== null && v !== "") {
             fields[k] = v;
           }
         }
       }
       const primaryKey = dataset.metricKey || dataset.metricKeys?.[0] || (dataset.type === "note_time" ? "score" : "");
-      if (dataset.type === "note_time" && entry.value !== void 0 && entry.value !== null && primaryKey && fields[primaryKey] === void 0) {
+      if (dataset.type === "note_time" && entry.value !== void 0 && entry.value !== null && primaryKey && lookupNoteField(fields, primaryKey) === void 0) {
         fields[primaryKey] = entry.value;
       }
       const declaredKeys = Array.isArray(dataset.metricKeys) && dataset.metricKeys.length ? dataset.metricKeys : primaryKey ? [primaryKey] : [];
       const propsList = [];
+      const seenPropKeys = /* @__PURE__ */ new Set();
       for (const k of declaredKeys) {
-        const rawVal = fields[k];
+        const rawVal = lookupNoteField(fields, k);
         if (rawVal === void 0 || rawVal === null || rawVal === "") continue;
+        seenPropKeys.add(k.toLowerCase());
         const num = toFiniteNumber(rawVal);
         propsList.push({
           key: k,
@@ -2780,8 +2817,19 @@ var require_data_model = __commonJS({
           num
         });
       }
+      for (const [fk, rawVal] of Object.entries(fields)) {
+        const lower = fk.toLowerCase();
+        if (seenPropKeys.has(lower) || AUTO_PROP_SKIP_KEYS.has(lower)) continue;
+        if (rawVal === void 0 || rawVal === null || rawVal === "") continue;
+        seenPropKeys.add(lower);
+        propsList.push({
+          key: fk,
+          raw: rawVal,
+          num: toFiniteNumber(rawVal)
+        });
+      }
       const activeKey = metricOverride || primaryKey;
-      let value = activeKey ? toFiniteNumber(fields[activeKey]) : null;
+      let value = activeKey ? toFiniteNumber(lookupNoteField(fields, activeKey)) : null;
       if (value === null && dataset.type === "note_time" && (!activeKey || activeKey === primaryKey)) {
         value = toFiniteNumber(entry.value);
       }
@@ -3094,6 +3142,11 @@ var require_data_model = __commonJS({
           childDs = resolveVirtualDataset(app, childDs, item.filePath, targetTreePath, effectiveMetric, nextVisited);
         } else if (effectiveMetric && (childDs.type === "note_time" || childDs.type === "note")) {
           childDs = { ...childDs, metricKey: effectiveMetric };
+        } else if (effectiveMetric && childDs.type === "number_time") {
+          const needle = effectiveMetric.toLowerCase();
+          const nameHit = (childDs.name || "").toLowerCase().includes(needle);
+          const unitHit = (childDs.unit || "").toLowerCase().includes(needle);
+          if (!nameHit && !unitHit) continue;
         }
         resolvedChildren.push(childDs);
         const childEntries = resolveDatasetEntries(app, childDs, item.filePath, effectiveMetric);
@@ -3255,6 +3308,38 @@ var require_data_model = __commonJS({
       });
       return dataset;
     }
+    async function updateDataset(app, file, datasetId, { name, type, unit, metricKey, metricKeys, relation }) {
+      const cleanName = typeof name === "string" ? name.trim() : "";
+      if (!cleanName) throw new Error("Dataset name is required.");
+      let updated = null;
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        if (!Array.isArray(fm.datasets)) throw new Error("No datasets found on this goal.");
+        const idx = fm.datasets.findIndex((item) => item?.id === datasetId);
+        if (idx === -1) throw new Error("Dataset not found.");
+        const current = normalizeDataset(fm.datasets[idx]) || fm.datasets[idx];
+        const nextType = type ? normalizeDatasetType(type) : current.type;
+        let cleanRelation = null;
+        if (nextType === "rollup") {
+          cleanRelation = normalizeRelation(relation ?? current.relation) || normalizeRelation({ mode: "query" });
+          if (cleanRelation.mode === "pick" && !cleanRelation.refs.length) {
+            throw new Error("Select at least one child data list.");
+          }
+        }
+        const cleanKeys = metricKeys !== void 0 || metricKey !== void 0 ? normalizeMetricKeys(metricKeys, metricKey, nextType) : current.metricKeys || [];
+        updated = {
+          ...current,
+          name: cleanName,
+          type: nextType,
+          unit: typeof unit === "string" ? unit.trim() : current.unit || "",
+          metricKey: cleanKeys[0] || "",
+          metricKeys: cleanKeys,
+          relation: cleanRelation,
+          entries: nextType === "rollup" ? [] : current.entries || []
+        };
+        fm.datasets[idx] = updated;
+      });
+      return updated;
+    }
     async function removeDataset(app, file, datasetId) {
       await app.fileManager.processFrontMatter(file, (fm) => {
         fm.datasets = Array.isArray(fm.datasets) ? fm.datasets.filter((item) => item?.id !== datasetId) : [];
@@ -3379,6 +3464,7 @@ var require_data_model = __commonJS({
       formatDueStatus,
       updateGoalMeta,
       addDataset,
+      updateDataset,
       removeDataset,
       addDatasetEntry,
       removeDatasetEntry,
@@ -6043,6 +6129,7 @@ var require_goal_modals = __commonJS({
       parseMetricKeysInput,
       toFiniteNumber,
       datasetMatchesFilter,
+      resolveDatasetEntries,
       stripMd
     } = require_data_model();
     function refKey(filePath, datasetId) {
@@ -6248,19 +6335,21 @@ var require_goal_modals = __commonJS({
       };
     }
     var AddDatasetModal = class extends Modal {
-      constructor(app, { goalKind = "goal", treePath = null, childDatasets = [], onSubmit }) {
+      constructor(app, { goalKind = "goal", treePath = null, childDatasets = [], initialDataset = null, onSubmit }) {
         super(app);
         this.goalKind = goalKind;
         this.treePath = treePath;
         this.childDatasets = childDatasets;
+        this.initialDataset = initialDataset;
         this.onSubmit = onSubmit;
         this.submitting = false;
       }
       onOpen() {
+        const isEdit = Boolean(this.initialDataset);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("iter-modal");
-        contentEl.createEl("h2", { text: "Add data list", cls: "iter-modal-title" });
+        contentEl.createEl("h2", { text: isEdit ? "Edit data list" : "Add data list", cls: "iter-modal-title" });
         const form = contentEl.createEl("form", { cls: "iter-modal-form" });
         const nameField = form.createDiv({ cls: "iter-modal-field" });
         nameField.createEl("label", { text: "Name", cls: "iter-modal-label" });
@@ -6270,6 +6359,7 @@ var require_goal_modals = __commonJS({
           cls: "iter-modal-input"
         });
         nameInput.required = true;
+        if (this.initialDataset?.name) nameInput.value = this.initialDataset.name;
         const availableTypes = this.goalKind === "tree" && this.treePath ? DATASET_TYPES : DATASET_TYPES.filter((item) => item.id !== "rollup");
         const typeField = form.createDiv({ cls: "iter-modal-field" });
         typeField.createEl("label", { text: "Data type", cls: "iter-modal-label" });
@@ -6277,7 +6367,14 @@ var require_goal_modals = __commonJS({
         for (const item of availableTypes) {
           typeSelect.createEl("option", { value: item.id, text: item.label });
         }
-        if (availableTypes.length) typeSelect.value = availableTypes[0].id;
+        if (this.initialDataset?.type) {
+          typeSelect.value = this.initialDataset.type;
+          if (this.initialDataset.entries?.length > 0) {
+            typeSelect.disabled = true;
+          }
+        } else if (availableTypes.length) {
+          typeSelect.value = availableTypes[0].id;
+        }
         const extraField = form.createDiv({ cls: "iter-modal-field" });
         const extraLabel = extraField.createEl("label", { text: "Unit (optional)", cls: "iter-modal-label" });
         const extraInput = extraField.createEl("input", {
@@ -6285,6 +6382,13 @@ var require_goal_modals = __commonJS({
           placeholder: "e.g. kg, words, reps",
           cls: "iter-modal-input"
         });
+        if (this.initialDataset) {
+          if (this.initialDataset.type === "number_time") {
+            extraInput.value = this.initialDataset.unit || "";
+          } else if (this.initialDataset.type === "note" || this.initialDataset.type === "note_time") {
+            extraInput.value = Array.isArray(this.initialDataset.metricKeys) && this.initialDataset.metricKeys.length ? this.initialDataset.metricKeys.join(", ") : this.initialDataset.metricKey || "";
+          }
+        }
         const rollupSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         let rollupControls = null;
         const syncExtra = () => {
@@ -6297,7 +6401,7 @@ var require_goal_modals = __commonJS({
                 childDatasets: this.childDatasets,
                 allowModeSwitch: true,
                 showKindAndFilter: true,
-                initial: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
+                initial: this.initialDataset?.relation ? { ...this.initialDataset.relation, unit: this.initialDataset.unit || "" } : { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
               });
             }
             return;
@@ -6326,7 +6430,11 @@ var require_goal_modals = __commonJS({
         const actions = form.createDiv({ cls: "iter-modal-actions" });
         const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
         cancel.addEventListener("click", () => this.close());
-        const submit = actions.createEl("button", { text: "Add data list", type: "submit", cls: "mod-cta" });
+        const submit = actions.createEl("button", {
+          text: isEdit ? "Save changes" : "Add data list",
+          type: "submit",
+          cls: "mod-cta"
+        });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           if (this.submitting) return;
@@ -6399,22 +6507,24 @@ var require_goal_modals = __commonJS({
       }
     ];
     var AddWidgetModal = class extends Modal {
-      constructor(app, { datasets = [], childDatasets = [], goalKind = "goal", treePath = null, onSubmit, onOpenCanvas = null }) {
+      constructor(app, { datasets = [], childDatasets = [], goalKind = "goal", treePath = null, initialWidget = null, onSubmit, onOpenCanvas = null }) {
         super(app);
         this.datasets = datasets;
         this.childDatasets = childDatasets;
         this.goalKind = goalKind;
         this.treePath = treePath;
+        this.initialWidget = initialWidget;
         this.onSubmit = onSubmit;
         this.onOpenCanvas = onOpenCanvas;
         this.submitting = false;
       }
       onOpen() {
+        const isEdit = Boolean(this.initialWidget);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("iter-modal");
         const headBar = contentEl.createDiv({ cls: "iter-modal-headbar" });
-        headBar.createEl("h2", { text: "Add widget", cls: "iter-modal-title" });
+        headBar.createEl("h2", { text: isEdit ? "Edit widget" : "Add widget", cls: "iter-modal-title" });
         const isTree = this.goalKind === "tree" && Boolean(this.treePath);
         const canUseDataWidgets = this.datasets.length > 0 || isTree;
         let canvasSwitchBtn = null;
@@ -6436,7 +6546,11 @@ var require_goal_modals = __commonJS({
         for (const item of availableTypes) {
           typeSelect.createEl("option", { value: item.id, text: item.label });
         }
-        if (availableTypes.length) typeSelect.value = availableTypes[0].id;
+        if (this.initialWidget?.type && availableTypes.some((t) => t.id === this.initialWidget.type)) {
+          typeSelect.value = this.initialWidget.type;
+        } else if (availableTypes.length) {
+          typeSelect.value = availableTypes[0].id;
+        }
         const dsField = row.createDiv({ cls: "iter-modal-field" });
         dsField.createEl("label", { text: "Linked data", cls: "iter-modal-label" });
         const dsSelect = dsField.createEl("select", { cls: "iter-modal-select" });
@@ -6454,8 +6568,27 @@ var require_goal_modals = __commonJS({
             });
           });
         }
-        if (this.datasets.length) dsSelect.value = this.datasets[0].id;
-        else if (isTree) dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+        if (this.initialWidget) {
+          if (this.initialWidget.datasetId && this.datasets.some((d) => d.id === this.initialWidget.datasetId)) {
+            dsSelect.value = this.initialWidget.datasetId;
+          } else if (this.initialWidget.relation && isTree) {
+            const rel = this.initialWidget.relation;
+            if (rel.mode === "pick") {
+              const singleRef = rel.refs?.length === 1 ? rel.refs[0] : null;
+              const childIdx = singleRef ? this.childDatasets.findIndex((c) => c.dataset.id === singleRef.datasetId && (!singleRef.filePath || c.filePath === singleRef.filePath)) : -1;
+              dsSelect.value = childIdx >= 0 ? `__child:${childIdx}` : "__rel:pick";
+            } else {
+              const matchedPreset = TREE_WIDGET_PRESETS.find(
+                (p) => p.initial.mode === "query" && p.initial.childKinds === rel.childKinds && p.initial.dataFilter === rel.dataFilter
+              );
+              dsSelect.value = matchedPreset ? matchedPreset.value : TREE_WIDGET_PRESETS[0].value;
+            }
+          }
+        } else if (this.datasets.length) {
+          dsSelect.value = this.datasets[0].id;
+        } else if (isTree) {
+          dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+        }
         const relationSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         const titleField = form.createDiv({ cls: "iter-modal-field" });
         titleField.createEl("label", { text: "Widget title (optional)", cls: "iter-modal-label" });
@@ -6464,6 +6597,7 @@ var require_goal_modals = __commonJS({
           placeholder: "Auto-named from data if left blank",
           cls: "iter-modal-input"
         });
+        if (this.initialWidget?.title) titleInput.value = this.initialWidget.title;
         const metricSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         const dynamicSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         let aggSelect = null;
@@ -6484,17 +6618,25 @@ var require_goal_modals = __commonJS({
           const keys = [];
           const seen = /* @__PURE__ */ new Set();
           const pushKey = (k) => {
-            if (typeof k === "string" && k.trim() && !seen.has(k.trim())) {
-              seen.add(k.trim());
+            if (typeof k === "string" && k.trim() && !seen.has(k.trim().toLowerCase())) {
+              seen.add(k.trim().toLowerCase());
               keys.push(k.trim());
+            }
+          };
+          const inspectDs = (ds, sourcePath = "") => {
+            for (const k of ds.metricKeys || []) pushKey(k);
+            if ((ds.type === "note" || ds.type === "note_time") && this.app) {
+              for (const entry of resolveDatasetEntries(this.app, ds, sourcePath)) {
+                for (const p of entry.propsList || []) pushKey(p.key);
+              }
             }
           };
           const localDs = this.datasets.find((d) => d.id === val);
           if (localDs) {
-            for (const k of localDs.metricKeys || []) pushKey(k);
+            inspectDs(localDs);
             if (localDs.type === "rollup") {
               for (const ch of this.childDatasets) {
-                for (const k of ch.dataset.metricKeys || []) pushKey(k);
+                inspectDs(ch.dataset, ch.filePath);
               }
             }
             return {
@@ -6507,7 +6649,7 @@ var require_goal_modals = __commonJS({
             const idx = Number(val.slice("__child:".length));
             const childItem = this.childDatasets[idx];
             if (childItem) {
-              for (const k of childItem.dataset.metricKeys || []) pushKey(k);
+              inspectDs(childItem.dataset, childItem.filePath);
               return {
                 keys,
                 preferDefault: childItem.dataset.type === "note" || childItem.dataset.type === "note_time",
@@ -6517,7 +6659,7 @@ var require_goal_modals = __commonJS({
           }
           if (val.startsWith("__rel:")) {
             for (const ch of this.childDatasets) {
-              for (const k of ch.dataset.metricKeys || []) pushKey(k);
+              inspectDs(ch.dataset, ch.filePath);
             }
             return { keys, preferDefault: false, show: true };
           }
@@ -6544,7 +6686,9 @@ var require_goal_modals = __commonJS({
             placeholder: info.keys.length ? `e.g. ${info.keys.slice(0, 3).join(", ")} (blank = auto)` : "e.g. pages, chapters, score",
             cls: "iter-modal-input"
           });
-          if (info.preferDefault && info.keys.length) {
+          if (this.initialWidget?.metricKey !== void 0 && this.initialWidget.metricKey !== "") {
+            metricInput.value = this.initialWidget.metricKey;
+          } else if (info.preferDefault && info.keys.length) {
             metricInput.value = info.keys[0];
           }
           if (info.keys.length) {
@@ -6572,11 +6716,12 @@ var require_goal_modals = __commonJS({
             return;
           }
           relationSlot.style.display = "";
+          const initialRel = this.initialWidget?.relation ? { ...preset.initial, ...this.initialWidget.relation, unit: this.initialWidget.unit || "" } : preset.initial;
           relControls = renderRelationConfigPanel(relationSlot, {
             childDatasets: this.childDatasets,
             allowModeSwitch: false,
             showKindAndFilter: false,
-            initial: preset.initial
+            initial: initialRel
           });
         };
         const rebuildOptions = () => {
@@ -6601,7 +6746,7 @@ var require_goal_modals = __commonJS({
             for (const item of STAT_AGGS) {
               aggSelect.createEl("option", { value: item.id, text: item.label });
             }
-            aggSelect.value = isRollupSumDefault() ? "sum" : "latest";
+            aggSelect.value = this.initialWidget?.agg || (isRollupSumDefault() ? "sum" : "latest");
             aggSelect.addEventListener("change", () => {
               aggTouched = true;
             });
@@ -6613,7 +6758,7 @@ var require_goal_modals = __commonJS({
             for (const item of BAR_MODES) {
               modeSelect.createEl("option", { value: item.id, text: item.label });
             }
-            modeSelect.value = BAR_MODES[0].id;
+            modeSelect.value = this.initialWidget?.mode || BAR_MODES[0].id;
             const tField = barRow.createDiv({ cls: "iter-modal-field" });
             tField.createEl("label", { text: "Goal target number", cls: "iter-modal-label" });
             targetInput = tField.createEl("input", {
@@ -6623,6 +6768,9 @@ var require_goal_modals = __commonJS({
               cls: "iter-modal-input"
             });
             targetInput.required = true;
+            if (this.initialWidget?.target !== null && this.initialWidget?.target !== void 0) {
+              targetInput.value = String(this.initialWidget.target);
+            }
           } else if (wType === "chart") {
             const field = dynamicSlot.createDiv({ cls: "iter-modal-field" });
             field.createEl("label", { text: "Graph style", cls: "iter-modal-label" });
@@ -6630,7 +6778,7 @@ var require_goal_modals = __commonJS({
             for (const item of CHART_VARIANTS) {
               variantSelect.createEl("option", { value: item.id, text: item.label });
             }
-            variantSelect.value = CHART_VARIANTS[0].id;
+            variantSelect.value = this.initialWidget?.variant || CHART_VARIANTS[0].id;
           } else if (wType === "note_navigator") {
             const currentVal = dsSelect.value || "";
             const currentDs = this.datasets.find((d) => d.id === currentVal);
@@ -6716,7 +6864,11 @@ var require_goal_modals = __commonJS({
         const actions = form.createDiv({ cls: "iter-modal-actions" });
         const cancel = actions.createEl("button", { text: "Cancel", type: "button", cls: "iter-btn-ghost" });
         cancel.addEventListener("click", () => this.close());
-        const submit = actions.createEl("button", { text: "Add widget", type: "submit", cls: "mod-cta" });
+        const submit = actions.createEl("button", {
+          text: isEdit ? "Save changes" : "Add widget",
+          type: "submit",
+          cls: "mod-cta"
+        });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           if (this.submitting) return;
@@ -6873,6 +7025,7 @@ var require_goal_view = __commonJS({
       formatNumber,
       updateGoalMeta,
       addDataset,
+      updateDataset,
       removeDataset,
       addDatasetEntry,
       removeDatasetEntry,
@@ -7229,8 +7382,8 @@ var require_goal_view = __commonJS({
           });
           const top2 = card2.createDiv({ cls: "iter-widget-top" });
           top2.createSpan({ text: widget.title || "Custom Flow", cls: "iter-widget-title" });
-          const actions = top2.createDiv({ cls: "iter-widget-top-actions" });
-          const editBtn = actions.createEl("button", {
+          const actions2 = top2.createDiv({ cls: "iter-widget-top-actions" });
+          const editBtn = actions2.createEl("button", {
             cls: "iter-icon-button iter-widget-edit",
             type: "button",
             attr: { "aria-label": "Edit flow in canvas", title: "Edit flow in canvas" }
@@ -7247,7 +7400,7 @@ var require_goal_view = __commonJS({
               }
             }).open();
           });
-          const removeBtn2 = actions.createEl("button", {
+          const removeBtn2 = actions2.createEl("button", {
             cls: "iter-icon-button iter-widget-remove",
             type: "button",
             attr: { "aria-label": "Remove widget", title: "Remove widget" }
@@ -7269,7 +7422,43 @@ var require_goal_view = __commonJS({
         const baseTitle = dataset && widget.metricKey && widget.metricKey !== dataset.metricKey ? `${rawBaseTitle} (${widget.metricKey})` : rawBaseTitle;
         const defaultTitle = widget.type === "streak" ? "Streak" : !dataset ? "Missing dataset" : widget.type === "stat" ? `${baseTitle} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : baseTitle;
         top.createSpan({ text: widget.title || defaultTitle, cls: "iter-widget-title" });
-        const removeBtn = top.createEl("button", {
+        const actions = top.createDiv({ cls: "iter-widget-top-actions" });
+        if (widget.type !== "streak") {
+          const editBtn = actions.createEl("button", {
+            cls: "iter-icon-button iter-widget-edit",
+            type: "button",
+            attr: { "aria-label": "Edit widget", title: "Edit widget or convert to Canvas flow" }
+          });
+          setIcon(editBtn, "pencil");
+          editBtn.addEventListener("click", () => {
+            const isTree = doc.kind === "tree" && Boolean(doc.treePath);
+            const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
+            new AddWidgetModal(this.app, {
+              datasets: doc.datasets,
+              childDatasets,
+              goalKind: doc.kind,
+              treePath: doc.treePath,
+              initialWidget: widget,
+              onOpenCanvas: (draft) => {
+                const initialPipeline = buildPipelineFromSimpleConfig(draft, doc);
+                new WorkflowEditorModal(this.app, {
+                  doc,
+                  initialTitle: draft?.title || widget.title || "",
+                  initialPipeline,
+                  onSubmit: async (cfg) => {
+                    await updateWidget(this.app, this.file, widget.id, cfg);
+                    this.render();
+                  }
+                }).open();
+              },
+              onSubmit: async (updated) => {
+                await updateWidget(this.app, this.file, widget.id, updated);
+                this.render();
+              }
+            }).open();
+          });
+        }
+        const removeBtn = actions.createEl("button", {
           cls: "iter-icon-button iter-widget-remove",
           type: "button",
           attr: { "aria-label": "Remove widget", title: "Remove widget" }
@@ -7443,6 +7632,26 @@ var require_goal_view = __commonJS({
           setIcon(addEntryBtn, "plus");
           addEntryBtn.addEventListener("click", () => this.triggerDatasetAdd(dataset));
         }
+        const editDsBtn = right.createEl("button", {
+          cls: "iter-icon-button iter-dataset-edit-btn",
+          type: "button",
+          attr: { "aria-label": `Edit ${dataset.name}`, title: `Edit ${dataset.name} settings` }
+        });
+        setIcon(editDsBtn, "pencil");
+        editDsBtn.addEventListener("click", () => {
+          const isTree = doc?.kind === "tree" && Boolean(doc?.treePath);
+          const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
+          new AddDatasetModal(this.app, {
+            goalKind: doc?.kind || "goal",
+            treePath: doc?.treePath || null,
+            childDatasets,
+            initialDataset: dataset,
+            onSubmit: async (cfg) => {
+              await updateDataset(this.app, this.file, dataset.id, cfg);
+              this.render();
+            }
+          }).open();
+        });
         const removeDsBtn = right.createEl("button", {
           cls: "iter-icon-button iter-dataset-remove-btn",
           type: "button",

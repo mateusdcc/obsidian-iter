@@ -12,6 +12,7 @@ const {
   parseMetricKeysInput,
   toFiniteNumber,
   datasetMatchesFilter,
+  resolveDatasetEntries,
   stripMd,
 } = require('./data-model');
 
@@ -237,20 +238,22 @@ function renderRelationConfigPanel(container, {
 }
 
 class AddDatasetModal extends Modal {
-  constructor(app, { goalKind = 'goal', treePath = null, childDatasets = [], onSubmit }) {
+  constructor(app, { goalKind = 'goal', treePath = null, childDatasets = [], initialDataset = null, onSubmit }) {
     super(app);
     this.goalKind = goalKind;
     this.treePath = treePath;
     this.childDatasets = childDatasets;
+    this.initialDataset = initialDataset;
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
 
   onOpen() {
+    const isEdit = Boolean(this.initialDataset);
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('iter-modal');
-    contentEl.createEl('h2', { text: 'Add data list', cls: 'iter-modal-title' });
+    contentEl.createEl('h2', { text: isEdit ? 'Edit data list' : 'Add data list', cls: 'iter-modal-title' });
 
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
 
@@ -262,6 +265,7 @@ class AddDatasetModal extends Modal {
       cls: 'iter-modal-input',
     });
     nameInput.required = true;
+    if (this.initialDataset?.name) nameInput.value = this.initialDataset.name;
 
     const availableTypes = this.goalKind === 'tree' && this.treePath
       ? DATASET_TYPES
@@ -273,7 +277,14 @@ class AddDatasetModal extends Modal {
     for (const item of availableTypes) {
       typeSelect.createEl('option', { value: item.id, text: item.label });
     }
-    if (availableTypes.length) typeSelect.value = availableTypes[0].id;
+    if (this.initialDataset?.type) {
+      typeSelect.value = this.initialDataset.type;
+      if (this.initialDataset.entries?.length > 0) {
+        typeSelect.disabled = true;
+      }
+    } else if (availableTypes.length) {
+      typeSelect.value = availableTypes[0].id;
+    }
 
     const extraField = form.createDiv({ cls: 'iter-modal-field' });
     const extraLabel = extraField.createEl('label', { text: 'Unit (optional)', cls: 'iter-modal-label' });
@@ -282,6 +293,15 @@ class AddDatasetModal extends Modal {
       placeholder: 'e.g. kg, words, reps',
       cls: 'iter-modal-input',
     });
+    if (this.initialDataset) {
+      if (this.initialDataset.type === 'number_time') {
+        extraInput.value = this.initialDataset.unit || '';
+      } else if (this.initialDataset.type === 'note' || this.initialDataset.type === 'note_time') {
+        extraInput.value = Array.isArray(this.initialDataset.metricKeys) && this.initialDataset.metricKeys.length
+          ? this.initialDataset.metricKeys.join(', ')
+          : (this.initialDataset.metricKey || '');
+      }
+    }
 
     const rollupSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
     let rollupControls = null;
@@ -296,7 +316,9 @@ class AddDatasetModal extends Modal {
             childDatasets: this.childDatasets,
             allowModeSwitch: true,
             showKindAndFilter: true,
-            initial: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+            initial: this.initialDataset?.relation
+              ? { ...this.initialDataset.relation, unit: this.initialDataset.unit || '' }
+              : { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
           });
         }
         return;
@@ -328,7 +350,11 @@ class AddDatasetModal extends Modal {
     const actions = form.createDiv({ cls: 'iter-modal-actions' });
     const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
     cancel.addEventListener('click', () => this.close());
-    const submit = actions.createEl('button', { text: 'Add data list', type: 'submit', cls: 'mod-cta' });
+    const submit = actions.createEl('button', {
+      text: isEdit ? 'Save changes' : 'Add data list',
+      type: 'submit',
+      cls: 'mod-cta',
+    });
 
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -412,24 +438,26 @@ const TREE_WIDGET_PRESETS = [
 ];
 
 class AddWidgetModal extends Modal {
-  constructor(app, { datasets = [], childDatasets = [], goalKind = 'goal', treePath = null, onSubmit, onOpenCanvas = null }) {
+  constructor(app, { datasets = [], childDatasets = [], goalKind = 'goal', treePath = null, initialWidget = null, onSubmit, onOpenCanvas = null }) {
     super(app);
     this.datasets = datasets;
     this.childDatasets = childDatasets;
     this.goalKind = goalKind;
     this.treePath = treePath;
+    this.initialWidget = initialWidget;
     this.onSubmit = onSubmit;
     this.onOpenCanvas = onOpenCanvas;
     this.submitting = false;
   }
 
   onOpen() {
+    const isEdit = Boolean(this.initialWidget);
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('iter-modal');
 
     const headBar = contentEl.createDiv({ cls: 'iter-modal-headbar' });
-    headBar.createEl('h2', { text: 'Add widget', cls: 'iter-modal-title' });
+    headBar.createEl('h2', { text: isEdit ? 'Edit widget' : 'Add widget', cls: 'iter-modal-title' });
 
     const isTree = this.goalKind === 'tree' && Boolean(this.treePath);
     const canUseDataWidgets = this.datasets.length > 0 || isTree;
@@ -456,7 +484,11 @@ class AddWidgetModal extends Modal {
     for (const item of availableTypes) {
       typeSelect.createEl('option', { value: item.id, text: item.label });
     }
-    if (availableTypes.length) typeSelect.value = availableTypes[0].id;
+    if (this.initialWidget?.type && availableTypes.some(t => t.id === this.initialWidget.type)) {
+      typeSelect.value = this.initialWidget.type;
+    } else if (availableTypes.length) {
+      typeSelect.value = availableTypes[0].id;
+    }
 
     const dsField = row.createDiv({ cls: 'iter-modal-field' });
     dsField.createEl('label', { text: 'Linked data', cls: 'iter-modal-label' });
@@ -475,8 +507,31 @@ class AddWidgetModal extends Modal {
         });
       });
     }
-    if (this.datasets.length) dsSelect.value = this.datasets[0].id;
-    else if (isTree) dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+    if (this.initialWidget) {
+      if (this.initialWidget.datasetId && this.datasets.some(d => d.id === this.initialWidget.datasetId)) {
+        dsSelect.value = this.initialWidget.datasetId;
+      } else if (this.initialWidget.relation && isTree) {
+        const rel = this.initialWidget.relation;
+        if (rel.mode === 'pick') {
+          const singleRef = rel.refs?.length === 1 ? rel.refs[0] : null;
+          const childIdx = singleRef
+            ? this.childDatasets.findIndex(c => c.dataset.id === singleRef.datasetId && (!singleRef.filePath || c.filePath === singleRef.filePath))
+            : -1;
+          dsSelect.value = childIdx >= 0 ? `__child:${childIdx}` : '__rel:pick';
+        } else {
+          const matchedPreset = TREE_WIDGET_PRESETS.find(
+            p => p.initial.mode === 'query'
+              && p.initial.childKinds === rel.childKinds
+              && p.initial.dataFilter === rel.dataFilter,
+          );
+          dsSelect.value = matchedPreset ? matchedPreset.value : TREE_WIDGET_PRESETS[0].value;
+        }
+      }
+    } else if (this.datasets.length) {
+      dsSelect.value = this.datasets[0].id;
+    } else if (isTree) {
+      dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+    }
 
     const relationSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
 
@@ -487,6 +542,7 @@ class AddWidgetModal extends Modal {
       placeholder: 'Auto-named from data if left blank',
       cls: 'iter-modal-input',
     });
+    if (this.initialWidget?.title) titleInput.value = this.initialWidget.title;
 
     const metricSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
     const dynamicSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
@@ -511,17 +567,25 @@ class AddWidgetModal extends Modal {
       const keys = [];
       const seen = new Set();
       const pushKey = k => {
-        if (typeof k === 'string' && k.trim() && !seen.has(k.trim())) {
-          seen.add(k.trim());
+        if (typeof k === 'string' && k.trim() && !seen.has(k.trim().toLowerCase())) {
+          seen.add(k.trim().toLowerCase());
           keys.push(k.trim());
+        }
+      };
+      const inspectDs = (ds, sourcePath = '') => {
+        for (const k of ds.metricKeys || []) pushKey(k);
+        if ((ds.type === 'note' || ds.type === 'note_time') && this.app) {
+          for (const entry of resolveDatasetEntries(this.app, ds, sourcePath)) {
+            for (const p of entry.propsList || []) pushKey(p.key);
+          }
         }
       };
       const localDs = this.datasets.find(d => d.id === val);
       if (localDs) {
-        for (const k of localDs.metricKeys || []) pushKey(k);
+        inspectDs(localDs);
         if (localDs.type === 'rollup') {
           for (const ch of this.childDatasets) {
-            for (const k of ch.dataset.metricKeys || []) pushKey(k);
+            inspectDs(ch.dataset, ch.filePath);
           }
         }
         return {
@@ -534,7 +598,7 @@ class AddWidgetModal extends Modal {
         const idx = Number(val.slice('__child:'.length));
         const childItem = this.childDatasets[idx];
         if (childItem) {
-          for (const k of childItem.dataset.metricKeys || []) pushKey(k);
+          inspectDs(childItem.dataset, childItem.filePath);
           return {
             keys,
             preferDefault: childItem.dataset.type === 'note' || childItem.dataset.type === 'note_time',
@@ -544,7 +608,7 @@ class AddWidgetModal extends Modal {
       }
       if (val.startsWith('__rel:')) {
         for (const ch of this.childDatasets) {
-          for (const k of ch.dataset.metricKeys || []) pushKey(k);
+          inspectDs(ch.dataset, ch.filePath);
         }
         return { keys, preferDefault: false, show: true };
       }
@@ -572,7 +636,9 @@ class AddWidgetModal extends Modal {
         placeholder: info.keys.length ? `e.g. ${info.keys.slice(0, 3).join(', ')} (blank = auto)` : 'e.g. pages, chapters, score',
         cls: 'iter-modal-input',
       });
-      if (info.preferDefault && info.keys.length) {
+      if (this.initialWidget?.metricKey !== undefined && this.initialWidget.metricKey !== '') {
+        metricInput.value = this.initialWidget.metricKey;
+      } else if (info.preferDefault && info.keys.length) {
         metricInput.value = info.keys[0];
       }
       if (info.keys.length) {
@@ -601,11 +667,14 @@ class AddWidgetModal extends Modal {
         return;
       }
       relationSlot.style.display = '';
+      const initialRel = this.initialWidget?.relation
+        ? { ...preset.initial, ...this.initialWidget.relation, unit: this.initialWidget.unit || '' }
+        : preset.initial;
       relControls = renderRelationConfigPanel(relationSlot, {
         childDatasets: this.childDatasets,
         allowModeSwitch: false,
         showKindAndFilter: false,
-        initial: preset.initial,
+        initial: initialRel,
       });
     };
 
@@ -632,7 +701,7 @@ class AddWidgetModal extends Modal {
         for (const item of STAT_AGGS) {
           aggSelect.createEl('option', { value: item.id, text: item.label });
         }
-        aggSelect.value = isRollupSumDefault() ? 'sum' : 'latest';
+        aggSelect.value = this.initialWidget?.agg || (isRollupSumDefault() ? 'sum' : 'latest');
         aggSelect.addEventListener('change', () => {
           aggTouched = true;
         });
@@ -644,7 +713,7 @@ class AddWidgetModal extends Modal {
         for (const item of BAR_MODES) {
           modeSelect.createEl('option', { value: item.id, text: item.label });
         }
-        modeSelect.value = BAR_MODES[0].id;
+        modeSelect.value = this.initialWidget?.mode || BAR_MODES[0].id;
 
         const tField = barRow.createDiv({ cls: 'iter-modal-field' });
         tField.createEl('label', { text: 'Goal target number', cls: 'iter-modal-label' });
@@ -655,6 +724,9 @@ class AddWidgetModal extends Modal {
           cls: 'iter-modal-input',
         });
         targetInput.required = true;
+        if (this.initialWidget?.target !== null && this.initialWidget?.target !== undefined) {
+          targetInput.value = String(this.initialWidget.target);
+        }
       } else if (wType === 'chart') {
         const field = dynamicSlot.createDiv({ cls: 'iter-modal-field' });
         field.createEl('label', { text: 'Graph style', cls: 'iter-modal-label' });
@@ -662,7 +734,7 @@ class AddWidgetModal extends Modal {
         for (const item of CHART_VARIANTS) {
           variantSelect.createEl('option', { value: item.id, text: item.label });
         }
-        variantSelect.value = CHART_VARIANTS[0].id;
+        variantSelect.value = this.initialWidget?.variant || CHART_VARIANTS[0].id;
       } else if (wType === 'note_navigator') {
         const currentVal = dsSelect.value || '';
         const currentDs = this.datasets.find(d => d.id === currentVal);
@@ -758,7 +830,11 @@ class AddWidgetModal extends Modal {
     const actions = form.createDiv({ cls: 'iter-modal-actions' });
     const cancel = actions.createEl('button', { text: 'Cancel', type: 'button', cls: 'iter-btn-ghost' });
     cancel.addEventListener('click', () => this.close());
-    const submit = actions.createEl('button', { text: 'Add widget', type: 'submit', cls: 'mod-cta' });
+    const submit = actions.createEl('button', {
+      text: isEdit ? 'Save changes' : 'Add widget',
+      type: 'submit',
+      cls: 'mod-cta',
+    });
 
     form.addEventListener('submit', async event => {
       event.preventDefault();

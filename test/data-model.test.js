@@ -6,6 +6,7 @@ const {
   readGoalDocument,
   updateGoalMeta,
   addDataset,
+  updateDataset,
   addDatasetEntry,
   removeDatasetEntry,
   addWidget,
@@ -664,4 +665,27 @@ test('pipeline evaluates heterogeneous Reading tree Page Reads, watering logs, m
   assert.equal(reloadedTree.widgets.length, 1);
   assert.equal(reloadedTree.widgets[0].title, 'Pages Breakdown');
   assert.equal(reloadedTree.widgets[0].pipeline.nodes.length, 7);
+
+  // Simple rollup with metricOverride: 'pages' includes 'Pages read' (number_time) + 'pages' frontmatter, skips 'Poems read' & 'Books read'
+  const simplePagesRollup = resolveVirtualDataset(
+    app,
+    {
+      id: 'v_pages',
+      name: 'Simple Pages',
+      relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+    },
+    treeFile.path,
+    'Iter/Reading',
+    'pages',
+  );
+  assert.equal(computeStat(app, simplePagesRollup, 'sum', treeFile.path, 'pages').value, 345);
+
+  // updateDataset updates name, unit, and metricKeys in place while preserving entries
+  const updatedEssayDs = await updateDataset(app, hEssays, essayNotes.id, {
+    name: 'Essay Chapter Analyses',
+    metricKeys: 'chapters, pages, topic',
+  });
+  assert.equal(updatedEssayDs.name, 'Essay Chapter Analyses');
+  assert.deepEqual(updatedEssayDs.metricKeys, ['chapters', 'pages', 'topic']);
+  assert.equal(updatedEssayDs.entries.length, 2);
 });
