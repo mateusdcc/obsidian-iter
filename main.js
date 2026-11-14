@@ -2420,12 +2420,41 @@ var require_garden_view = __commonJS({
 // src/data-model.js
 var require_data_model = __commonJS({
   "src/data-model.js"(exports2, module2) {
-    var { ROOT, parseDateKey, toDateKey, normalizeFrequency, normalizeDays, mergeWaterDates } = require_storage();
+    var {
+      ROOT,
+      isFolder,
+      parseDateKey,
+      toDateKey,
+      normalizeFrequency,
+      normalizeDays,
+      mergeWaterDates
+    } = require_storage();
     var DATASET_TYPES = [
       { id: "number_time", label: "Number & Time" },
       { id: "text", label: "Text List" },
       { id: "note", label: "Notes" },
-      { id: "note_time", label: "Notes & Time" }
+      { id: "note_time", label: "Notes & Time" },
+      { id: "rollup", label: "Child Rollup (from children)" }
+    ];
+    var RELATION_CHILD_KINDS = [
+      { id: "all", label: "All subgoals & habits" },
+      { id: "habits", label: "Habits only" },
+      { id: "subgoals", label: "Subgoals only" }
+    ];
+    var RELATION_DATA_FILTERS = [
+      { id: "numeric", label: "Numeric (numbers & scored notes)" },
+      { id: "note", label: "Notes" },
+      { id: "text", label: "Text lists" },
+      { id: "any", label: "All data types" }
+    ];
+    var RELATION_PER_CHILD = [
+      { id: "all", label: "All entries combined" },
+      { id: "sum", label: "Sum per child" },
+      { id: "latest", label: "Latest entry per child" },
+      { id: "average", label: "Average per child" },
+      { id: "max", label: "Max per child" },
+      { id: "min", label: "Min per child" },
+      { id: "count", label: "Entry count per child" }
     ];
     var WIDGET_TYPES = [
       { id: "stat", label: "Metric Stat" },
@@ -2511,32 +2540,70 @@ var require_data_model = __commonJS({
       }
       return null;
     }
+    function normalizeChildKinds(raw) {
+      return RELATION_CHILD_KINDS.some((item) => item.id === raw) ? raw : "all";
+    }
+    function normalizeDataFilter(raw) {
+      return RELATION_DATA_FILTERS.some((item) => item.id === raw) ? raw : "numeric";
+    }
+    function normalizePerChildAgg(raw) {
+      return RELATION_PER_CHILD.some((item) => item.id === raw) ? raw : "all";
+    }
+    function normalizeRelationRefs(raw) {
+      if (!Array.isArray(raw)) return [];
+      return raw.map((ref) => {
+        if (!ref || typeof ref !== "object") return null;
+        const filePath = typeof ref.filePath === "string" ? ref.filePath.trim() : "";
+        const datasetId = typeof ref.datasetId === "string" ? ref.datasetId.trim() : "";
+        if (!datasetId) return null;
+        return { filePath, datasetId };
+      }).filter(Boolean);
+    }
+    function normalizeRelation(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const mode = raw.mode === "pick" ? "pick" : "query";
+      return {
+        scope: "tree_children",
+        treePath: typeof raw.treePath === "string" ? raw.treePath.trim() : "",
+        mode,
+        childKinds: normalizeChildKinds(raw.childKinds),
+        dataFilter: normalizeDataFilter(raw.dataFilter),
+        nameMatch: typeof raw.nameMatch === "string" ? raw.nameMatch.trim() : "",
+        perChildAgg: normalizePerChildAgg(raw.perChildAgg),
+        refs: mode === "pick" ? normalizeRelationRefs(raw.refs) : []
+      };
+    }
     function normalizeDataset(raw) {
       if (!raw || typeof raw !== "object") return null;
       const name = typeof raw.name === "string" ? raw.name.trim() : "";
       if (!name) return null;
       const type = normalizeDatasetType(raw.type);
-      const entries = Array.isArray(raw.entries) ? raw.entries.map((item) => normalizeEntry(type, item)).filter(Boolean) : [];
+      const relation = type === "rollup" ? normalizeRelation(raw.relation) || normalizeRelation({ mode: "query" }) : null;
+      const entries = type === "rollup" ? [] : Array.isArray(raw.entries) ? raw.entries.map((item) => normalizeEntry(type, item)).filter(Boolean) : [];
       return {
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : generateId("ds"),
         name,
         type,
         unit: typeof raw.unit === "string" ? raw.unit.trim() : "",
         metricKey: typeof raw.metricKey === "string" && raw.metricKey.trim() ? raw.metricKey.trim() : "score",
+        relation,
         entries
       };
     }
     function normalizeWidget(raw) {
       if (!raw || typeof raw !== "object") return null;
       const type = normalizeWidgetType(raw.type);
-      const datasetId = typeof raw.datasetId === "string" ? raw.datasetId.trim() : "";
-      if (type !== "streak" && !datasetId) return null;
+      const relation = type === "streak" ? null : normalizeRelation(raw.relation);
+      const datasetId = type === "streak" || relation ? "" : typeof raw.datasetId === "string" ? raw.datasetId.trim() : "";
+      if (type !== "streak" && !datasetId && !relation) return null;
       const title = typeof raw.title === "string" ? raw.title.trim() : "";
       return {
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : generateId("w"),
         title,
         type,
         datasetId,
+        relation,
+        unit: typeof raw.unit === "string" ? raw.unit.trim() : "",
         agg: normalizeStatAgg(raw.agg),
         mode: normalizeBarMode(raw.mode),
         target: toFiniteNumber(raw.target),
@@ -2597,6 +2664,9 @@ var require_data_model = __commonJS({
       return app.metadataCache.getFirstLinkpathDest?.(pathOrLink, sourcePath) ?? null;
     }
     function resolveDatasetEntries(app, dataset, sourcePath = "") {
+      if (dataset?.isVirtual && Array.isArray(dataset.resolvedEntries)) {
+        return dataset.resolvedEntries;
+      }
       return dataset.entries.map((entry, index) => {
         if (dataset.type === "number_time") {
           return { index, date: entry.date, value: entry.value, noteFile: null, label: `${entry.value}${dataset.unit ? ` ${dataset.unit}` : ""}` };
@@ -2710,15 +2780,309 @@ var require_data_model = __commonJS({
         }
       });
     }
-    async function addDataset(app, file, { name, type, unit = "", metricKey = "score" }) {
+    function collectTreeMarkdownFiles(folder, acc = []) {
+      if (!isFolder(folder)) return acc;
+      for (const child of folder.children) {
+        if (!child?.name || child.name.startsWith(".") || child.name.startsWith("_")) continue;
+        if (isFolder(child)) {
+          collectTreeMarkdownFiles(child, acc);
+        } else if (child.extension === "md") {
+          acc.push(child);
+        }
+      }
+      return acc;
+    }
+    function discoverChildDatasets(app, treePath) {
+      if (!treePath || typeof treePath !== "string") return [];
+      const folder = app.vault.getAbstractFileByPath(treePath);
+      if (!isFolder(folder)) return [];
+      const files = collectTreeMarkdownFiles(folder, []).filter((f) => f.name !== "_tree.md");
+      const results = [];
+      for (const file of files) {
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!fm || !Array.isArray(fm.datasets)) continue;
+        const childKind = resolveGoalKind(file, fm);
+        const childTitle = typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(file.name);
+        for (const rawDs of fm.datasets) {
+          const ds = normalizeDataset(rawDs);
+          if (!ds) continue;
+          results.push({
+            file,
+            filePath: file.path,
+            childKind,
+            childTitle,
+            dataset: ds
+          });
+        }
+      }
+      results.sort(
+        (a, b) => a.childTitle.localeCompare(b.childTitle, void 0, { sensitivity: "base", numeric: true }) || a.dataset.name.localeCompare(b.dataset.name, void 0, { sensitivity: "base", numeric: true })
+      );
+      return results;
+    }
+    function datasetMatchesFilter(ds, dataFilter) {
+      if (!ds) return false;
+      if (dataFilter === "any") return true;
+      if (dataFilter === "numeric") {
+        if (ds.type === "number_time" || ds.type === "note_time") return true;
+        if (ds.type === "rollup") {
+          const df = ds.relation?.dataFilter || "numeric";
+          return df === "numeric" || df === "any";
+        }
+        return false;
+      }
+      if (dataFilter === "note") {
+        if (ds.type === "note" || ds.type === "note_time") return true;
+        if (ds.type === "rollup") {
+          const df = ds.relation?.dataFilter || "numeric";
+          return df === "note" || df === "any";
+        }
+        return false;
+      }
+      if (dataFilter === "text") {
+        if (ds.type === "text") return true;
+        if (ds.type === "rollup") {
+          const df = ds.relation?.dataFilter || "numeric";
+          return df === "text" || df === "any";
+        }
+        return false;
+      }
+      return true;
+    }
+    function inferRollupUnit(datasets, explicitUnit = "") {
+      const cleanExplicit = typeof explicitUnit === "string" ? explicitUnit.trim() : "";
+      if (cleanExplicit) return cleanExplicit;
+      const units = new Set(
+        datasets.map((ds) => typeof ds?.unit === "string" ? ds.unit.trim() : "").filter(Boolean)
+      );
+      return units.size === 1 ? Array.from(units)[0] : "";
+    }
+    function resolvePickedRefs(app, refs, childItems, ownerFilePath, excludedDatasetId) {
+      const byKey = /* @__PURE__ */ new Map();
+      const byDsId = /* @__PURE__ */ new Map();
+      for (const item of childItems) {
+        byKey.set(`${item.filePath}::${item.dataset.id}`, item);
+        if (!byDsId.has(item.dataset.id)) byDsId.set(item.dataset.id, item);
+      }
+      const matched = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const ref of refs) {
+        let item = byKey.get(`${ref.filePath}::${ref.datasetId}`) || byDsId.get(ref.datasetId) || null;
+        if (!item && ref.filePath) {
+          const directFile = app.vault.getAbstractFileByPath(ref.filePath);
+          if (directFile && !isFolder(directFile)) {
+            const fm = app.metadataCache.getFileCache(directFile)?.frontmatter ?? {};
+            const rawDs = Array.isArray(fm.datasets) ? fm.datasets.find((d) => d?.id === ref.datasetId) : null;
+            const ds = normalizeDataset(rawDs);
+            if (ds) {
+              item = {
+                file: directFile,
+                filePath: directFile.path,
+                childKind: resolveGoalKind(directFile, fm),
+                childTitle: typeof fm.title === "string" && fm.title.trim() ? fm.title.trim() : stripMd(directFile.name),
+                dataset: ds
+              };
+            }
+          }
+        }
+        if (!item) continue;
+        if (item.filePath === ownerFilePath && item.dataset.id === excludedDatasetId) continue;
+        const key = `${item.filePath}::${item.dataset.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        matched.push(item);
+      }
+      return matched;
+    }
+    function resolveVirtualDataset(app, spec, ownerFilePath = "", defaultTreePath = "", metricOverride = "", visited = /* @__PURE__ */ new Set()) {
+      const relation = normalizeRelation(spec?.relation);
+      const explicitUnit = typeof spec?.unit === "string" ? spec.unit.trim() : "";
+      const effectiveMetric = (metricOverride || spec?.metricKey || "").trim();
+      const emptyResult = {
+        id: spec?.id || "",
+        name: spec?.name || "Child Rollup",
+        type: "number_time",
+        unit: explicitUnit,
+        metricKey: effectiveMetric || "score",
+        isVirtual: true,
+        relation,
+        sources: [],
+        resolvedEntries: [],
+        entries: []
+      };
+      if (!relation) return emptyResult;
+      const targetTreePath = relation.treePath || defaultTreePath || resolveParentTreePath(ownerFilePath) || "";
+      const childItems = targetTreePath ? discoverChildDatasets(app, targetTreePath) : [];
+      let matched = [];
+      if (relation.mode === "pick") {
+        matched = resolvePickedRefs(app, relation.refs, childItems, ownerFilePath, spec?.id);
+      } else {
+        const queryLower = relation.nameMatch.toLowerCase();
+        matched = childItems.filter((item) => {
+          if (item.filePath === ownerFilePath && item.dataset.id === spec?.id) return false;
+          if (relation.childKinds === "habits" && item.childKind !== "habit") return false;
+          if (relation.childKinds === "subgoals" && item.childKind !== "subgoal") return false;
+          if (!datasetMatchesFilter(item.dataset, relation.dataFilter)) return false;
+          if (queryLower) {
+            const matchName = item.dataset.name.toLowerCase().includes(queryLower);
+            const matchChild = item.childTitle.toLowerCase().includes(queryLower);
+            if (!matchName && !matchChild) return false;
+          }
+          return true;
+        });
+      }
+      const resolvedChildren = [];
+      const sources = [];
+      const resolvedEntries = [];
+      for (const item of matched) {
+        const visitKey = `${item.filePath}::${item.dataset.id}`;
+        if (visited.has(visitKey) || visited.size >= 4) continue;
+        const nextVisited = new Set(visited);
+        nextVisited.add(visitKey);
+        let childDs = item.dataset;
+        if (childDs.type === "rollup") {
+          childDs = resolveVirtualDataset(app, childDs, item.filePath, targetTreePath, effectiveMetric, nextVisited);
+        } else if (effectiveMetric && childDs.type === "note_time") {
+          childDs = { ...childDs, metricKey: effectiveMetric };
+        }
+        resolvedChildren.push(childDs);
+        const childEntries = resolveDatasetEntries(app, childDs, item.filePath);
+        const numericPoints = resolveNumericSeries(app, childDs, item.filePath, effectiveMetric);
+        const previewAgg = relation.perChildAgg === "all" ? childDs.type === "number_time" || childDs.type === "note_time" ? "sum" : "count" : relation.perChildAgg;
+        const summaryStat = computeStat(app, childDs, previewAgg, item.filePath, effectiveMetric);
+        sources.push({
+          file: item.file,
+          filePath: item.filePath,
+          childKind: item.childKind,
+          childTitle: item.childTitle,
+          datasetId: item.dataset.id,
+          datasetName: item.dataset.name,
+          datasetType: childDs.type,
+          unit: childDs.unit,
+          entryCount: childEntries.length,
+          stat: summaryStat
+        });
+        if (relation.perChildAgg === "all") {
+          for (const entry of childEntries) {
+            if (relation.dataFilter === "numeric" && (entry.value === null || !Number.isFinite(entry.value))) {
+              continue;
+            }
+            resolvedEntries.push({
+              ...entry,
+              index: resolvedEntries.length,
+              sourceFile: entry.sourceFile || item.file,
+              sourceTitle: entry.sourceTitle || item.childTitle,
+              datasetName: entry.datasetName || item.dataset.name
+            });
+          }
+        } else if (summaryStat.value !== null && Number.isFinite(summaryStat.value)) {
+          const latestDate = numericPoints.length ? numericPoints[numericPoints.length - 1].date || "" : "";
+          resolvedEntries.push({
+            index: resolvedEntries.length,
+            date: latestDate,
+            value: summaryStat.value,
+            noteFile: null,
+            label: `${item.childTitle}: ${formatNumber(summaryStat.value)}${childDs.unit ? ` ${childDs.unit}` : ""}`,
+            sourceFile: item.file,
+            sourceTitle: item.childTitle,
+            datasetName: item.dataset.name
+          });
+        }
+      }
+      let effectiveType = "number_time";
+      if (relation.perChildAgg !== "all") {
+        effectiveType = "number_time";
+      } else if (relation.dataFilter === "text" || resolvedChildren.length && resolvedChildren.every((d) => d.type === "text")) {
+        effectiveType = "text";
+      } else if (resolvedEntries.some((e) => e.path)) {
+        effectiveType = resolvedEntries.some((e) => e.date || e.value !== null && Number.isFinite(e.value)) ? "note_time" : "note";
+      }
+      return {
+        id: spec?.id || "",
+        name: spec?.name || describeRelation(relation, sources),
+        type: effectiveType,
+        unit: inferRollupUnit(resolvedChildren, explicitUnit),
+        metricKey: effectiveMetric || "score",
+        isVirtual: true,
+        relation,
+        sources,
+        resolvedEntries,
+        entries: resolvedEntries
+      };
+    }
+    function resolveWidgetDataset(app, widget, datasetById, doc) {
+      if (widget.relation) {
+        return resolveVirtualDataset(
+          app,
+          {
+            id: widget.id,
+            name: widget.title || "",
+            unit: widget.unit || "",
+            metricKey: widget.metricKey || "",
+            relation: widget.relation
+          },
+          doc.file?.path || "",
+          doc.treePath || "",
+          widget.metricKey || ""
+        );
+      }
+      const ds = widget.datasetId ? datasetById.get(widget.datasetId) : null;
+      if (!ds) return null;
+      if (ds.type === "rollup") {
+        return resolveVirtualDataset(
+          app,
+          ds,
+          doc.file?.path || "",
+          doc.treePath || "",
+          widget.metricKey || ds.metricKey || "",
+          /* @__PURE__ */ new Set([`${doc.file?.path || ""}::${ds.id}`])
+        );
+      }
+      return ds;
+    }
+    function describeRelation(relation, sources = null) {
+      if (!relation) return "Child rollup";
+      if (relation.mode === "pick") {
+        const count = Array.isArray(sources) ? sources.length : relation.refs.length;
+        const base = `${count} selected ${count === 1 ? "list" : "lists"}`;
+        if (relation.perChildAgg !== "all") {
+          const aggLabel = RELATION_PER_CHILD.find((p) => p.id === relation.perChildAgg)?.label || relation.perChildAgg;
+          return `${base} \xB7 ${aggLabel}`;
+        }
+        return base;
+      }
+      const kindLabel = relation.childKinds === "habits" ? "Habits" : relation.childKinds === "subgoals" ? "Subgoals" : "Tree children";
+      const filterMap = {
+        numeric: "Numeric",
+        note: "Notes",
+        text: "Text",
+        any: "All data"
+      };
+      const parts = [kindLabel, relation.nameMatch ? `"${relation.nameMatch}"` : filterMap[relation.dataFilter] || "Data"];
+      if (relation.perChildAgg !== "all") {
+        const aggLabel = RELATION_PER_CHILD.find((p) => p.id === relation.perChildAgg)?.label || relation.perChildAgg;
+        parts.push(aggLabel);
+      }
+      return parts.join(" \xB7 ");
+    }
+    async function addDataset(app, file, { name, type, unit = "", metricKey = "score", relation = null }) {
       const cleanName = typeof name === "string" ? name.trim() : "";
       if (!cleanName) throw new Error("Dataset name is required.");
+      const dsType = normalizeDatasetType(type);
+      let cleanRelation = null;
+      if (dsType === "rollup") {
+        cleanRelation = normalizeRelation(relation) || normalizeRelation({ mode: "query" });
+        if (cleanRelation.mode === "pick" && !cleanRelation.refs.length) {
+          throw new Error("Select at least one child data list.");
+        }
+      }
       const dataset = {
         id: generateId("ds"),
         name: cleanName,
-        type: normalizeDatasetType(type),
+        type: dsType,
         unit: typeof unit === "string" ? unit.trim() : "",
         metricKey: typeof metricKey === "string" && metricKey.trim() ? metricKey.trim() : "score",
+        relation: cleanRelation,
         entries: []
       };
       await app.fileManager.processFrontMatter(file, (fm) => {
@@ -2741,7 +3105,11 @@ var require_data_model = __commonJS({
         if (!Array.isArray(fm.datasets)) throw new Error("No datasets found on this goal.");
         const ds = fm.datasets.find((item) => item?.id === datasetId);
         if (!ds) throw new Error("Dataset not found.");
-        const entry = normalizeEntry(normalizeDatasetType(ds.type), rawEntry);
+        const dsType = normalizeDatasetType(ds.type);
+        if (dsType === "rollup") {
+          throw new Error("Child rollup lists are computed automatically from child data.");
+        }
+        const entry = normalizeEntry(dsType, rawEntry);
         if (!entry) throw new Error("Invalid entry value.");
         if (!Array.isArray(ds.entries)) ds.entries = [];
         ds.entries.push(entry);
@@ -2759,10 +3127,14 @@ var require_data_model = __commonJS({
         }
       });
     }
-    async function addWidget(app, file, { title = "", type, datasetId = "", agg = "latest", mode = "latest", target = null, variant = "line", metricKey = "" }) {
+    async function addWidget(app, file, { title = "", type, datasetId = "", relation = null, unit = "", agg = "latest", mode = "latest", target = null, variant = "line", metricKey = "" }) {
       const wType = normalizeWidgetType(type);
-      const resolvedDatasetId = wType === "streak" ? "" : typeof datasetId === "string" ? datasetId.trim() : "";
-      if (wType !== "streak" && !resolvedDatasetId) {
+      const cleanRelation = wType === "streak" ? null : normalizeRelation(relation);
+      if (cleanRelation && cleanRelation.mode === "pick" && !cleanRelation.refs.length) {
+        throw new Error("Select at least one child data list.");
+      }
+      const resolvedDatasetId = wType === "streak" || cleanRelation ? "" : typeof datasetId === "string" ? datasetId.trim() : "";
+      if (wType !== "streak" && !resolvedDatasetId && !cleanRelation) {
         throw new Error("Select a data list to link this widget to.");
       }
       const widget = {
@@ -2770,6 +3142,8 @@ var require_data_model = __commonJS({
         title: typeof title === "string" ? title.trim() : "",
         type: wType,
         datasetId: resolvedDatasetId,
+        relation: cleanRelation,
+        unit: typeof unit === "string" ? unit.trim() : "",
         agg: normalizeStatAgg(agg),
         mode: normalizeBarMode(mode),
         target: toFiniteNumber(target),
@@ -2793,12 +3167,21 @@ var require_data_model = __commonJS({
       STAT_AGGS,
       BAR_MODES,
       CHART_VARIANTS,
+      RELATION_CHILD_KINDS,
+      RELATION_DATA_FILTERS,
+      RELATION_PER_CHILD,
       generateId,
       stripMd,
       normalizeEntry,
+      normalizeRelation,
       readGoalDocument,
+      discoverChildDatasets,
+      datasetMatchesFilter,
       resolveDatasetEntries,
       resolveNumericSeries,
+      resolveVirtualDataset,
+      resolveWidgetDataset,
+      describeRelation,
       formatNumber,
       computeStat,
       computeGoalBar,
@@ -2900,18 +3283,20 @@ var require_widget_art = __commonJS({
         const barW = Math.min(28, Math.max(6, slotW * 0.58));
         for (const pt of coords) {
           const barH = Math.max(3, baselineY - pt.y);
+          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
           const rect = svgEl("rect", {
             x: round(pt.x - barW / 2),
             y: round(baselineY - barH),
             width: round(barW),
             height: round(barH),
             rx: Math.min(4, round(barW / 3)),
-            class: `iter-chart-bar${pt.noteFile ? " is-clickable" : ""}`
+            class: `iter-chart-bar${clickable ? " is-clickable" : ""}`
           });
           const tip = svgEl("title");
-          tip.textContent = `${pt.date || ""}: ${pt.value}${unit ? ` ${unit}` : ""}${pt.noteFile ? ` (${pt.label})` : ""}`;
+          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
           rect.appendChild(tip);
-          if (pt.noteFile && onPointClick) {
+          if (clickable) {
             rect.addEventListener("click", () => onPointClick(pt));
           }
           svg.appendChild(rect);
@@ -2924,16 +3309,18 @@ var require_widget_art = __commonJS({
           svg.appendChild(svgEl("polyline", { points: linePoints, class: "iter-chart-line" }));
         }
         for (const pt of coords) {
+          const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+          const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
           const circle = svgEl("circle", {
             cx: pt.x,
             cy: pt.y,
             r: coords.length === 1 ? 4.5 : 3.5,
-            class: `iter-chart-dot${pt.noteFile ? " is-clickable" : ""}`
+            class: `iter-chart-dot${clickable ? " is-clickable" : ""}`
           });
           const tip = svgEl("title");
-          tip.textContent = `${pt.date || ""}: ${pt.value}${unit ? ` ${unit}` : ""}${pt.noteFile ? ` (${pt.label})` : ""}`;
+          tip.textContent = `${pt.date ? `${pt.date}: ` : ""}${pt.value}${unit ? ` ${unit}` : ""}${detail ? ` \xB7 ${detail}` : ""}`;
           circle.appendChild(tip);
-          if (pt.noteFile && onPointClick) {
+          if (clickable) {
             circle.addEventListener("click", () => onPointClick(pt));
           }
           svg.appendChild(circle);
@@ -2972,11 +3359,220 @@ var require_goal_modals = __commonJS({
       STAT_AGGS,
       BAR_MODES,
       CHART_VARIANTS,
+      RELATION_CHILD_KINDS,
+      RELATION_DATA_FILTERS,
+      RELATION_PER_CHILD,
+      datasetMatchesFilter,
       stripMd
     } = require_data_model();
+    function refKey(filePath, datasetId) {
+      return `${filePath}\0${datasetId}`;
+    }
+    function getMatchingChildDatasets(childDatasets, { childKinds = "all", dataFilter = "any", nameMatch = "" } = {}) {
+      const needle = String(nameMatch || "").trim().toLowerCase();
+      return childDatasets.filter((item) => {
+        if (childKinds === "habits" && item.childKind !== "habit") return false;
+        if (childKinds === "subgoals" && item.childKind !== "subgoal") return false;
+        if (!datasetMatchesFilter(item.dataset, dataFilter)) return false;
+        if (needle) {
+          const dsName = (item.dataset.name || "").toLowerCase();
+          const childName = (item.childTitle || "").toLowerCase();
+          if (!dsName.includes(needle) && !childName.includes(needle)) return false;
+        }
+        return true;
+      });
+    }
+    function renderChildRefChecklist(container, childDatasets, selectedMap) {
+      const wrap = container.createDiv({ cls: "iter-checklist" });
+      if (!childDatasets.length) {
+        wrap.createEl("p", {
+          text: "No matching child data lists found under this tree yet.",
+          cls: "iter-section-hint"
+        });
+        return;
+      }
+      for (const item of childDatasets) {
+        const key = refKey(item.filePath, item.dataset.id);
+        const label = wrap.createEl("label", { cls: "iter-check-item" });
+        const checkbox = label.createEl("input", { type: "checkbox", cls: "iter-check-box" });
+        checkbox.checked = selectedMap.has(key);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            selectedMap.set(key, { filePath: item.filePath, datasetId: item.dataset.id });
+          } else {
+            selectedMap.delete(key);
+          }
+        });
+        const textWrap = label.createDiv({ cls: "iter-check-text" });
+        textWrap.createSpan({ text: `${item.childTitle} \u2014 ${item.dataset.name}`, cls: "iter-check-title" });
+        const typeInfo = item.dataset.unit ? `${item.dataset.type} \xB7 ${item.dataset.unit}` : item.dataset.type;
+        textWrap.createSpan({ text: typeInfo, cls: "iter-check-meta" });
+      }
+    }
+    function renderRelationConfigPanel(container, {
+      childDatasets = [],
+      allowModeSwitch = true,
+      showKindAndFilter = true,
+      initial = {}
+    } = {}) {
+      const state = {
+        mode: initial.mode === "pick" ? "pick" : "query",
+        childKinds: initial.childKinds || "all",
+        dataFilter: initial.dataFilter || "numeric",
+        nameMatch: initial.nameMatch || "",
+        perChildAgg: initial.perChildAgg || "all",
+        unit: initial.unit || ""
+      };
+      const selectedMap = /* @__PURE__ */ new Map();
+      for (const ref of initial.refs || []) {
+        if (ref?.filePath && ref?.datasetId) {
+          selectedMap.set(refKey(ref.filePath, ref.datasetId), {
+            filePath: ref.filePath,
+            datasetId: ref.datasetId
+          });
+        }
+      }
+      const renderInner = () => {
+        container.empty();
+        if (allowModeSwitch) {
+          const modeField = container.createDiv({ cls: "iter-modal-field" });
+          modeField.createEl("label", { text: "Relation source", cls: "iter-modal-label" });
+          const modeSelect = modeField.createEl("select", { cls: "iter-modal-select" });
+          modeSelect.createEl("option", { value: "query", text: "Auto-include matching children (updates as you add more)" });
+          modeSelect.createEl("option", { value: "pick", text: "Pick specific child lists" });
+          modeSelect.value = state.mode;
+          modeSelect.addEventListener("change", () => {
+            state.mode = modeSelect.value;
+            renderInner();
+          });
+        }
+        if (state.mode === "query") {
+          if (showKindAndFilter) {
+            const scopeRow = container.createDiv({ cls: "iter-modal-row" });
+            const kindField = scopeRow.createDiv({ cls: "iter-modal-field" });
+            kindField.createEl("label", { text: "From children", cls: "iter-modal-label" });
+            const kindSelect = kindField.createEl("select", { cls: "iter-modal-select" });
+            for (const item of RELATION_CHILD_KINDS) {
+              kindSelect.createEl("option", { value: item.id, text: item.label });
+            }
+            kindSelect.value = state.childKinds;
+            const filterField = scopeRow.createDiv({ cls: "iter-modal-field" });
+            filterField.createEl("label", { text: "Data kind", cls: "iter-modal-label" });
+            const filterSelect = filterField.createEl("select", { cls: "iter-modal-select" });
+            for (const item of RELATION_DATA_FILTERS) {
+              filterSelect.createEl("option", { value: item.id, text: item.label });
+            }
+            filterSelect.value = state.dataFilter;
+            kindSelect.addEventListener("change", () => {
+              state.childKinds = kindSelect.value;
+              updatePreview();
+            });
+            filterSelect.addEventListener("change", () => {
+              state.dataFilter = filterSelect.value;
+              updatePreview();
+            });
+          }
+          const detailRow = container.createDiv({ cls: "iter-modal-row" });
+          const nameField = detailRow.createDiv({ cls: "iter-modal-field" });
+          nameField.createEl("label", { text: "List or child name contains (optional)", cls: "iter-modal-label" });
+          const nameInput = nameField.createEl("input", {
+            type: "text",
+            placeholder: "e.g. read, score (blank = all matching)",
+            cls: "iter-modal-input"
+          });
+          nameInput.value = state.nameMatch;
+          const perChildField = detailRow.createDiv({ cls: "iter-modal-field" });
+          perChildField.createEl("label", { text: "Per child", cls: "iter-modal-label" });
+          const perChildSelect = perChildField.createEl("select", { cls: "iter-modal-select" });
+          for (const item of RELATION_PER_CHILD) {
+            perChildSelect.createEl("option", { value: item.id, text: item.label });
+          }
+          perChildSelect.value = state.perChildAgg;
+          perChildSelect.addEventListener("change", () => {
+            state.perChildAgg = perChildSelect.value;
+          });
+          const previewEl = container.createEl("p", { cls: "iter-section-hint" });
+          const updatePreview = () => {
+            const matches = getMatchingChildDatasets(childDatasets, state);
+            if (!matches.length) {
+              previewEl.textContent = "No matching child lists yet \u2014 future matching subgoals/habits will join automatically.";
+            } else {
+              const previewNames = matches.slice(0, 4).map((m) => `${m.childTitle} \xB7 ${m.dataset.name}`).join(", ");
+              const extra = matches.length > 4 ? ` (+${matches.length - 4} more)` : "";
+              previewEl.textContent = `Matches ${matches.length} child ${matches.length === 1 ? "list" : "lists"}: ${previewNames}${extra}`;
+            }
+          };
+          nameInput.addEventListener("input", () => {
+            state.nameMatch = nameInput.value;
+            updatePreview();
+          });
+          updatePreview();
+        } else {
+          const pickRow = container.createDiv({ cls: "iter-modal-row" });
+          const filterField = pickRow.createDiv({ cls: "iter-modal-field" });
+          filterField.createEl("label", { text: "Filter child lists", cls: "iter-modal-label" });
+          const filterSelect = filterField.createEl("select", { cls: "iter-modal-select" });
+          for (const item of RELATION_DATA_FILTERS) {
+            filterSelect.createEl("option", { value: item.id, text: item.label });
+          }
+          filterSelect.value = state.dataFilter;
+          const perChildField = pickRow.createDiv({ cls: "iter-modal-field" });
+          perChildField.createEl("label", { text: "Per child", cls: "iter-modal-label" });
+          const perChildSelect = perChildField.createEl("select", { cls: "iter-modal-select" });
+          for (const item of RELATION_PER_CHILD) {
+            perChildSelect.createEl("option", { value: item.id, text: item.label });
+          }
+          perChildSelect.value = state.perChildAgg;
+          perChildSelect.addEventListener("change", () => {
+            state.perChildAgg = perChildSelect.value;
+          });
+          const listSlot = container.createDiv();
+          const renderList = () => {
+            listSlot.empty();
+            const filtered = getMatchingChildDatasets(childDatasets, {
+              childKinds: "all",
+              dataFilter: state.dataFilter,
+              nameMatch: ""
+            });
+            renderChildRefChecklist(listSlot, filtered, selectedMap);
+          };
+          filterSelect.addEventListener("change", () => {
+            state.dataFilter = filterSelect.value;
+            renderList();
+          });
+          renderList();
+        }
+        const unitField = container.createDiv({ cls: "iter-modal-field" });
+        unitField.createEl("label", { text: "Unit override (optional)", cls: "iter-modal-label" });
+        const unitInput = unitField.createEl("input", {
+          type: "text",
+          placeholder: "Auto from children if all share a unit",
+          cls: "iter-modal-input"
+        });
+        unitInput.value = state.unit;
+        unitInput.addEventListener("input", () => {
+          state.unit = unitInput.value;
+        });
+      };
+      renderInner();
+      return {
+        getRelation: () => ({
+          mode: state.mode,
+          childKinds: state.childKinds,
+          dataFilter: state.dataFilter,
+          nameMatch: state.nameMatch.trim(),
+          perChildAgg: state.perChildAgg,
+          refs: state.mode === "pick" ? [...selectedMap.values()] : []
+        }),
+        getUnit: () => state.unit.trim()
+      };
+    }
     var AddDatasetModal = class extends Modal {
-      constructor(app, { onSubmit }) {
+      constructor(app, { goalKind = "goal", treePath = null, childDatasets = [], onSubmit }) {
         super(app);
+        this.goalKind = goalKind;
+        this.treePath = treePath;
+        this.childDatasets = childDatasets;
         this.onSubmit = onSubmit;
         this.submitting = false;
       }
@@ -2994,12 +3590,14 @@ var require_goal_modals = __commonJS({
           cls: "iter-modal-input"
         });
         nameInput.required = true;
+        const availableTypes = this.goalKind === "tree" && this.treePath ? DATASET_TYPES : DATASET_TYPES.filter((item) => item.id !== "rollup");
         const typeField = form.createDiv({ cls: "iter-modal-field" });
         typeField.createEl("label", { text: "Data type", cls: "iter-modal-label" });
         const typeSelect = typeField.createEl("select", { cls: "iter-modal-select" });
-        for (const item of DATASET_TYPES) {
+        for (const item of availableTypes) {
           typeSelect.createEl("option", { value: item.id, text: item.label });
         }
+        if (availableTypes.length) typeSelect.value = availableTypes[0].id;
         const extraField = form.createDiv({ cls: "iter-modal-field" });
         const extraLabel = extraField.createEl("label", { text: "Unit (optional)", cls: "iter-modal-label" });
         const extraInput = extraField.createEl("input", {
@@ -3007,8 +3605,26 @@ var require_goal_modals = __commonJS({
           placeholder: "e.g. kg, words, reps",
           cls: "iter-modal-input"
         });
+        const rollupSlot = form.createDiv({ cls: "iter-modal-dynamic" });
+        let rollupControls = null;
         const syncExtra = () => {
           const t = typeSelect.value;
+          if (t === "rollup") {
+            extraField.style.display = "none";
+            rollupSlot.style.display = "";
+            if (!rollupControls) {
+              rollupControls = renderRelationConfigPanel(rollupSlot, {
+                childDatasets: this.childDatasets,
+                allowModeSwitch: true,
+                showKindAndFilter: true,
+                initial: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
+              });
+            }
+            return;
+          }
+          rollupSlot.empty();
+          rollupSlot.style.display = "none";
+          rollupControls = null;
           if (t === "number_time") {
             extraField.style.display = "";
             extraLabel.textContent = "Unit (optional)";
@@ -3034,11 +3650,19 @@ var require_goal_modals = __commonJS({
           submit.disabled = true;
           try {
             const type = typeSelect.value;
+            let relation = null;
+            if (type === "rollup" && rollupControls) {
+              relation = rollupControls.getRelation();
+              if (relation.mode === "pick" && !relation.refs.length) {
+                throw new Error("Select at least one child data list.");
+              }
+            }
             await this.onSubmit({
               name: nameInput.value,
               type,
-              unit: type === "number_time" ? extraInput.value : "",
-              metricKey: type === "note_time" ? extraInput.value.trim() || "score" : "score"
+              unit: type === "rollup" ? rollupControls?.getUnit() ?? "" : type === "number_time" ? extraInput.value : "",
+              metricKey: type === "note_time" ? extraInput.value.trim() || "score" : "score",
+              relation
             });
             this.close();
           } catch (error) {
@@ -3055,11 +3679,45 @@ var require_goal_modals = __commonJS({
         this.contentEl.empty();
       }
     };
+    var TREE_WIDGET_PRESETS = [
+      {
+        value: "__rel:all:numeric",
+        label: "All children \xB7 Numeric (auto-includes new)",
+        initial: { mode: "query", childKinds: "all", dataFilter: "numeric", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:habits:numeric",
+        label: "Habits \xB7 Numeric (auto-includes new)",
+        initial: { mode: "query", childKinds: "habits", dataFilter: "numeric", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:subgoals:numeric",
+        label: "Subgoals \xB7 Numeric (auto-includes new)",
+        initial: { mode: "query", childKinds: "subgoals", dataFilter: "numeric", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:all:note",
+        label: "All children \xB7 Notes (auto-includes new)",
+        initial: { mode: "query", childKinds: "all", dataFilter: "note", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:all:text",
+        label: "All children \xB7 Text entries (auto-includes new)",
+        initial: { mode: "query", childKinds: "all", dataFilter: "text", perChildAgg: "all" }
+      },
+      {
+        value: "__rel:pick",
+        label: "Pick specific child lists\u2026",
+        initial: { mode: "pick", childKinds: "all", dataFilter: "any", perChildAgg: "all", refs: [] }
+      }
+    ];
     var AddWidgetModal = class extends Modal {
-      constructor(app, { datasets = [], goalKind = "goal", onSubmit }) {
+      constructor(app, { datasets = [], childDatasets = [], goalKind = "goal", treePath = null, onSubmit }) {
         super(app);
         this.datasets = datasets;
+        this.childDatasets = childDatasets;
         this.goalKind = goalKind;
+        this.treePath = treePath;
         this.onSubmit = onSubmit;
         this.submitting = false;
       }
@@ -3068,10 +3726,12 @@ var require_goal_modals = __commonJS({
         contentEl.empty();
         contentEl.addClass("iter-modal");
         contentEl.createEl("h2", { text: "Add widget", cls: "iter-modal-title" });
+        const isTree = this.goalKind === "tree" && Boolean(this.treePath);
+        const canUseDataWidgets = this.datasets.length > 0 || isTree;
         const form = contentEl.createEl("form", { cls: "iter-modal-form" });
         const row = form.createDiv({ cls: "iter-modal-row" });
         const availableTypes = WIDGET_TYPES.filter(
-          (item) => item.id === "streak" ? this.goalKind === "habit" : this.datasets.length > 0
+          (item) => item.id === "streak" ? this.goalKind === "habit" : canUseDataWidgets
         );
         const typeField = row.createDiv({ cls: "iter-modal-field" });
         typeField.createEl("label", { text: "Widget type", cls: "iter-modal-label" });
@@ -3086,7 +3746,20 @@ var require_goal_modals = __commonJS({
         for (const ds of this.datasets) {
           dsSelect.createEl("option", { value: ds.id, text: ds.name });
         }
+        if (isTree) {
+          for (const preset of TREE_WIDGET_PRESETS) {
+            dsSelect.createEl("option", { value: preset.value, text: preset.label });
+          }
+          this.childDatasets.forEach((item, idx) => {
+            dsSelect.createEl("option", {
+              value: `__child:${idx}`,
+              text: `Child: ${item.childTitle} \u2014 ${item.dataset.name}`
+            });
+          });
+        }
         if (this.datasets.length) dsSelect.value = this.datasets[0].id;
+        else if (isTree) dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+        const relationSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         const titleField = form.createDiv({ cls: "iter-modal-field" });
         titleField.createEl("label", { text: "Widget title (optional)", cls: "iter-modal-label" });
         const titleInput = titleField.createEl("input", {
@@ -3096,12 +3769,43 @@ var require_goal_modals = __commonJS({
         });
         const dynamicSlot = form.createDiv({ cls: "iter-modal-dynamic" });
         let aggSelect = null;
+        let aggTouched = false;
         let modeSelect = null;
         let targetInput = null;
         let variantSelect = null;
+        let relControls = null;
+        const isRollupSumDefault = () => {
+          const val = dsSelect.value || "";
+          if (val.startsWith("__rel:") && val.endsWith(":numeric")) return true;
+          const localDs = this.datasets.find((d) => d.id === val);
+          return localDs?.type === "rollup" && localDs?.relation?.dataFilter === "numeric";
+        };
+        const rebuildRelationSlot = () => {
+          relationSlot.empty();
+          relControls = null;
+          const wType = typeSelect.value;
+          const val = dsSelect.value || "";
+          if (wType === "streak" || !val.startsWith("__rel:")) {
+            relationSlot.style.display = "none";
+            return;
+          }
+          const preset = TREE_WIDGET_PRESETS.find((p) => p.value === val);
+          if (!preset) {
+            relationSlot.style.display = "none";
+            return;
+          }
+          relationSlot.style.display = "";
+          relControls = renderRelationConfigPanel(relationSlot, {
+            childDatasets: this.childDatasets,
+            allowModeSwitch: false,
+            showKindAndFilter: false,
+            initial: preset.initial
+          });
+        };
         const rebuildOptions = () => {
           dynamicSlot.empty();
           aggSelect = null;
+          aggTouched = false;
           modeSelect = null;
           targetInput = null;
           variantSelect = null;
@@ -3120,6 +3824,10 @@ var require_goal_modals = __commonJS({
             for (const item of STAT_AGGS) {
               aggSelect.createEl("option", { value: item.id, text: item.label });
             }
+            aggSelect.value = isRollupSumDefault() ? "sum" : "latest";
+            aggSelect.addEventListener("change", () => {
+              aggTouched = true;
+            });
           } else if (wType === "goal_bar") {
             const barRow = dynamicSlot.createDiv({ cls: "iter-modal-row" });
             const modeField = barRow.createDiv({ cls: "iter-modal-field" });
@@ -3128,6 +3836,7 @@ var require_goal_modals = __commonJS({
             for (const item of BAR_MODES) {
               modeSelect.createEl("option", { value: item.id, text: item.label });
             }
+            modeSelect.value = BAR_MODES[0].id;
             const tField = barRow.createDiv({ cls: "iter-modal-field" });
             tField.createEl("label", { text: "Goal target number", cls: "iter-modal-label" });
             targetInput = tField.createEl("input", {
@@ -3144,14 +3853,30 @@ var require_goal_modals = __commonJS({
             for (const item of CHART_VARIANTS) {
               variantSelect.createEl("option", { value: item.id, text: item.label });
             }
+            variantSelect.value = CHART_VARIANTS[0].id;
           } else if (wType === "note_navigator") {
-            const currentDs = this.datasets.find((d) => d.id === dsSelect.value);
-            if (currentDs && currentDs.type !== "note" && currentDs.type !== "note_time") {
-              const noteDs = this.datasets.find((d) => d.type === "note" || d.type === "note_time");
+            const currentVal = dsSelect.value || "";
+            const currentDs = this.datasets.find((d) => d.id === currentVal);
+            const currentIsNote = currentDs ? currentDs.type === "note" || currentDs.type === "note_time" || currentDs.type === "rollup" && currentDs.relation?.dataFilter === "note" : currentVal === "__rel:all:note" || currentVal === "__rel:pick" || currentVal.startsWith("__child:") && (() => {
+              const childItem = this.childDatasets[Number(currentVal.slice("__child:".length))];
+              return childItem && (childItem.dataset.type === "note" || childItem.dataset.type === "note_time");
+            })();
+            if (!currentIsNote) {
+              const noteDs = this.datasets.find(
+                (d) => d.type === "note" || d.type === "note_time" || d.type === "rollup" && d.relation?.dataFilter === "note"
+              );
               if (noteDs) dsSelect.value = noteDs.id;
+              else if (isTree) dsSelect.value = "__rel:all:note";
             }
           }
+          rebuildRelationSlot();
         };
+        dsSelect.addEventListener("change", () => {
+          rebuildRelationSlot();
+          if (aggSelect && !aggTouched) {
+            aggSelect.value = isRollupSumDefault() ? "sum" : "latest";
+          }
+        });
         typeSelect.addEventListener("change", rebuildOptions);
         rebuildOptions();
         const actions = form.createDiv({ cls: "iter-modal-actions" });
@@ -3164,9 +3889,42 @@ var require_goal_modals = __commonJS({
           this.submitting = true;
           submit.disabled = true;
           try {
+            const wType = typeSelect.value;
+            const sourceVal = dsSelect.value || "";
+            let datasetId = "";
+            let relation = null;
+            let unit = "";
+            if (wType !== "streak") {
+              if (sourceVal.startsWith("__rel:")) {
+                if (relControls) {
+                  relation = relControls.getRelation();
+                  unit = relControls.getUnit();
+                } else {
+                  const preset = TREE_WIDGET_PRESETS.find((p) => p.value === sourceVal);
+                  relation = preset ? { ...preset.initial } : null;
+                }
+                if (relation?.mode === "pick" && !relation.refs?.length) {
+                  throw new Error("Select at least one child data list.");
+                }
+              } else if (sourceVal.startsWith("__child:")) {
+                const idx = Number(sourceVal.slice("__child:".length));
+                const childItem = this.childDatasets[idx];
+                if (!childItem) throw new Error("Selected child data list no longer exists.");
+                relation = {
+                  mode: "pick",
+                  dataFilter: "any",
+                  perChildAgg: "all",
+                  refs: [{ filePath: childItem.filePath, datasetId: childItem.dataset.id }]
+                };
+              } else {
+                datasetId = sourceVal;
+              }
+            }
             await this.onSubmit({
-              type: typeSelect.value,
-              datasetId: typeSelect.value === "streak" ? "" : dsSelect.value,
+              type: wType,
+              datasetId,
+              relation,
+              unit,
               title: titleInput.value,
               agg: aggSelect?.value ?? "latest",
               mode: modeSelect?.value ?? "latest",
@@ -3301,7 +4059,11 @@ var require_goal_view = __commonJS({
       addDatasetEntry,
       removeDatasetEntry,
       addWidget,
-      removeWidget
+      removeWidget,
+      discoverChildDatasets,
+      resolveVirtualDataset,
+      resolveWidgetDataset,
+      describeRelation
     } = require_data_model();
     var { renderChartSvg } = require_widget_art();
     var {
@@ -3582,13 +4344,17 @@ var require_goal_view = __commonJS({
         setIcon(plus, "plus");
         addBtn.createSpan({ text: "Add widget" });
         addBtn.addEventListener("click", () => {
-          if (doc.kind !== "habit" && !doc.datasets.length) {
+          const isTree = doc.kind === "tree" && Boolean(doc.treePath);
+          if (doc.kind !== "habit" && !isTree && !doc.datasets.length) {
             new Notice2("Add a data list first, then link a widget to it.");
             return;
           }
+          const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
           new AddWidgetModal(this.app, {
             datasets: doc.datasets,
+            childDatasets,
             goalKind: doc.kind,
+            treePath: doc.treePath,
             onSubmit: async (config) => {
               await addWidget(this.app, this.file, config);
               this.render();
@@ -3597,7 +4363,7 @@ var require_goal_view = __commonJS({
         });
         if (!doc.widgets.length) {
           section.createEl("p", {
-            text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
+            text: doc.kind === "habit" ? "No widgets yet. Add a streak widget or link custom data below." : doc.kind === "tree" ? "No widgets yet. Summarize or graph data from this tree or its subgoals & habits." : doc.datasets.length ? "No widgets yet. Link a progress bar, metric, graph, or note navigator to your data." : "Add custom data below, then pin widgets here to visualize your progress.",
             cls: "iter-section-hint"
           });
           return;
@@ -3605,7 +4371,7 @@ var require_goal_view = __commonJS({
         const grid = section.createDiv({ cls: "iter-widget-grid" });
         const datasetById = new Map(doc.datasets.map((d) => [d.id, d]));
         for (const widget of doc.widgets) {
-          const ds = widget.datasetId ? datasetById.get(widget.datasetId) : null;
+          const ds = resolveWidgetDataset(this.app, widget, datasetById, doc);
           this.renderWidgetCard(grid, widget, ds, doc);
         }
       }
@@ -3615,7 +4381,8 @@ var require_goal_view = __commonJS({
           cls: `iter-widget-card type-${widget.type}${wide ? " is-wide" : ""}`
         });
         const top = card.createDiv({ cls: "iter-widget-top" });
-        const defaultTitle = widget.type === "streak" ? "Streak" : !dataset ? "Missing dataset" : widget.type === "stat" ? `${dataset.name} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : dataset.name;
+        const baseTitle = !dataset ? "Missing dataset" : dataset.name || (widget.relation ? describeRelation(widget.relation, dataset.sources) : "Widget");
+        const defaultTitle = widget.type === "streak" ? "Streak" : !dataset ? "Missing dataset" : widget.type === "stat" ? `${baseTitle} \xB7 ${AGG_LABELS[widget.agg] || widget.agg}` : baseTitle;
         top.createSpan({ text: widget.title || defaultTitle, cls: "iter-widget-title" });
         const removeBtn = top.createEl("button", {
           cls: "iter-icon-button iter-widget-remove",
@@ -3666,7 +4433,8 @@ var require_goal_view = __commonJS({
           if (res.unit && widget.agg !== "count") {
             valRow.createSpan({ text: res.unit, cls: "iter-stat-unit" });
           }
-          const subLabel = widget.agg === "count" ? `${res.count} ${res.count === 1 ? "entry" : "entries"}` : `${AGG_LABELS[widget.agg] || widget.agg} \xB7 ${res.count} ${res.count === 1 ? "point" : "points"}`;
+          const sourceNote = dataset.isVirtual && Array.isArray(dataset.sources) ? ` \xB7 ${dataset.sources.length} ${dataset.sources.length === 1 ? "child list" : "child lists"}` : "";
+          const subLabel = widget.agg === "count" ? `${res.count} ${res.count === 1 ? "entry" : "entries"}${sourceNote}` : `${AGG_LABELS[widget.agg] || widget.agg} \xB7 ${res.count} ${res.count === 1 ? "point" : "points"}${sourceNote}`;
           card.createDiv({ text: subLabel, cls: "iter-stat-sub" });
           return;
         }
@@ -3688,7 +4456,7 @@ var require_goal_view = __commonJS({
           const points = resolveNumericSeries(this.app, dataset, this.file.path, widget.metricKey);
           if (!points.length) {
             card.createEl("p", {
-              text: dataset.type === "note_time" ? `Add notes with a "${dataset.metricKey || "score"}" property (or inline value) to plot.` : "Add numeric entries to plot progress over time.",
+              text: dataset.isVirtual ? "No matching numeric entries in child data lists yet." : dataset.type === "note_time" ? `Add notes with a "${dataset.metricKey || "score"}" property (or inline value) to plot.` : "Add numeric entries to plot progress over time.",
               cls: "iter-widget-empty"
             });
             return;
@@ -3712,6 +4480,7 @@ var require_goal_view = __commonJS({
             unit: dataset.unit,
             onPointClick: (pt) => {
               if (pt.noteFile) void this.plugin.openFile(pt.noteFile);
+              else if (pt.sourceFile) void this.plugin.openGoal(pt.sourceFile);
             }
           });
           return;
@@ -3732,7 +4501,8 @@ var require_goal_view = __commonJS({
             main.createSpan({ text: entry.label, cls: "iter-note-nav-title" });
             if (entry.path) {
               const folder = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "Vault root";
-              main.createSpan({ text: folder, cls: "iter-note-nav-path" });
+              const origin = entry.sourceTitle ? `${entry.sourceTitle} \xB7 ${folder}` : folder;
+              main.createSpan({ text: origin, cls: "iter-note-nav-path" });
             }
             if (entry.value !== null) {
               itemBtn.createSpan({ text: formatNumber(entry.value), cls: "iter-note-score-pill" });
@@ -3756,7 +4526,12 @@ var require_goal_view = __commonJS({
         setIcon(plus, "plus");
         addBtn.createSpan({ text: "Add data" });
         addBtn.addEventListener("click", () => {
+          const isTree = doc.kind === "tree" && Boolean(doc.treePath);
+          const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
           new AddDatasetModal(this.app, {
+            goalKind: doc.kind,
+            treePath: doc.treePath,
+            childDatasets,
             onSubmit: async (config) => {
               const created = await addDataset(this.app, this.file, config);
               if (created.type === "number_time" || created.type === "text") {
@@ -3768,17 +4543,18 @@ var require_goal_view = __commonJS({
         });
         if (!doc.datasets.length) {
           section.createEl("p", {
-            text: 'Create custom data lists like "Benching PRs" (number & date), "Words learnt" (text), or "Mock Exams Done" (notes & date).',
+            text: doc.kind === "tree" ? "Create custom data lists or a Child Rollup to aggregate numbers and notes from subgoals & habits." : 'Create custom data lists like "Benching PRs" (number & date), "Words learnt" (text), or "Mock Exams Done" (notes & date).',
             cls: "iter-section-hint"
           });
           return;
         }
         const list = section.createDiv({ cls: "iter-dataset-grid" });
         for (const dataset of doc.datasets) {
-          this.renderDatasetCard(list, dataset);
+          this.renderDatasetCard(list, dataset, doc);
         }
       }
       triggerDatasetAdd(dataset) {
+        if (dataset.type === "rollup") return;
         if (dataset.type === "note") {
           new NotePickerModal(this.app, async (noteFile) => {
             await addDatasetEntry(this.app, this.file, dataset.id, { path: noteFile.path });
@@ -3802,21 +4578,29 @@ var require_goal_view = __commonJS({
         this.openAddForDataset = this.openAddForDataset === dataset.id ? null : dataset.id;
         this.render();
       }
-      renderDatasetCard(container, dataset) {
+      renderDatasetCard(container, dataset, doc = null) {
+        const isRollup = dataset.type === "rollup";
+        const virtual = isRollup ? resolveVirtualDataset(this.app, dataset, this.file.path, doc?.treePath || "") : null;
+        const sources = virtual?.sources || [];
         const card = container.createDiv({ cls: "iter-dataset-card" });
         const top = card.createDiv({ cls: "iter-dataset-top" });
         const left = top.createDiv({ cls: "iter-dataset-title-wrap" });
         left.createSpan({ text: dataset.name, cls: "iter-dataset-title" });
         left.createSpan({ text: TYPE_LABELS[dataset.type] || dataset.type, cls: "iter-module-pill" });
-        left.createSpan({ text: String(dataset.entries.length), cls: "iter-dataset-count" });
-        const right = top.createDiv({ cls: "iter-dataset-actions" });
-        const addEntryBtn = right.createEl("button", {
-          cls: "iter-icon-button iter-dataset-add-btn",
-          type: "button",
-          attr: { "aria-label": `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` }
+        left.createSpan({
+          text: String(isRollup ? virtual.resolvedEntries.length : dataset.entries.length),
+          cls: "iter-dataset-count"
         });
-        setIcon(addEntryBtn, "plus");
-        addEntryBtn.addEventListener("click", () => this.triggerDatasetAdd(dataset));
+        const right = top.createDiv({ cls: "iter-dataset-actions" });
+        if (!isRollup) {
+          const addEntryBtn = right.createEl("button", {
+            cls: "iter-icon-button iter-dataset-add-btn",
+            type: "button",
+            attr: { "aria-label": `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` }
+          });
+          setIcon(addEntryBtn, "plus");
+          addEntryBtn.addEventListener("click", () => this.triggerDatasetAdd(dataset));
+        }
         const removeDsBtn = right.createEl("button", {
           cls: "iter-icon-button iter-dataset-remove-btn",
           type: "button",
@@ -3828,6 +4612,43 @@ var require_goal_view = __commonJS({
           if (this.openAddForDataset === dataset.id) this.openAddForDataset = null;
           this.render();
         });
+        if (isRollup) {
+          const summaryRow = card.createDiv({ cls: "iter-rollup-badge" });
+          const summaryText = describeRelation(dataset.relation, sources);
+          summaryRow.createSpan({
+            text: virtual?.unit ? `${summaryText} \xB7 unit: ${virtual.unit}` : summaryText
+          });
+          if (!sources.length) {
+            card.createEl("p", { text: "No matching child data lists yet.", cls: "iter-dataset-empty" });
+            return;
+          }
+          const sourceList = card.createDiv({ cls: "iter-rollup-sources" });
+          for (const src of sources) {
+            const rowBtn = sourceList.createEl("button", { cls: "iter-rollup-source-row", type: "button" });
+            const mainWrap = rowBtn.createDiv({ cls: "iter-rollup-source-main" });
+            const icon = mainWrap.createSpan({ cls: "iter-btn-icon" });
+            setIcon(icon, src.childKind === "habit" ? "droplet" : "target");
+            mainWrap.createSpan({
+              text: `${src.childTitle} \u2014 ${src.datasetName}`,
+              cls: "iter-rollup-source-title"
+            });
+            const metaWrap = rowBtn.createDiv({ cls: "iter-rollup-source-meta" });
+            if (src.stat && src.stat.count > 0 && (src.datasetType === "number_time" || src.datasetType === "note_time")) {
+              metaWrap.createSpan({
+                text: `${src.stat.display}${src.unit ? ` ${src.unit}` : ""}`,
+                cls: "iter-note-score-pill"
+              });
+            }
+            metaWrap.createSpan({
+              text: `${src.entryCount} ${src.entryCount === 1 ? "entry" : "entries"}`,
+              cls: "iter-dataset-count"
+            });
+            rowBtn.addEventListener("click", () => {
+              if (src.file) void this.plugin.openGoal(src.file);
+            });
+          }
+          return;
+        }
         if (this.openAddForDataset === dataset.id && (dataset.type === "number_time" || dataset.type === "text")) {
           const form = card.createEl("form", { cls: "iter-inline-entry-form" });
           let primaryInput = null;

@@ -9,7 +9,13 @@ const { GoalView } = require('../src/goal-view');
 const { CreateTreeModal, CreateSubgoalModal, CreateHabitModal, EditHabitScheduleModal } = require('../src/modals');
 const { AddDatasetModal, AddWidgetModal, NoteTimeMetaModal } = require('../src/goal-modals');
 const { renderSchedulePicker } = require('../src/schedule-picker');
-const { addDataset, addDatasetEntry, addWidget, updateGoalMeta } = require('../src/data-model');
+const {
+  addDataset,
+  addDatasetEntry,
+  addWidget,
+  updateGoalMeta,
+  discoverChildDatasets,
+} = require('../src/data-model');
 
 function createMockElement(tagName, attrs = {}) {
   const el = {
@@ -461,6 +467,148 @@ test('CreateTreeModal, GoalView, and GardenView support endless vs target-date t
     garden.selectedTreePath = 'Iter/Gym';
     garden.render();
     assert.equal(garden.contentEl.findAll(el => el.className.split(/\s+/).includes('is-endless')).length, 1);
+  } finally {
+    global.document = prevDocument;
+  }
+});
+
+test('GoalView, AddWidgetModal, and AddDatasetModal support tree child rollups and clickable sources', async () => {
+  const prevDocument = global.document;
+  global.document = {
+    createElement: tag => createMockElement(tag),
+    createElementNS: (_ns, tag) => createMockElement(tag),
+  };
+
+  const fire = async (el, eventName) => {
+    for (const fn of el.listeners.get(eventName) || []) {
+      await fn({ preventDefault() {} });
+    }
+  };
+
+  try {
+    const app = createMockApp();
+    await ensureStructure(app.vault);
+    const readingTree = await createTree(app.vault, { name: 'Reading', module: 'learning', endless: true });
+    const poemsHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read poems', frequency: 'daily' });
+    const essaysHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read essays', frequency: 'weekly' });
+    const subgoal = await createSubgoal(app.vault, { treePath: 'Iter/Reading', name: 'Classic list' });
+
+    const poemsDs = await addDataset(app, poemsHabit, { name: 'Poems read', type: 'number_time', unit: 'poems' });
+    await addDatasetEntry(app, poemsHabit, poemsDs.id, { value: 2, date: '2026-11-10' });
+    await addDatasetEntry(app, poemsHabit, poemsDs.id, { value: 3, date: '2026-11-12' });
+
+    const essaysDs = await addDataset(app, essaysHabit, { name: 'Essays read', type: 'number_time', unit: 'essays' });
+    await addDatasetEntry(app, essaysHabit, essaysDs.id, { value: 4, date: '2026-11-13' });
+
+    const childDatasets = discoverChildDatasets(app, 'Iter/Reading');
+    assert.equal(childDatasets.length, 2);
+
+    // 1) AddWidgetModal on a Tree with 0 local datasets allows relational widgets & defaults stat agg to sum
+    let submittedWidget = null;
+    const widgetModal = new AddWidgetModal(app, {
+      datasets: [],
+      childDatasets,
+      goalKind: 'tree',
+      treePath: 'Iter/Reading',
+      onSubmit: async cfg => {
+        submittedWidget = cfg;
+      },
+    });
+    widgetModal.contentEl = createMockElement('div');
+    widgetModal.onOpen();
+
+    const wSelects = widgetModal.contentEl.findAll(el => el.tagName === 'SELECT');
+    const wTypeSelect = wSelects[0];
+    const wDsSelect = wSelects[1];
+    assert.ok(wTypeSelect.children.some(opt => opt.value === 'stat'));
+    assert.ok(!wTypeSelect.children.some(opt => opt.value === 'streak'));
+    assert.equal(wDsSelect.value, '__rel:all:numeric');
+
+    const wForm = widgetModal.contentEl.findAll(el => el.tagName === 'FORM')[0];
+    await fire(wForm, 'submit');
+
+    assert.ok(submittedWidget);
+    assert.equal(submittedWidget.type, 'stat');
+    assert.equal(submittedWidget.datasetId, '');
+    assert.equal(submittedWidget.agg, 'sum');
+    assert.equal(submittedWidget.relation.mode, 'query');
+    assert.equal(submittedWidget.relation.dataFilter, 'numeric');
+
+    // 2) AddDatasetModal on a Tree exposes 'rollup' and supports picking specific children
+    let submittedDataset = null;
+    const dsModal = new AddDatasetModal(app, {
+      goalKind: 'tree',
+      treePath: 'Iter/Reading',
+      childDatasets,
+      onSubmit: async cfg => {
+        submittedDataset = cfg;
+      },
+    });
+    dsModal.contentEl = createMockElement('div');
+    dsModal.onOpen();
+
+    const dsNameInput = dsModal.contentEl.findAll(el => el.tagName === 'INPUT' && el.getAttribute('type') !== 'checkbox')[0];
+    const dsTypeSelect = dsModal.contentEl.findAll(el => el.tagName === 'SELECT')[0];
+    assert.ok(dsTypeSelect.children.some(opt => opt.value === 'rollup'));
+    dsNameInput.value = 'Selected reading';
+    dsTypeSelect.value = 'rollup';
+    await fire(dsTypeSelect, 'change');
+
+    // Switch relation source to 'pick'
+    const allDsSelects = dsModal.contentEl.findAll(el => el.tagName === 'SELECT');
+    const relModeSelect = allDsSelects[1];
+    relModeSelect.value = 'pick';
+    await fire(relModeSelect, 'change');
+
+    const checkboxes = dsModal.contentEl.findAll(el => el.tagName === 'INPUT' && el.getAttribute('type') === 'checkbox');
+    assert.equal(checkboxes.length, 2);
+    checkboxes[0].checked = true;
+    await fire(checkboxes[0], 'change');
+
+    const dsForm = dsModal.contentEl.findAll(el => el.tagName === 'FORM')[0];
+    await fire(dsForm, 'submit');
+
+    assert.ok(submittedDataset);
+    assert.equal(submittedDataset.type, 'rollup');
+    assert.equal(submittedDataset.relation.mode, 'pick');
+    assert.equal(submittedDataset.relation.refs.length, 1);
+
+    // 3) Persist tree rollup widget + rollup dataset and verify GoalView rendering & source links
+    await addWidget(app, readingTree, { ...submittedWidget, title: 'Total pieces read' });
+    await addDataset(app, readingTree, {
+      name: 'Reading rollup',
+      type: 'rollup',
+      relation: { mode: 'query', childKinds: 'habits', dataFilter: 'numeric', perChildAgg: 'all' },
+    });
+
+    const openedGoals = [];
+    const goalView = new GoalView(
+      { containerEl: createMockElement('div'), updateHeader() {} },
+      {
+        openGoal: file => openedGoals.push(file.path),
+        openFile() {},
+        openGarden() {},
+        promptCreateSubgoal() {},
+        promptCreateHabit() {},
+        scheduleRefresh() {},
+      },
+    );
+    goalView.app = app;
+    goalView.contentEl = createMockElement('div');
+    await goalView.setState({ file: readingTree.path }, {});
+
+    const statNumbers = goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-stat-number'));
+    assert.equal(statNumbers.length, 1);
+    assert.equal(statNumbers[0].textContent, '9');
+
+    // Rollup dataset card omits inline '+' add button and renders clickable child breakdown rows
+    assert.equal(goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-dataset-add-btn')).length, 0);
+    const sourceRows = goalView.contentEl.findAll(el => el.className.split(/\s+/).includes('iter-rollup-source-row'));
+    assert.equal(sourceRows.length, 2);
+    await fire(sourceRows[0], 'click');
+    assert.equal(openedGoals.length, 1);
+    assert.ok(openedGoals[0].startsWith('Iter/Reading/'));
+    assert.ok(subgoal);
   } finally {
     global.document = prevDocument;
   }

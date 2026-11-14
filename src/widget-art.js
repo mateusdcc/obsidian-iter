@@ -101,18 +101,20 @@ function renderChartSvg(container, points, { variant = 'line', unit = '', onPoin
     const barW = Math.min(28, Math.max(6, slotW * 0.58));
     for (const pt of coords) {
       const barH = Math.max(3, baselineY - pt.y);
+      const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+      const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
       const rect = svgEl('rect', {
         x: round(pt.x - barW / 2),
         y: round(baselineY - barH),
         width: round(barW),
         height: round(barH),
         rx: Math.min(4, round(barW / 3)),
-        class: `iter-chart-bar${pt.noteFile ? ' is-clickable' : ''}`,
+        class: `iter-chart-bar${clickable ? ' is-clickable' : ''}`,
       });
       const tip = svgEl('title');
-      tip.textContent = `${pt.date || ''}: ${pt.value}${unit ? ` ${unit}` : ''}${pt.noteFile ? ` (${pt.label})` : ''}`;
+      tip.textContent = `${pt.date ? `${pt.date}: ` : ''}${pt.value}${unit ? ` ${unit}` : ''}${detail ? ` · ${detail}` : ''}`;
       rect.appendChild(tip);
-      if (pt.noteFile && onPointClick) {
+      if (clickable) {
         rect.addEventListener('click', () => onPointClick(pt));
       }
       svg.appendChild(rect);
@@ -125,16 +127,18 @@ function renderChartSvg(container, points, { variant = 'line', unit = '', onPoin
       svg.appendChild(svgEl('polyline', { points: linePoints, class: 'iter-chart-line' }));
     }
     for (const pt of coords) {
+      const detail = pt.noteFile ? pt.label : pt.sourceTitle;
+      const clickable = Boolean((pt.noteFile || pt.sourceFile) && onPointClick);
       const circle = svgEl('circle', {
         cx: pt.x,
         cy: pt.y,
         r: coords.length === 1 ? 4.5 : 3.5,
-        class: `iter-chart-dot${pt.noteFile ? ' is-clickable' : ''}`,
+        class: `iter-chart-dot${clickable ? ' is-clickable' : ''}`,
       });
       const tip = svgEl('title');
-      tip.textContent = `${pt.date || ''}: ${pt.value}${unit ? ` ${unit}` : ''}${pt.noteFile ? ` (${pt.label})` : ''}`;
+      tip.textContent = `${pt.date ? `${pt.date}: ` : ''}${pt.value}${unit ? ` ${unit}` : ''}${detail ? ` · ${detail}` : ''}`;
       circle.appendChild(tip);
-      if (pt.noteFile && onPointClick) {
+      if (clickable) {
         circle.addEventListener('click', () => onPointClick(pt));
       }
       svg.appendChild(circle);

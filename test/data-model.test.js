@@ -14,6 +14,10 @@ const {
   computeGoalBar,
   resolveNumericSeries,
   formatDueStatus,
+  discoverChildDatasets,
+  resolveVirtualDataset,
+  resolveWidgetDataset,
+  describeRelation,
 } = require('../src/data-model');
 const { computeChartGeometry } = require('../src/widget-art');
 
@@ -190,4 +194,182 @@ test('readGoalDocument and updateGoalMeta distinguish endless trees from target-
   const codeDoc = readGoalDocument(app, codeTree);
   assert.equal(codeDoc.endless, false);
   assert.equal(codeDoc.due, '2027-01-15');
+});
+
+test('Reading tree scenario: generic child rollups aggregate counters across habits and auto-include new children', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  const readingTree = await createTree(app.vault, { name: 'Reading', module: 'learning', endless: true });
+
+  const poemsHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read poems', frequency: 'daily' });
+  const essaysHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read philosophical essays', frequency: 'weekly' });
+  const booksHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read literature book', frequency: 'monthly' });
+  const subgoal = await createSubgoal(app.vault, { treePath: 'Iter/Reading', name: 'Reading list notes' });
+
+  const poemsDs = await addDataset(app, poemsHabit, { name: 'Poems read', type: 'number_time', unit: 'poems' });
+  await addDatasetEntry(app, poemsHabit, poemsDs.id, { value: 2, date: '2026-11-10' });
+  await addDatasetEntry(app, poemsHabit, poemsDs.id, { value: 3, date: '2026-11-12' });
+
+  const essaysDs = await addDataset(app, essaysHabit, { name: 'Essays read', type: 'number_time', unit: 'essays' });
+  await addDatasetEntry(app, essaysHabit, essaysDs.id, { value: 1, date: '2026-11-11' });
+  await addDatasetEntry(app, essaysHabit, essaysDs.id, { value: 2, date: '2026-11-13' });
+
+  const booksDs = await addDataset(app, booksHabit, { name: 'Books read', type: 'number_time', unit: 'books' });
+  await addDatasetEntry(app, booksHabit, booksDs.id, { value: 1, date: '2026-11-14' });
+
+  // Non-numeric list on subgoal should be excluded by dataFilter: 'numeric'
+  const textDs = await addDataset(app, subgoal, { name: 'Favorite quotes', type: 'text' });
+  await addDatasetEntry(app, subgoal, textDs.id, { value: 'To be is to be perceived' });
+
+  // 1) Widget-level relation on Tree without any local dataset
+  const sumWidget = await addWidget(app, readingTree, {
+    title: 'Total items read',
+    type: 'stat',
+    agg: 'sum',
+    unit: 'works',
+    relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+  });
+  assert.equal(sumWidget.datasetId, '');
+  assert.equal(sumWidget.relation.dataFilter, 'numeric');
+
+  let treeDoc = readGoalDocument(app, readingTree);
+  let virtualWidgetDs = resolveWidgetDataset(app, sumWidget, new Map(), treeDoc);
+  assert.equal(virtualWidgetDs.sources.length, 3);
+  assert.equal(virtualWidgetDs.unit, 'works');
+  let stat = computeStat(app, virtualWidgetDs, 'sum', readingTree.path);
+  assert.equal(stat.value, 9);
+  assert.equal(stat.count, 5);
+
+  // Mixed child units without explicit unit leaves inferred unit empty
+  const autoUnitDs = resolveVirtualDataset(
+    app,
+    { id: 'u', name: 'Auto', relation: { mode: 'query', childKinds: 'all', dataFilter: 'numeric' } },
+    readingTree.path,
+    'Iter/Reading',
+  );
+  assert.equal(autoUnitDs.unit, '');
+
+  // Shared unit across picked children infers that shared unit automatically
+  const pageHabit1 = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read poetry pages', frequency: 'daily' });
+  const p1 = await addDataset(app, pageHabit1, { name: 'Pages A', type: 'number_time', unit: 'pages' });
+  await addDatasetEntry(app, pageHabit1, p1.id, { value: 15, date: '2026-11-10' });
+  const pageHabit2 = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Read essay pages', frequency: 'daily' });
+  const p2 = await addDataset(app, pageHabit2, { name: 'Pages B', type: 'number_time', unit: 'pages' });
+  await addDatasetEntry(app, pageHabit2, p2.id, { value: 25, date: '2026-11-11' });
+
+  const pickedPages = resolveVirtualDataset(
+    app,
+    {
+      id: 'picked-pages',
+      name: 'Combined pages',
+      relation: {
+        mode: 'pick',
+        dataFilter: 'any',
+        perChildAgg: 'sum',
+        refs: [
+          { filePath: pageHabit1.path, datasetId: p1.id },
+          { filePath: pageHabit2.path, datasetId: p2.id },
+        ],
+      },
+    },
+    readingTree.path,
+    'Iter/Reading',
+  );
+  assert.equal(pickedPages.unit, 'pages');
+  assert.equal(computeStat(app, pickedPages, 'sum', readingTree.path).value, 40);
+  const perChildSeries = resolveNumericSeries(app, pickedPages, readingTree.path);
+  assert.equal(perChildSeries.length, 2);
+  assert.equal(perChildSeries[0].sourceTitle, 'Read poetry pages');
+  assert.equal(perChildSeries[0].value, 15);
+  assert.equal(perChildSeries[1].sourceTitle, 'Read essay pages');
+  assert.equal(perChildSeries[1].value, 25);
+
+  // 2) Named rollup dataset on Tree with nameMatch and automatic inclusion of later children
+  const rollupDs = await addDataset(app, readingTree, {
+    name: 'Works read rollup',
+    type: 'rollup',
+    unit: 'reads',
+    relation: { mode: 'query', childKinds: 'habits', dataFilter: 'numeric', nameMatch: 'read', perChildAgg: 'all' },
+  });
+  await assert.rejects(
+    () => addDatasetEntry(app, readingTree, rollupDs.id, { value: 1, date: '2026-11-14' }),
+    /computed automatically/,
+  );
+
+  // Only "Poems read", "Essays read", "Books read" match nameMatch: 'read' (Wait: Habits are Read poetry pages too -> nameMatch matches childTitle OR dataset name!)
+  // Test narrower nameMatch filtering exclusively poems vs adding a future child with 'journal read'
+  const poemOnly = resolveVirtualDataset(
+    app,
+    {
+      id: 'poems-only',
+      name: 'Poems only',
+      relation: { mode: 'query', childKinds: 'habits', dataFilter: 'numeric', nameMatch: 'poems', perChildAgg: 'all' },
+    },
+    readingTree.path,
+    'Iter/Reading',
+  );
+  assert.equal(poemOnly.sources.length, 1);
+  assert.equal(computeStat(app, poemOnly, 'sum', readingTree.path).value, 5);
+
+  // Future habit added later automatically joins query rollup
+  const futureHabit = await createHabit(app.vault, { treePath: 'Iter/Reading', name: 'Short stories', frequency: 'weekly' });
+  const futureDs = await addDataset(app, futureHabit, { name: 'Stories pages', type: 'number_time', unit: 'pages' });
+  await addDatasetEntry(app, futureHabit, futureDs.id, { value: 12, date: '2026-11-15' });
+
+  const discovered = discoverChildDatasets(app, 'Iter/Reading');
+  assert.equal(discovered.length, 7);
+
+  treeDoc = readGoalDocument(app, readingTree);
+  const updatedVirtual = resolveWidgetDataset(app, sumWidget, new Map(), treeDoc);
+  assert.equal(updatedVirtual.sources.length, 6);
+  // 2+3 + 1+2 + 1 + 15 + 25 + 12 = 61
+  assert.equal(computeStat(app, updatedVirtual, 'sum', readingTree.path).value, 61);
+  assert.equal(describeRelation(pickedPages.relation, pickedPages.sources), '2 selected lists · Sum per child');
+  assert.equal(describeRelation(updatedVirtual.relation, updatedVirtual.sources), 'Tree children · Numeric');
+});
+
+test('Generic child rollups also support note_time scores and text collections across subgoals', async () => {
+  const app = createMockApp();
+  await ensureStructure(app.vault);
+  const langTree = await createTree(app.vault, { name: 'Japanese', module: 'learning' });
+  const subA1 = await createSubgoal(app.vault, { treePath: 'Iter/Japanese', name: 'Reach N5' });
+  const subA2 = await createSubgoal(app.vault, { treePath: 'Iter/Japanese', name: 'Reach N4' });
+
+  const mock1 = await app.vault.create('Mocks/N5 Mock 1.md', '---\nscore: 70\n---\n');
+  const mock2 = await app.vault.create('Mocks/N4 Mock 1.md', '---\nscore: 90\n---\n');
+
+  const ds1 = await addDataset(app, subA1, { name: 'N5 Mocks', type: 'note_time', metricKey: 'score' });
+  await addDatasetEntry(app, subA1, ds1.id, { path: mock1.path, date: '2026-11-01', score: 70 });
+
+  const ds2 = await addDataset(app, subA2, { name: 'N4 Mocks', type: 'note_time', metricKey: 'score' });
+  await addDatasetEntry(app, subA2, ds2.id, { path: mock2.path, date: '2026-11-10', score: 90 });
+
+  const vocabHabit = await createHabit(app.vault, { treePath: 'Iter/Japanese', name: 'Vocab', frequency: 'daily' });
+  const wordsDs = await addDataset(app, vocabHabit, { name: 'Words', type: 'text' });
+  await addDatasetEntry(app, vocabHabit, wordsDs.id, { value: 'neko' });
+
+  const scoresRollup = resolveVirtualDataset(
+    app,
+    { id: 'all-mocks', name: 'All Mock Scores', relation: { mode: 'query', childKinds: 'subgoals', dataFilter: 'note' } },
+    langTree.path,
+    'Iter/Japanese',
+  );
+  assert.equal(scoresRollup.type, 'note_time');
+  assert.equal(scoresRollup.sources.length, 2);
+  assert.equal(computeStat(app, scoresRollup, 'average', langTree.path).value, 80);
+
+  const notesSeries = resolveNumericSeries(app, scoresRollup, langTree.path);
+  assert.equal(notesSeries.length, 2);
+  assert.equal(notesSeries[0].noteFile.path, 'Mocks/N5 Mock 1.md');
+  assert.equal(notesSeries[1].sourceFile.path, subA2.path);
+
+  const textRollup = resolveVirtualDataset(
+    app,
+    { id: 'all-words', name: 'All Words', relation: { mode: 'query', childKinds: 'habits', dataFilter: 'text' } },
+    langTree.path,
+    'Iter/Japanese',
+  );
+  assert.equal(textRollup.type, 'text');
+  assert.equal(textRollup.resolvedEntries.length, 1);
+  assert.equal(textRollup.resolvedEntries[0].label, 'neko');
 });

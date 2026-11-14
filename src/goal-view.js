@@ -27,6 +27,10 @@ const {
   removeDatasetEntry,
   addWidget,
   removeWidget,
+  discoverChildDatasets,
+  resolveVirtualDataset,
+  resolveWidgetDataset,
+  describeRelation,
 } = require('./data-model');
 const { renderChartSvg } = require('./widget-art');
 const {
@@ -363,13 +367,17 @@ class GoalView extends ItemView {
     setIcon(plus, 'plus');
     addBtn.createSpan({ text: 'Add widget' });
     addBtn.addEventListener('click', () => {
-      if (doc.kind !== 'habit' && !doc.datasets.length) {
+      const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
+      if (doc.kind !== 'habit' && !isTree && !doc.datasets.length) {
         new Notice('Add a data list first, then link a widget to it.');
         return;
       }
+      const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
       new AddWidgetModal(this.app, {
         datasets: doc.datasets,
+        childDatasets,
         goalKind: doc.kind,
+        treePath: doc.treePath,
         onSubmit: async config => {
           await addWidget(this.app, this.file, config);
           this.render();
@@ -381,9 +389,11 @@ class GoalView extends ItemView {
       section.createEl('p', {
         text: doc.kind === 'habit'
           ? 'No widgets yet. Add a streak widget or link custom data below.'
-          : doc.datasets.length
-            ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
-            : 'Add custom data below, then pin widgets here to visualize your progress.',
+          : doc.kind === 'tree'
+            ? 'No widgets yet. Summarize or graph data from this tree or its subgoals & habits.'
+            : doc.datasets.length
+              ? 'No widgets yet. Link a progress bar, metric, graph, or note navigator to your data.'
+              : 'Add custom data below, then pin widgets here to visualize your progress.',
         cls: 'iter-section-hint',
       });
       return;
@@ -392,7 +402,7 @@ class GoalView extends ItemView {
     const grid = section.createDiv({ cls: 'iter-widget-grid' });
     const datasetById = new Map(doc.datasets.map(d => [d.id, d]));
     for (const widget of doc.widgets) {
-      const ds = widget.datasetId ? datasetById.get(widget.datasetId) : null;
+      const ds = resolveWidgetDataset(this.app, widget, datasetById, doc);
       this.renderWidgetCard(grid, widget, ds, doc);
     }
   }
@@ -404,13 +414,16 @@ class GoalView extends ItemView {
     });
 
     const top = card.createDiv({ cls: 'iter-widget-top' });
+    const baseTitle = !dataset
+      ? 'Missing dataset'
+      : (dataset.name || (widget.relation ? describeRelation(widget.relation, dataset.sources) : 'Widget'));
     const defaultTitle = widget.type === 'streak'
       ? 'Streak'
       : !dataset
         ? 'Missing dataset'
         : widget.type === 'stat'
-          ? `${dataset.name} · ${AGG_LABELS[widget.agg] || widget.agg}`
-          : dataset.name;
+          ? `${baseTitle} · ${AGG_LABELS[widget.agg] || widget.agg}`
+          : baseTitle;
     top.createSpan({ text: widget.title || defaultTitle, cls: 'iter-widget-title' });
 
     const removeBtn = top.createEl('button', {
@@ -467,9 +480,12 @@ class GoalView extends ItemView {
       if (res.unit && widget.agg !== 'count') {
         valRow.createSpan({ text: res.unit, cls: 'iter-stat-unit' });
       }
+      const sourceNote = dataset.isVirtual && Array.isArray(dataset.sources)
+        ? ` · ${dataset.sources.length} ${dataset.sources.length === 1 ? 'child list' : 'child lists'}`
+        : '';
       const subLabel = widget.agg === 'count'
-        ? `${res.count} ${res.count === 1 ? 'entry' : 'entries'}`
-        : `${AGG_LABELS[widget.agg] || widget.agg} · ${res.count} ${res.count === 1 ? 'point' : 'points'}`;
+        ? `${res.count} ${res.count === 1 ? 'entry' : 'entries'}${sourceNote}`
+        : `${AGG_LABELS[widget.agg] || widget.agg} · ${res.count} ${res.count === 1 ? 'point' : 'points'}${sourceNote}`;
       card.createDiv({ text: subLabel, cls: 'iter-stat-sub' });
       return;
     }
@@ -494,9 +510,11 @@ class GoalView extends ItemView {
       const points = resolveNumericSeries(this.app, dataset, this.file.path, widget.metricKey);
       if (!points.length) {
         card.createEl('p', {
-          text: dataset.type === 'note_time'
-            ? `Add notes with a "${dataset.metricKey || 'score'}" property (or inline value) to plot.`
-            : 'Add numeric entries to plot progress over time.',
+          text: dataset.isVirtual
+            ? 'No matching numeric entries in child data lists yet.'
+            : dataset.type === 'note_time'
+              ? `Add notes with a "${dataset.metricKey || 'score'}" property (or inline value) to plot.`
+              : 'Add numeric entries to plot progress over time.',
           cls: 'iter-widget-empty',
         });
         return;
@@ -520,6 +538,7 @@ class GoalView extends ItemView {
         unit: dataset.unit,
         onPointClick: pt => {
           if (pt.noteFile) void this.plugin.openFile(pt.noteFile);
+          else if (pt.sourceFile) void this.plugin.openGoal(pt.sourceFile);
         },
       });
       return;
@@ -543,7 +562,8 @@ class GoalView extends ItemView {
         main.createSpan({ text: entry.label, cls: 'iter-note-nav-title' });
         if (entry.path) {
           const folder = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : 'Vault root';
-          main.createSpan({ text: folder, cls: 'iter-note-nav-path' });
+          const origin = entry.sourceTitle ? `${entry.sourceTitle} · ${folder}` : folder;
+          main.createSpan({ text: origin, cls: 'iter-note-nav-path' });
         }
         if (entry.value !== null) {
           itemBtn.createSpan({ text: formatNumber(entry.value), cls: 'iter-note-score-pill' });
@@ -569,7 +589,12 @@ class GoalView extends ItemView {
     setIcon(plus, 'plus');
     addBtn.createSpan({ text: 'Add data' });
     addBtn.addEventListener('click', () => {
+      const isTree = doc.kind === 'tree' && Boolean(doc.treePath);
+      const childDatasets = isTree ? discoverChildDatasets(this.app, doc.treePath) : [];
       new AddDatasetModal(this.app, {
+        goalKind: doc.kind,
+        treePath: doc.treePath,
+        childDatasets,
         onSubmit: async config => {
           const created = await addDataset(this.app, this.file, config);
           if (created.type === 'number_time' || created.type === 'text') {
@@ -582,7 +607,9 @@ class GoalView extends ItemView {
 
     if (!doc.datasets.length) {
       section.createEl('p', {
-        text: 'Create custom data lists like "Benching PRs" (number & date), "Words learnt" (text), or "Mock Exams Done" (notes & date).',
+        text: doc.kind === 'tree'
+          ? 'Create custom data lists or a Child Rollup to aggregate numbers and notes from subgoals & habits.'
+          : 'Create custom data lists like "Benching PRs" (number & date), "Words learnt" (text), or "Mock Exams Done" (notes & date).',
         cls: 'iter-section-hint',
       });
       return;
@@ -590,11 +617,12 @@ class GoalView extends ItemView {
 
     const list = section.createDiv({ cls: 'iter-dataset-grid' });
     for (const dataset of doc.datasets) {
-      this.renderDatasetCard(list, dataset);
+      this.renderDatasetCard(list, dataset, doc);
     }
   }
 
   triggerDatasetAdd(dataset) {
+    if (dataset.type === 'rollup') return;
     if (dataset.type === 'note') {
       new NotePickerModal(this.app, async noteFile => {
         await addDatasetEntry(this.app, this.file, dataset.id, { path: noteFile.path });
@@ -621,23 +649,34 @@ class GoalView extends ItemView {
     this.render();
   }
 
-  renderDatasetCard(container, dataset) {
+  renderDatasetCard(container, dataset, doc = null) {
+    const isRollup = dataset.type === 'rollup';
+    const virtual = isRollup
+      ? resolveVirtualDataset(this.app, dataset, this.file.path, doc?.treePath || '')
+      : null;
+    const sources = virtual?.sources || [];
+
     const card = container.createDiv({ cls: 'iter-dataset-card' });
 
     const top = card.createDiv({ cls: 'iter-dataset-top' });
     const left = top.createDiv({ cls: 'iter-dataset-title-wrap' });
     left.createSpan({ text: dataset.name, cls: 'iter-dataset-title' });
     left.createSpan({ text: TYPE_LABELS[dataset.type] || dataset.type, cls: 'iter-module-pill' });
-    left.createSpan({ text: String(dataset.entries.length), cls: 'iter-dataset-count' });
+    left.createSpan({
+      text: String(isRollup ? virtual.resolvedEntries.length : dataset.entries.length),
+      cls: 'iter-dataset-count',
+    });
 
     const right = top.createDiv({ cls: 'iter-dataset-actions' });
-    const addEntryBtn = right.createEl('button', {
-      cls: 'iter-icon-button iter-dataset-add-btn',
-      type: 'button',
-      attr: { 'aria-label': `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` },
-    });
-    setIcon(addEntryBtn, 'plus');
-    addEntryBtn.addEventListener('click', () => this.triggerDatasetAdd(dataset));
+    if (!isRollup) {
+      const addEntryBtn = right.createEl('button', {
+        cls: 'iter-icon-button iter-dataset-add-btn',
+        type: 'button',
+        attr: { 'aria-label': `Add entry to ${dataset.name}`, title: `Add to ${dataset.name}` },
+      });
+      setIcon(addEntryBtn, 'plus');
+      addEntryBtn.addEventListener('click', () => this.triggerDatasetAdd(dataset));
+    }
 
     const removeDsBtn = right.createEl('button', {
       cls: 'iter-icon-button iter-dataset-remove-btn',
@@ -650,6 +689,48 @@ class GoalView extends ItemView {
       if (this.openAddForDataset === dataset.id) this.openAddForDataset = null;
       this.render();
     });
+
+    if (isRollup) {
+      const summaryRow = card.createDiv({ cls: 'iter-rollup-badge' });
+      const summaryText = describeRelation(dataset.relation, sources);
+      summaryRow.createSpan({
+        text: virtual?.unit ? `${summaryText} · unit: ${virtual.unit}` : summaryText,
+      });
+
+      if (!sources.length) {
+        card.createEl('p', { text: 'No matching child data lists yet.', cls: 'iter-dataset-empty' });
+        return;
+      }
+
+      const sourceList = card.createDiv({ cls: 'iter-rollup-sources' });
+      for (const src of sources) {
+        const rowBtn = sourceList.createEl('button', { cls: 'iter-rollup-source-row', type: 'button' });
+        const mainWrap = rowBtn.createDiv({ cls: 'iter-rollup-source-main' });
+        const icon = mainWrap.createSpan({ cls: 'iter-btn-icon' });
+        setIcon(icon, src.childKind === 'habit' ? 'droplet' : 'target');
+        mainWrap.createSpan({
+          text: `${src.childTitle} — ${src.datasetName}`,
+          cls: 'iter-rollup-source-title',
+        });
+
+        const metaWrap = rowBtn.createDiv({ cls: 'iter-rollup-source-meta' });
+        if (src.stat && src.stat.count > 0 && (src.datasetType === 'number_time' || src.datasetType === 'note_time')) {
+          metaWrap.createSpan({
+            text: `${src.stat.display}${src.unit ? ` ${src.unit}` : ''}`,
+            cls: 'iter-note-score-pill',
+          });
+        }
+        metaWrap.createSpan({
+          text: `${src.entryCount} ${src.entryCount === 1 ? 'entry' : 'entries'}`,
+          cls: 'iter-dataset-count',
+        });
+
+        rowBtn.addEventListener('click', () => {
+          if (src.file) void this.plugin.openGoal(src.file);
+        });
+      }
+      return;
+    }
 
     // Inline quick-add bar for number_time and text
     if (this.openAddForDataset === dataset.id && (dataset.type === 'number_time' || dataset.type === 'text')) {

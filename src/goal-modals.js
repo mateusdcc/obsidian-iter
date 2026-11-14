@@ -6,12 +6,240 @@ const {
   STAT_AGGS,
   BAR_MODES,
   CHART_VARIANTS,
+  RELATION_CHILD_KINDS,
+  RELATION_DATA_FILTERS,
+  RELATION_PER_CHILD,
+  datasetMatchesFilter,
   stripMd,
 } = require('./data-model');
 
+function refKey(filePath, datasetId) {
+  return `${filePath}\0${datasetId}`;
+}
+
+function getMatchingChildDatasets(childDatasets, { childKinds = 'all', dataFilter = 'any', nameMatch = '' } = {}) {
+  const needle = String(nameMatch || '').trim().toLowerCase();
+  return childDatasets.filter(item => {
+    if (childKinds === 'habits' && item.childKind !== 'habit') return false;
+    if (childKinds === 'subgoals' && item.childKind !== 'subgoal') return false;
+    if (!datasetMatchesFilter(item.dataset, dataFilter)) return false;
+    if (needle) {
+      const dsName = (item.dataset.name || '').toLowerCase();
+      const childName = (item.childTitle || '').toLowerCase();
+      if (!dsName.includes(needle) && !childName.includes(needle)) return false;
+    }
+    return true;
+  });
+}
+
+function renderChildRefChecklist(container, childDatasets, selectedMap) {
+  const wrap = container.createDiv({ cls: 'iter-checklist' });
+  if (!childDatasets.length) {
+    wrap.createEl('p', {
+      text: 'No matching child data lists found under this tree yet.',
+      cls: 'iter-section-hint',
+    });
+    return;
+  }
+
+  for (const item of childDatasets) {
+    const key = refKey(item.filePath, item.dataset.id);
+    const label = wrap.createEl('label', { cls: 'iter-check-item' });
+    const checkbox = label.createEl('input', { type: 'checkbox', cls: 'iter-check-box' });
+    checkbox.checked = selectedMap.has(key);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        selectedMap.set(key, { filePath: item.filePath, datasetId: item.dataset.id });
+      } else {
+        selectedMap.delete(key);
+      }
+    });
+
+    const textWrap = label.createDiv({ cls: 'iter-check-text' });
+    textWrap.createSpan({ text: `${item.childTitle} — ${item.dataset.name}`, cls: 'iter-check-title' });
+    const typeInfo = item.dataset.unit ? `${item.dataset.type} · ${item.dataset.unit}` : item.dataset.type;
+    textWrap.createSpan({ text: typeInfo, cls: 'iter-check-meta' });
+  }
+}
+
+function renderRelationConfigPanel(container, {
+  childDatasets = [],
+  allowModeSwitch = true,
+  showKindAndFilter = true,
+  initial = {},
+} = {}) {
+  const state = {
+    mode: initial.mode === 'pick' ? 'pick' : 'query',
+    childKinds: initial.childKinds || 'all',
+    dataFilter: initial.dataFilter || 'numeric',
+    nameMatch: initial.nameMatch || '',
+    perChildAgg: initial.perChildAgg || 'all',
+    unit: initial.unit || '',
+  };
+  const selectedMap = new Map();
+  for (const ref of initial.refs || []) {
+    if (ref?.filePath && ref?.datasetId) {
+      selectedMap.set(refKey(ref.filePath, ref.datasetId), {
+        filePath: ref.filePath,
+        datasetId: ref.datasetId,
+      });
+    }
+  }
+
+  const renderInner = () => {
+    container.empty();
+
+    if (allowModeSwitch) {
+      const modeField = container.createDiv({ cls: 'iter-modal-field' });
+      modeField.createEl('label', { text: 'Relation source', cls: 'iter-modal-label' });
+      const modeSelect = modeField.createEl('select', { cls: 'iter-modal-select' });
+      modeSelect.createEl('option', { value: 'query', text: 'Auto-include matching children (updates as you add more)' });
+      modeSelect.createEl('option', { value: 'pick', text: 'Pick specific child lists' });
+      modeSelect.value = state.mode;
+      modeSelect.addEventListener('change', () => {
+        state.mode = modeSelect.value;
+        renderInner();
+      });
+    }
+
+    if (state.mode === 'query') {
+      if (showKindAndFilter) {
+        const scopeRow = container.createDiv({ cls: 'iter-modal-row' });
+        const kindField = scopeRow.createDiv({ cls: 'iter-modal-field' });
+        kindField.createEl('label', { text: 'From children', cls: 'iter-modal-label' });
+        const kindSelect = kindField.createEl('select', { cls: 'iter-modal-select' });
+        for (const item of RELATION_CHILD_KINDS) {
+          kindSelect.createEl('option', { value: item.id, text: item.label });
+        }
+        kindSelect.value = state.childKinds;
+
+        const filterField = scopeRow.createDiv({ cls: 'iter-modal-field' });
+        filterField.createEl('label', { text: 'Data kind', cls: 'iter-modal-label' });
+        const filterSelect = filterField.createEl('select', { cls: 'iter-modal-select' });
+        for (const item of RELATION_DATA_FILTERS) {
+          filterSelect.createEl('option', { value: item.id, text: item.label });
+        }
+        filterSelect.value = state.dataFilter;
+
+        kindSelect.addEventListener('change', () => {
+          state.childKinds = kindSelect.value;
+          updatePreview();
+        });
+        filterSelect.addEventListener('change', () => {
+          state.dataFilter = filterSelect.value;
+          updatePreview();
+        });
+      }
+
+      const detailRow = container.createDiv({ cls: 'iter-modal-row' });
+      const nameField = detailRow.createDiv({ cls: 'iter-modal-field' });
+      nameField.createEl('label', { text: 'List or child name contains (optional)', cls: 'iter-modal-label' });
+      const nameInput = nameField.createEl('input', {
+        type: 'text',
+        placeholder: 'e.g. read, score (blank = all matching)',
+        cls: 'iter-modal-input',
+      });
+      nameInput.value = state.nameMatch;
+
+      const perChildField = detailRow.createDiv({ cls: 'iter-modal-field' });
+      perChildField.createEl('label', { text: 'Per child', cls: 'iter-modal-label' });
+      const perChildSelect = perChildField.createEl('select', { cls: 'iter-modal-select' });
+      for (const item of RELATION_PER_CHILD) {
+        perChildSelect.createEl('option', { value: item.id, text: item.label });
+      }
+      perChildSelect.value = state.perChildAgg;
+      perChildSelect.addEventListener('change', () => {
+        state.perChildAgg = perChildSelect.value;
+      });
+
+      const previewEl = container.createEl('p', { cls: 'iter-section-hint' });
+      const updatePreview = () => {
+        const matches = getMatchingChildDatasets(childDatasets, state);
+        if (!matches.length) {
+          previewEl.textContent = 'No matching child lists yet — future matching subgoals/habits will join automatically.';
+        } else {
+          const previewNames = matches.slice(0, 4).map(m => `${m.childTitle} · ${m.dataset.name}`).join(', ');
+          const extra = matches.length > 4 ? ` (+${matches.length - 4} more)` : '';
+          previewEl.textContent = `Matches ${matches.length} child ${matches.length === 1 ? 'list' : 'lists'}: ${previewNames}${extra}`;
+        }
+      };
+      nameInput.addEventListener('input', () => {
+        state.nameMatch = nameInput.value;
+        updatePreview();
+      });
+      updatePreview();
+    } else {
+      const pickRow = container.createDiv({ cls: 'iter-modal-row' });
+      const filterField = pickRow.createDiv({ cls: 'iter-modal-field' });
+      filterField.createEl('label', { text: 'Filter child lists', cls: 'iter-modal-label' });
+      const filterSelect = filterField.createEl('select', { cls: 'iter-modal-select' });
+      for (const item of RELATION_DATA_FILTERS) {
+        filterSelect.createEl('option', { value: item.id, text: item.label });
+      }
+      filterSelect.value = state.dataFilter;
+
+      const perChildField = pickRow.createDiv({ cls: 'iter-modal-field' });
+      perChildField.createEl('label', { text: 'Per child', cls: 'iter-modal-label' });
+      const perChildSelect = perChildField.createEl('select', { cls: 'iter-modal-select' });
+      for (const item of RELATION_PER_CHILD) {
+        perChildSelect.createEl('option', { value: item.id, text: item.label });
+      }
+      perChildSelect.value = state.perChildAgg;
+      perChildSelect.addEventListener('change', () => {
+        state.perChildAgg = perChildSelect.value;
+      });
+
+      const listSlot = container.createDiv();
+      const renderList = () => {
+        listSlot.empty();
+        const filtered = getMatchingChildDatasets(childDatasets, {
+          childKinds: 'all',
+          dataFilter: state.dataFilter,
+          nameMatch: '',
+        });
+        renderChildRefChecklist(listSlot, filtered, selectedMap);
+      };
+      filterSelect.addEventListener('change', () => {
+        state.dataFilter = filterSelect.value;
+        renderList();
+      });
+      renderList();
+    }
+
+    const unitField = container.createDiv({ cls: 'iter-modal-field' });
+    unitField.createEl('label', { text: 'Unit override (optional)', cls: 'iter-modal-label' });
+    const unitInput = unitField.createEl('input', {
+      type: 'text',
+      placeholder: 'Auto from children if all share a unit',
+      cls: 'iter-modal-input',
+    });
+    unitInput.value = state.unit;
+    unitInput.addEventListener('input', () => {
+      state.unit = unitInput.value;
+    });
+  };
+
+  renderInner();
+
+  return {
+    getRelation: () => ({
+      mode: state.mode,
+      childKinds: state.childKinds,
+      dataFilter: state.dataFilter,
+      nameMatch: state.nameMatch.trim(),
+      perChildAgg: state.perChildAgg,
+      refs: state.mode === 'pick' ? [...selectedMap.values()] : [],
+    }),
+    getUnit: () => state.unit.trim(),
+  };
+}
+
 class AddDatasetModal extends Modal {
-  constructor(app, { onSubmit }) {
+  constructor(app, { goalKind = 'goal', treePath = null, childDatasets = [], onSubmit }) {
     super(app);
+    this.goalKind = goalKind;
+    this.treePath = treePath;
+    this.childDatasets = childDatasets;
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
@@ -33,12 +261,17 @@ class AddDatasetModal extends Modal {
     });
     nameInput.required = true;
 
+    const availableTypes = this.goalKind === 'tree' && this.treePath
+      ? DATASET_TYPES
+      : DATASET_TYPES.filter(item => item.id !== 'rollup');
+
     const typeField = form.createDiv({ cls: 'iter-modal-field' });
     typeField.createEl('label', { text: 'Data type', cls: 'iter-modal-label' });
     const typeSelect = typeField.createEl('select', { cls: 'iter-modal-select' });
-    for (const item of DATASET_TYPES) {
+    for (const item of availableTypes) {
       typeSelect.createEl('option', { value: item.id, text: item.label });
     }
+    if (availableTypes.length) typeSelect.value = availableTypes[0].id;
 
     const extraField = form.createDiv({ cls: 'iter-modal-field' });
     const extraLabel = extraField.createEl('label', { text: 'Unit (optional)', cls: 'iter-modal-label' });
@@ -48,8 +281,29 @@ class AddDatasetModal extends Modal {
       cls: 'iter-modal-input',
     });
 
+    const rollupSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
+    let rollupControls = null;
+
     const syncExtra = () => {
       const t = typeSelect.value;
+      if (t === 'rollup') {
+        extraField.style.display = 'none';
+        rollupSlot.style.display = '';
+        if (!rollupControls) {
+          rollupControls = renderRelationConfigPanel(rollupSlot, {
+            childDatasets: this.childDatasets,
+            allowModeSwitch: true,
+            showKindAndFilter: true,
+            initial: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+          });
+        }
+        return;
+      }
+
+      rollupSlot.empty();
+      rollupSlot.style.display = 'none';
+      rollupControls = null;
+
       if (t === 'number_time') {
         extraField.style.display = '';
         extraLabel.textContent = 'Unit (optional)';
@@ -77,11 +331,21 @@ class AddDatasetModal extends Modal {
       submit.disabled = true;
       try {
         const type = typeSelect.value;
+        let relation = null;
+        if (type === 'rollup' && rollupControls) {
+          relation = rollupControls.getRelation();
+          if (relation.mode === 'pick' && !relation.refs.length) {
+            throw new Error('Select at least one child data list.');
+          }
+        }
         await this.onSubmit({
           name: nameInput.value,
           type,
-          unit: type === 'number_time' ? extraInput.value : '',
+          unit: type === 'rollup'
+            ? (rollupControls?.getUnit() ?? '')
+            : (type === 'number_time' ? extraInput.value : ''),
           metricKey: type === 'note_time' ? (extraInput.value.trim() || 'score') : 'score',
+          relation,
         });
         this.close();
       } catch (error) {
@@ -101,11 +365,46 @@ class AddDatasetModal extends Modal {
   }
 }
 
+const TREE_WIDGET_PRESETS = [
+  {
+    value: '__rel:all:numeric',
+    label: 'All children · Numeric (auto-includes new)',
+    initial: { mode: 'query', childKinds: 'all', dataFilter: 'numeric', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:habits:numeric',
+    label: 'Habits · Numeric (auto-includes new)',
+    initial: { mode: 'query', childKinds: 'habits', dataFilter: 'numeric', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:subgoals:numeric',
+    label: 'Subgoals · Numeric (auto-includes new)',
+    initial: { mode: 'query', childKinds: 'subgoals', dataFilter: 'numeric', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:all:note',
+    label: 'All children · Notes (auto-includes new)',
+    initial: { mode: 'query', childKinds: 'all', dataFilter: 'note', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:all:text',
+    label: 'All children · Text entries (auto-includes new)',
+    initial: { mode: 'query', childKinds: 'all', dataFilter: 'text', perChildAgg: 'all' },
+  },
+  {
+    value: '__rel:pick',
+    label: 'Pick specific child lists…',
+    initial: { mode: 'pick', childKinds: 'all', dataFilter: 'any', perChildAgg: 'all', refs: [] },
+  },
+];
+
 class AddWidgetModal extends Modal {
-  constructor(app, { datasets = [], goalKind = 'goal', onSubmit }) {
+  constructor(app, { datasets = [], childDatasets = [], goalKind = 'goal', treePath = null, onSubmit }) {
     super(app);
     this.datasets = datasets;
+    this.childDatasets = childDatasets;
     this.goalKind = goalKind;
+    this.treePath = treePath;
     this.onSubmit = onSubmit;
     this.submitting = false;
   }
@@ -116,11 +415,14 @@ class AddWidgetModal extends Modal {
     contentEl.addClass('iter-modal');
     contentEl.createEl('h2', { text: 'Add widget', cls: 'iter-modal-title' });
 
+    const isTree = this.goalKind === 'tree' && Boolean(this.treePath);
+    const canUseDataWidgets = this.datasets.length > 0 || isTree;
+
     const form = contentEl.createEl('form', { cls: 'iter-modal-form' });
     const row = form.createDiv({ cls: 'iter-modal-row' });
 
     const availableTypes = WIDGET_TYPES.filter(item =>
-      item.id === 'streak' ? this.goalKind === 'habit' : this.datasets.length > 0,
+      item.id === 'streak' ? this.goalKind === 'habit' : canUseDataWidgets,
     );
 
     const typeField = row.createDiv({ cls: 'iter-modal-field' });
@@ -137,7 +439,21 @@ class AddWidgetModal extends Modal {
     for (const ds of this.datasets) {
       dsSelect.createEl('option', { value: ds.id, text: ds.name });
     }
+    if (isTree) {
+      for (const preset of TREE_WIDGET_PRESETS) {
+        dsSelect.createEl('option', { value: preset.value, text: preset.label });
+      }
+      this.childDatasets.forEach((item, idx) => {
+        dsSelect.createEl('option', {
+          value: `__child:${idx}`,
+          text: `Child: ${item.childTitle} — ${item.dataset.name}`,
+        });
+      });
+    }
     if (this.datasets.length) dsSelect.value = this.datasets[0].id;
+    else if (isTree) dsSelect.value = TREE_WIDGET_PRESETS[0].value;
+
+    const relationSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
 
     const titleField = form.createDiv({ cls: 'iter-modal-field' });
     titleField.createEl('label', { text: 'Widget title (optional)', cls: 'iter-modal-label' });
@@ -150,13 +466,46 @@ class AddWidgetModal extends Modal {
     const dynamicSlot = form.createDiv({ cls: 'iter-modal-dynamic' });
 
     let aggSelect = null;
+    let aggTouched = false;
     let modeSelect = null;
     let targetInput = null;
     let variantSelect = null;
+    let relControls = null;
+
+    const isRollupSumDefault = () => {
+      const val = dsSelect.value || '';
+      if (val.startsWith('__rel:') && val.endsWith(':numeric')) return true;
+      const localDs = this.datasets.find(d => d.id === val);
+      return localDs?.type === 'rollup' && localDs?.relation?.dataFilter === 'numeric';
+    };
+
+    const rebuildRelationSlot = () => {
+      relationSlot.empty();
+      relControls = null;
+      const wType = typeSelect.value;
+      const val = dsSelect.value || '';
+      if (wType === 'streak' || !val.startsWith('__rel:')) {
+        relationSlot.style.display = 'none';
+        return;
+      }
+      const preset = TREE_WIDGET_PRESETS.find(p => p.value === val);
+      if (!preset) {
+        relationSlot.style.display = 'none';
+        return;
+      }
+      relationSlot.style.display = '';
+      relControls = renderRelationConfigPanel(relationSlot, {
+        childDatasets: this.childDatasets,
+        allowModeSwitch: false,
+        showKindAndFilter: false,
+        initial: preset.initial,
+      });
+    };
 
     const rebuildOptions = () => {
       dynamicSlot.empty();
       aggSelect = null;
+      aggTouched = false;
       modeSelect = null;
       targetInput = null;
       variantSelect = null;
@@ -176,6 +525,10 @@ class AddWidgetModal extends Modal {
         for (const item of STAT_AGGS) {
           aggSelect.createEl('option', { value: item.id, text: item.label });
         }
+        aggSelect.value = isRollupSumDefault() ? 'sum' : 'latest';
+        aggSelect.addEventListener('change', () => {
+          aggTouched = true;
+        });
       } else if (wType === 'goal_bar') {
         const barRow = dynamicSlot.createDiv({ cls: 'iter-modal-row' });
         const modeField = barRow.createDiv({ cls: 'iter-modal-field' });
@@ -184,6 +537,7 @@ class AddWidgetModal extends Modal {
         for (const item of BAR_MODES) {
           modeSelect.createEl('option', { value: item.id, text: item.label });
         }
+        modeSelect.value = BAR_MODES[0].id;
 
         const tField = barRow.createDiv({ cls: 'iter-modal-field' });
         tField.createEl('label', { text: 'Goal target number', cls: 'iter-modal-label' });
@@ -201,16 +555,35 @@ class AddWidgetModal extends Modal {
         for (const item of CHART_VARIANTS) {
           variantSelect.createEl('option', { value: item.id, text: item.label });
         }
+        variantSelect.value = CHART_VARIANTS[0].id;
       } else if (wType === 'note_navigator') {
-        // Auto-select first note dataset if currently pointing at a non-note dataset
-        const currentDs = this.datasets.find(d => d.id === dsSelect.value);
-        if (currentDs && currentDs.type !== 'note' && currentDs.type !== 'note_time') {
-          const noteDs = this.datasets.find(d => d.type === 'note' || d.type === 'note_time');
+        const currentVal = dsSelect.value || '';
+        const currentDs = this.datasets.find(d => d.id === currentVal);
+        const currentIsNote = currentDs
+          ? (currentDs.type === 'note' || currentDs.type === 'note_time' || (currentDs.type === 'rollup' && currentDs.relation?.dataFilter === 'note'))
+          : (currentVal === '__rel:all:note' || currentVal === '__rel:pick'
+            || (currentVal.startsWith('__child:') && (() => {
+              const childItem = this.childDatasets[Number(currentVal.slice('__child:'.length))];
+              return childItem && (childItem.dataset.type === 'note' || childItem.dataset.type === 'note_time');
+            })()));
+        if (!currentIsNote) {
+          const noteDs = this.datasets.find(
+            d => d.type === 'note' || d.type === 'note_time' || (d.type === 'rollup' && d.relation?.dataFilter === 'note'),
+          );
           if (noteDs) dsSelect.value = noteDs.id;
+          else if (isTree) dsSelect.value = '__rel:all:note';
         }
       }
+
+      rebuildRelationSlot();
     };
 
+    dsSelect.addEventListener('change', () => {
+      rebuildRelationSlot();
+      if (aggSelect && !aggTouched) {
+        aggSelect.value = isRollupSumDefault() ? 'sum' : 'latest';
+      }
+    });
     typeSelect.addEventListener('change', rebuildOptions);
     rebuildOptions();
 
@@ -225,9 +598,44 @@ class AddWidgetModal extends Modal {
       this.submitting = true;
       submit.disabled = true;
       try {
+        const wType = typeSelect.value;
+        const sourceVal = dsSelect.value || '';
+        let datasetId = '';
+        let relation = null;
+        let unit = '';
+
+        if (wType !== 'streak') {
+          if (sourceVal.startsWith('__rel:')) {
+            if (relControls) {
+              relation = relControls.getRelation();
+              unit = relControls.getUnit();
+            } else {
+              const preset = TREE_WIDGET_PRESETS.find(p => p.value === sourceVal);
+              relation = preset ? { ...preset.initial } : null;
+            }
+            if (relation?.mode === 'pick' && !relation.refs?.length) {
+              throw new Error('Select at least one child data list.');
+            }
+          } else if (sourceVal.startsWith('__child:')) {
+            const idx = Number(sourceVal.slice('__child:'.length));
+            const childItem = this.childDatasets[idx];
+            if (!childItem) throw new Error('Selected child data list no longer exists.');
+            relation = {
+              mode: 'pick',
+              dataFilter: 'any',
+              perChildAgg: 'all',
+              refs: [{ filePath: childItem.filePath, datasetId: childItem.dataset.id }],
+            };
+          } else {
+            datasetId = sourceVal;
+          }
+        }
+
         await this.onSubmit({
-          type: typeSelect.value,
-          datasetId: typeSelect.value === 'streak' ? '' : dsSelect.value,
+          type: wType,
+          datasetId,
+          relation,
+          unit,
           title: titleInput.value,
           agg: aggSelect?.value ?? 'latest',
           mode: modeSelect?.value ?? 'latest',
