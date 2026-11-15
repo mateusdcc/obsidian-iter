@@ -2,7 +2,7 @@
 
 **Grow a garden of goals inside your Obsidian vault.** Give each long-term goal a tree, break it into milestones, and water it by completing the habits that support it. Build dashboards from the notes and numbers you already keep in Obsidian.
 
-[Documentation](https://mateusdcc.github.io/obsidian-iter/) · [Download](https://github.com/mateusdcc/obsidian-iter/releases/latest) · [Contribute](CONTRIBUTING.md)
+[Install Iter](https://community.obsidian.md/plugins/iter) · [Documentation](https://mateusdcc.github.io/obsidian-iter/) · [Releases](https://github.com/mateusdcc/obsidian-iter/releases/latest) · [Contribute](CONTRIBUTING.md)
 
 [![CI](https://github.com/mateusdcc/obsidian-iter/actions/workflows/ci.yml/badge.svg)](https://github.com/mateusdcc/obsidian-iter/actions/workflows/ci.yml) [![MIT license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -15,9 +15,19 @@
 - Build dashboards with streaks, progress bars, charts, and linked notes. Pull numeric properties such as pages or exam scores from Obsidian notes and combine datasets across a tree.
 - Put a live widget or today's habit tracker inside a Markdown note. Use the visual Canvas widget editor to filter, combine, or summarize data for a custom widget.
 
-## Install with BRAT
+## Installation
 
 Requires Obsidian **1.14.5 or later**. Install Iter in each vault where you want to use it.
+
+### Install from Obsidian Community Plugins
+
+1. In Obsidian, go to **Settings → Community plugins** and turn on community plugins if prompted.
+2. Select **Browse**, search for **Iter**, and open its listing.
+3. Select **Install**, then **Enable**.
+
+You can also open the [Iter listing](https://community.obsidian.md/plugins/iter) and select **Add to Obsidian**.
+
+### Install with BRAT
 
 1. Open **Settings → Community plugins → Browse**. Turn on community plugins if prompted, then install and enable **BRAT** (Beta Reviewer's Auto-update Tool).
 2. Open the command palette and run **BRAT: Add a beta plugin for testing**, or choose **Add beta plugin** in BRAT settings.
