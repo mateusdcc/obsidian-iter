@@ -1,8 +1,8 @@
 {
   "name": "obsidian-iter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "Shared long-term goal garden with modular trees, subgoals, and habit watering for Obsidian.",
+  "description": "Grow a garden of goals, water recurring habits, and build dashboards from your vault notes.",
   "scripts": {
     "test": "node --require ./test/setup.js --test test/*.test.js",
     "build": "esbuild src/plugin.js --bundle --platform=browser --format=cjs --target=es2020 --external:obsidian --outfile=main.js"
