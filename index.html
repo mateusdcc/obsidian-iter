@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install Iter, the Obsidian habit and goal tracker that grows a goal garden from your habits, milestones, and vault notes.">
+  <meta property="og:title" content="Iter · Obsidian habit and goal tracker">
+  <meta property="og:description" content="Grow a goal garden in Obsidian. Track habits, milestones, and the progress recorded in your notes.">
+  <meta property="og:image" content="https://mateusdcc.github.io/obsidian-iter/assets/garden.webp">
+  <meta property="og:url" content="https://mateusdcc.github.io/obsidian-iter/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#17241d">
+  <title>Iter · Obsidian habit and goal tracker</title>
+  <link rel="canonical" href="https://mateusdcc.github.io/obsidian-iter/">
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="./"><img src="assets/favicon.png" width="26" height="26" alt="">Iter</a>
+      <nav aria-label="Main navigation">
+        <a href="#install">Install</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#examples">Examples</a>
+        <a href="#reference">Reference</a>
+      </nav>
+      <a class="source" href="https://github.com/mateusdcc/obsidian-iter">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <p class="eyebrow">Habit &amp; goal tracking for Obsidian</p>
+        <h1>Grow your goals<br>inside your vault.</h1>
+        <p>Plant a tree for what you’re working toward. Water it with recurring habits, track milestones, and turn the notes you already keep into a progress dashboard.</p>
+        <div class="actions">
+          <a class="button primary" href="#install">Install with BRAT</a>
+          <a class="button secondary" href="#examples">Explore examples <span aria-hidden="true">↓</span></a>
+        </div>
+        <figure class="hero-shot">
+          <a href="assets/garden.webp"><img src="assets/garden.webp" width="1575" height="752" alt="The Iter sidebar, watering queue, and three goal trees in the We Garden"></a>
+          <figcaption>We Garden and the Iter sidebar in Obsidian</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="wrap guide" id="install" aria-labelledby="install-title">
+      <div>
+        <h2 id="install-title">Install Iter</h2>
+        <p>Requires Obsidian 1.14.5 or later. Install it separately in each vault where you want to use it.</p>
+        <a href="https://github.com/mateusdcc/obsidian-iter/releases/latest">View the latest release <span aria-hidden="true">↗</span></a>
+      </div>
+      <div>
+        <h3>Install with BRAT</h3>
+        <ol>
+          <li>In Obsidian, go to <strong>Settings → Community plugins → Browse</strong>. Turn on community plugins if prompted, then install and enable <strong>BRAT</strong>.</li>
+          <li>Run <strong>BRAT: Add a beta plugin for testing</strong> from the command palette. You can also choose <strong>Add beta plugin</strong> in BRAT settings.</li>
+          <li>Paste the repository URL below. Choose <strong>Latest version</strong> if prompted, then select <strong>Add Plugin</strong>.</li>
+          <li>Enable <strong>Iter</strong> under <strong>Settings → Community plugins</strong> if BRAT left it disabled.</li>
+        </ol>
+        <pre><code>https://github.com/mateusdcc/obsidian-iter</code></pre>
+        <details>
+          <summary>Manual installation</summary>
+          <ol>
+            <li>Download <code>main.js</code>, <code>manifest.json</code>, and <code>styles.css</code> from the same <a href="https://github.com/mateusdcc/obsidian-iter/releases/latest">release</a>.</li>
+            <li>Place them in <code>.obsidian/plugins/iter/</code> inside your vault.</li>
+            <li>Reload Obsidian and enable Iter under <strong>Community plugins</strong>.</li>
+          </ol>
+        </details>
+        <p>For a fixed version, select a release tag in BRAT. If Iter doesn’t appear, check the Obsidian version and confirm that BRAT added the repository to the current vault.</p>
+      </div>
+    </section>
+
+    <section class="wrap guide" id="quickstart" aria-labelledby="start-title">
+      <div>
+        <h2 id="start-title">Plant your first tree</h2>
+        <p>A tree is an ongoing pursuit or a goal with a target date. A subgoal is a milestone. A habit is a recurring action.</p>
+      </div>
+      <div>
+        <ol>
+          <li>Run <strong>Iter: Create tree</strong> and name it <strong>Reading</strong>. Choose a target date or keep the tree ongoing.</li>
+          <li>Run <strong>Iter: Create habit</strong>, select Reading, and add a daily <strong>Read 10 pages</strong> habit. You can also schedule specific weekdays or a weekly or monthly cadence.</li>
+          <li>Run <strong>Iter: Create subgoal</strong> and add <strong>Finish a book</strong>. Mark it complete when you finish.</li>
+          <li>Run <strong>Iter: Open We garden</strong>. Under <strong>Today’s Watering Queue</strong>, select <strong>Water</strong> after completing the habit.</li>
+        </ol>
+        <figure class="shot">
+          <a href="assets/watering.webp"><img src="assets/watering.webp" width="1104" height="804" loading="lazy" alt="The We Garden dashboard showing today’s scheduled habits and their Water buttons"></a>
+          <figcaption>Review and water the habits due today.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="examples" id="examples" aria-labelledby="examples-title">
+      <div class="wrap">
+        <h2 id="examples-title">Build a dashboard from your notes</h2>
+        <article class="example">
+          <div>
+            <h3>Collect reading notes and count pages</h3>
+            <p>Open a Reading habit and choose <strong>Add data → Notes &amp; Time</strong>. Link a reading note with a numeric <code>pages</code> property, or use automatic criteria to collect notes from a folder or tag.</p>
+            <p>On the Reading tree, add a <strong>Child Rollup</strong> and select the matching datasets. Use a <strong>Metric Stat</strong> to sum pages and a <strong>Note Navigator</strong> to reopen linked notes.</p>
+          </div>
+          <figure class="shot">
+            <a href="assets/reading.webp"><img src="assets/reading.webp" width="1010" height="855" loading="lazy" alt="Reading dashboard with pages read, linked book notes, and the day’s habit progress"></a>
+            <figcaption>A single view for pages, notes, and reading habits.</figcaption>
+          </figure>
+        </article>
+        <article class="example">
+          <div>
+            <h3>Chart a gym milestone</h3>
+            <p>Under a Gym tree, create the <strong>Bench 80 kg</strong> subgoal. Add a <strong>Number &amp; Time</strong> dataset for bench press records and log each weight with its date.</p>
+            <p>Add a <strong>Time Graph</strong> using that dataset. Add a <strong>Goal Comparison Bar</strong> with a target of <strong>80</strong> and aggregation set to <strong>Best / Max</strong>.</p>
+          </div>
+          <figure class="shot">
+            <a href="assets/gym.webp"><img src="assets/gym.webp" width="996" height="775" loading="lazy" alt="Bench press records plotted from 20 to 30 kilograms, above a progress bar toward 80 kilograms"></a>
+            <figcaption>One dataset powers the chart and the progress bar.</figcaption>
+          </figure>
+        </article>
+        <article class="example">
+          <div>
+            <h3>Build a custom widget in Canvas</h3>
+            <p>Open a goal or habit and choose <strong>Canvas editor</strong>. Start from a recipe such as <strong>This month notes</strong>, then adjust the data source and filters. You can also connect data, transformations, and a <strong>Widget Output</strong> yourself.</p>
+            <p>Watch the output preview as you change the nodes. Select <strong>Save widget</strong> to add it to the dashboard.</p>
+          </div>
+          <figure class="shot">
+            <a href="assets/canvas.webp"><img src="assets/canvas.webp" width="1385" height="890" loading="lazy" alt="Iter’s Canvas widget editor with a data source connected to a summary and a widget output"></a>
+            <figcaption>Connect and preview a widget before saving it.</figcaption>
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap guide" id="reference" aria-labelledby="reference-title">
+      <div>
+        <h2 id="reference-title">Workspace reference</h2>
+        <p>Keep your goal data and source notes together in Obsidian.</p>
+      </div>
+      <div>
+        <h3>Embed a live habit tracker</h3>
+        <p>While editing a Markdown note, run <strong>Iter: Insert embedded widget or habit tracker into current note</strong> and choose a widget or <strong>Habits for Today</strong>. Switch to Reading view to use the embed. This example scopes today’s habits to the Reading tree.</p>
+        <pre><code>```iter
+view: today
+tree: Reading
+```</code></pre>
+
+        <h3>Work from the command palette</h3>
+        <dl class="commands">
+          <dt>Iter: Open Iter panel</dt><dd>Find trees, subgoals, and habits in the sidebar.</dd>
+          <dt>Iter: Water a habit…</dt><dd>Mark a habit complete from anywhere in the vault.</dd>
+          <dt>Iter: Quick-log data entry to a goal or habit…</dt><dd>Add a number, text item, or new note to an existing dataset.</dd>
+          <dt>Iter: Link current note to a goal or habit…</dt><dd>Add the active Markdown note outside <code>Iter/</code> to a notes dataset.</dd>
+        </dl>
+
+        <h3>Back up your garden</h3>
+        <p>Iter creates <code>Iter/_index/We.md</code> and one folder per tree. Goal descriptions are Markdown, and schedules, watering history, datasets, and widget definitions are stored in YAML frontmatter. Include <code>Iter/</code> and any linked notes in your vault backup or sync setup.</p>
+        <pre><code>Iter/
+  _index/We.md
+  Reading/
+    _tree.md
+    habits/Read 10 pages.md
+    subgoals/Finish a book.md</code></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <a class="brand" href="./"><img src="assets/favicon.png" width="26" height="26" alt="">Iter</a>
+      <nav aria-label="Project links">
+        <a href="https://github.com/mateusdcc/obsidian-iter">GitHub</a>
+        <a href="https://github.com/mateusdcc/obsidian-iter/blob/main/CONTRIBUTING.md">Contribute</a>
+        <a href="https://github.com/mateusdcc/obsidian-iter/issues/new/choose">Report an issue</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
