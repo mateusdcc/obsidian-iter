@@ -44,6 +44,26 @@ BRAT can check for updates from the repository. To pin a version, use BRAT's opt
 
 Iter creates an `Iter/` folder in your vault. Goals, schedules, watering history, datasets, and widget configuration live in Markdown and YAML frontmatter. Back up or sync the folder with the rest of your vault, including any source notes your datasets link to.
 
+## Screenshots
+
+### Iter panel
+
+Browse your trees, subgoals, and scheduled habits in the Obsidian sidebar.
+
+<img src="assets/screenshots/iter-panel.png" width="315" alt="Iter panel showing the Gym, Japanese, Looks, and Reading trees, with milestones, habit schedules, and streaks">
+
+### Bench 80 kg
+
+Use a dated workout log to chart your lifts and track progress toward a target weight.
+
+![Bench 80 kg dashboard showing a chart from 20 to 30 kg, a progress bar at 38%, and the dated workout entries](assets/screenshots/bench-80kg.png)
+
+### Reading habit
+
+Schedule a habit for specific days and see its streak alongside a pages-read total.
+
+![Reading habit dashboard with Tuesday, Thursday, and Saturday selected, plus Pages Read and Streak widgets](assets/screenshots/reading-habit.png)
+
 ## Development
 
 Use Node.js 24 and npm.
